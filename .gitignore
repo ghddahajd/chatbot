@@ -1,0 +1,19 @@
+.env
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Build / runtime
+backend/logs/*.jsonl
+
+# AI / local workflow files
+CODEX.md
+docs/

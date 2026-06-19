@@ -1,0 +1,101 @@
+[
+  {
+    "id": "cosmetologist_consultation",
+    "name": "Консультация косметолога",
+    "category": "Консультации",
+    "synonyms": ["консультация косметолога", "косметолог", "прием косметолога"],
+    "short_description": "Первичная консультация по эстетическим и косметологическим процедурам.",
+    "price_from": 2500,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "dermatologist_consultation",
+    "name": "Консультация дерматолога",
+    "category": "Консультации",
+    "synonyms": ["консультация дерматолога", "дерматолог", "прием дерматолога"],
+    "short_description": "Прием специалиста по вопросам кожи и дерматологическим жалобам.",
+    "price_from": 3000,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "gynecologist_consultation",
+    "name": "Консультация гинеколога",
+    "category": "Консультации",
+    "synonyms": ["консультация гинеколога", "гинеколог", "прием гинеколога"],
+    "short_description": "Консультация специалиста по вопросам женского здоровья.",
+    "price_from": 3200,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "laser_epilation",
+    "name": "Лазерная эпиляция",
+    "category": "Лазерная косметология",
+    "synonyms": ["лазерная эпиляция", "удаление волос лазером", "эпиляция лазером", "лазер эпиляция"],
+    "short_description": "Удаление нежелательных волос с помощью лазерной технологии.",
+    "price_from": 3000,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "biorevitalization",
+    "name": "Биоревитализация",
+    "category": "Инъекционная косметология",
+    "synonyms": ["биоревитализация", "биоревитализация лица"],
+    "short_description": "Инъекционная процедура для увлажнения и улучшения качества кожи.",
+    "price_from": 9500,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "mesotherapy",
+    "name": "Мезотерапия",
+    "category": "Инъекционная косметология",
+    "synonyms": ["мезотерапия", "мезотерапия лица"],
+    "short_description": "Процедура с введением активных компонентов для улучшения состояния кожи.",
+    "price_from": 7000,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "laser_acne_treatment",
+    "name": "Лазерное лечение акне",
+    "category": "Лазерная косметология",
+    "synonyms": ["лечение акне лазером", "лазерное лечение акне", "лазер от акне"],
+    "short_description": "Процедура, направленная на работу с проявлениями акне с использованием лазера.",
+    "price_from": 6000,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "facial_cleansing",
+    "name": "Чистка лица",
+    "category": "Эстетическая косметология",
+    "synonyms": ["чистка лица", "пилинг и чистка", "косметологическая чистка"],
+    "short_description": "Профессиональная чистка кожи лица по показаниям специалиста.",
+    "price_from": 4500,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  },
+  {
+    "id": "prp_therapy",
+    "name": "PRP-терапия",
+    "category": "Инъекционная косметология",
+    "synonyms": ["prp", "prp терапия", "плазмотерапия"],
+    "short_description": "Процедура с использованием плазмы пациента по назначению специалиста.",
+    "price_from": 12000,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "demo knowledge based on reference site"
+  }
+]

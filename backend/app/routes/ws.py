@@ -1,0 +1,70 @@
+"""WebSocket routes."""
+
+import json
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from ..models import MessageRole, SessionStatus
+
+
+router = APIRouter(tags=["ws"])
+
+
+@router.websocket("/ws/chat/{session_id}")
+async def client_ws(websocket: WebSocket, session_id: str) -> None:
+    session_store = websocket.app.state.session_store
+    manager = websocket.app.state.ws_manager
+    session = await session_store.get(session_id)
+    if session is None:
+        await websocket.close(code=4404)
+        return
+
+    await manager.connect_client(session_id, websocket)
+    await manager.flush_pending_to_client(session_id)
+
+    try:
+        while True:
+            text = await websocket.receive_text()
+            await session_store.append_message(session_id, MessageRole.USER, text)
+            await manager.send_to_operator(
+                session_id,
+                {"type": "message", "role": "user", "text": text, "session_id": session_id},
+            )
+    except WebSocketDisconnect:
+        await manager.disconnect_client(session_id)
+
+
+@router.websocket("/ws/operator")
+async def operator_ws(websocket: WebSocket) -> None:
+    token = websocket.query_params.get("token")
+    session_id = websocket.query_params.get("session_id")
+    app = websocket.app
+
+    if token != app.state.settings.operator_token or not session_id:
+        await websocket.close(code=4403)
+        return
+
+    session = await app.state.session_store.get(session_id)
+    if session is None:
+        await websocket.close(code=4404)
+        return
+
+    manager = app.state.ws_manager
+    session_store = app.state.session_store
+    await manager.connect_operator(session_id, websocket)
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            payload = json.loads(raw)
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                continue
+            await session_store.append_message(session_id, MessageRole.OPERATOR, text)
+            await manager.send_to_client(
+                session_id,
+                {"type": "message", "role": "operator", "text": text},
+            )
+    except WebSocketDisconnect:
+        if session.status != SessionStatus.CLOSED:
+            await manager.disconnect_operator(session_id)

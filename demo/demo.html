@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Chat Widget Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #1f1f23;
+        --muted: #665e56;
+        --paper: #fffaf2;
+        --line: rgba(107, 68, 42, 0.16);
+        --accent: #c65f32;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(255, 234, 206, 0.9) 0%, rgba(255, 234, 206, 0) 36%),
+          linear-gradient(135deg, #f5efe7 0%, #e9dccd 100%);
+      }
+      .hero {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 56px 20px 120px;
+      }
+      .card {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: 1.15fr 0.85fr;
+        padding: 28px;
+        border-radius: 28px;
+        border: 1px solid var(--line);
+        background: rgba(255, 250, 242, 0.82);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 25px 70px rgba(85, 52, 27, 0.12);
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: #8d5a3a;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(40px, 7vw, 74px);
+        line-height: 0.94;
+      }
+      .lead {
+        max-width: 60ch;
+        font-size: 18px;
+        line-height: 1.65;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        gap: 14px;
+      }
+      .tile {
+        padding: 18px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.6);
+      }
+      .tile strong {
+        display: block;
+        margin-bottom: 8px;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      }
+      .chipset {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+      .chip {
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(198, 95, 50, 0.09);
+        border: 1px solid rgba(198, 95, 50, 0.14);
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-size: 14px;
+      }
+      .note {
+        margin-top: 28px;
+        padding: 18px;
+        border-left: 4px solid var(--accent);
+        background: rgba(255, 255, 255, 0.58);
+        color: #554c42;
+      }
+      @media (max-width: 900px) {
+        .card {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="hero">
+      <section class="card">
+        <div>
+          <p class="eyebrow">Embeddable MVP</p>
+          <h1>AI chat-widget для медицинского центра</h1>
+          <p class="lead">
+            Демо показывает встраиваемый виджет, который отвечает только по knowledge base,
+            не даёт медсоветы, умеет собирать лид и передавать диалог оператору.
+          </p>
+          <div class="chipset">
+            <span class="chip">Vanilla JS + Shadow DOM</span>
+            <span class="chip">FastAPI backend</span>
+            <span class="chip">WebSocket handoff</span>
+            <span class="chip">MockLLM / Gemini-ready</span>
+          </div>
+          <div class="note">
+            Виджет появится через 5 секунд после загрузки страницы в правом нижнем углу.
+          </div>
+        </div>
+        <div class="grid">
+          <article class="tile">
+            <strong>Сценарии для проверки</strong>
+            Сколько стоит лазерная эпиляция?
+          </article>
+          <article class="tile">
+            <strong>Проверка guard</strong>
+            Что мне пить от акне?
+          </article>
+          <article class="tile">
+            <strong>Передача оператору</strong>
+            Позовите оператора
+          </article>
+          <article class="tile">
+            <strong>Сбор лида</strong>
+            Иван, +7 999 123-45-67, хочу биоревитализацию
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="/static/widget.js" data-company-id="rosh_demo" defer></script>
+  </body>
+</html>

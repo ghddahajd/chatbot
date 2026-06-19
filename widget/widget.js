@@ -244,6 +244,27 @@
         border-top: 1px solid rgba(121, 138, 166, 0.12);
         background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
       }
+      .composer.hidden {
+        display: none;
+      }
+      .closed-note {
+        display: none;
+        padding: 12px 18px 16px;
+        border-top: 1px solid rgba(121, 138, 166, 0.12);
+        background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+      }
+      .closed-note.visible {
+        display: block;
+      }
+      .closed-note-inner {
+        padding: 13px 15px;
+        border-radius: 16px;
+        background: #f7f9fc;
+        border: 1px solid #e3eaf5;
+        color: #657389;
+        font-size: 13px;
+        line-height: 1.45;
+      }
       .input {
         min-height: 52px;
         max-height: 104px;
@@ -309,6 +330,9 @@
           <textarea class="input" rows="1" placeholder="Напишите ваш вопрос"></textarea>
           <button class="send" type="button">Отправить</button>
         </div>
+        <div class="closed-note">
+          <div class="closed-note-inner">Диалог завершён. Чтобы продолжить, начните новый диалог сверху.</div>
+        </div>
       </section>
     </div>
   `;
@@ -337,6 +361,8 @@
         reset: this.shadow.querySelector(".ghost"),
         close: this.shadow.querySelector(".close"),
         service: this.shadow.querySelector(".service"),
+        composer: this.shadow.querySelector(".composer"),
+        closedNote: this.shadow.querySelector(".closed-note"),
       };
     }
 
@@ -496,6 +522,8 @@
       );
       this.elements.service.classList.toggle("hidden", !banners[status] && status !== STATUS.WAITING_OPERATOR && status !== STATUS.CLOSED);
       this.elements.messages.classList.toggle("with-service", !this.elements.service.classList.contains("hidden"));
+      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED);
+      this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
       this.elements.input.disabled = status === STATUS.CLOSED;
       this.elements.send.disabled = status === STATUS.CLOSED;
     }
@@ -569,8 +597,6 @@
       this.elements.messages.innerHTML = "";
       this.pushEmptyMessage();
       this.applyState(STATUS.AI_ACTIVE);
-      this.elements.input.disabled = false;
-      this.elements.send.disabled = false;
       this.addMessage("system", "Начат новый диалог.");
     }
 

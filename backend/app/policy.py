@@ -26,7 +26,11 @@ MEDICAL_KEYWORDS = {
 }
 PRICE_KEYWORDS = {"цена", "стоимость", "сколько стоит", "прайс"}
 DURATION_KEYWORDS = {"сколько длится", "длительность", "по времени", "сколько времени"}
-CONTACT_PROMPT = "Чтобы передать диалог специалисту, пожалуйста, оставьте имя и телефон."
+HANDOFF_MESSAGE = (
+    "Передаю диалог специалисту. Можете дописать детали, оператор увидит историю. "
+    "Если хотите, оставьте имя и телефон для обратной связи."
+)
+CONTACT_PROMPT = "Оставьте имя и телефон, и специалист сможет связаться с вами позже."
 PHONE_PATTERN = re.compile(
     r"(?:(?:\+7|8)\s*[\(\-]?\s*\d{3}\s*[\)\-]?\s*\d{3}\s*[\-]?\s*\d{2}\s*[\-]?\s*\d{2})"
 )
@@ -81,7 +85,7 @@ def analyze_message(message: str, session: Session, knowledge_base: KnowledgeBas
             confidence=0.98,
             safe_context={
                 "message_to_user": knowledge_base.company.medical_disclaimer,
-                "requires_contact": True,
+                "handoff_message": HANDOFF_MESSAGE,
             },
         )
 
@@ -101,11 +105,11 @@ def analyze_message(message: str, session: Session, knowledge_base: KnowledgeBas
                 },
             )
         return PolicyResult(
-            action=PolicyAction.ASK_CONTACT,
+            action=PolicyAction.TRANSFER_OPERATOR,
             reason=PolicyReason.OPERATOR_REQUESTED,
             service_id=service.id if service else None,
             confidence=0.95,
-            safe_context={"message_to_user": CONTACT_PROMPT},
+            safe_context={"message_to_user": HANDOFF_MESSAGE},
         )
 
     if phone:

@@ -28,8 +28,14 @@ def render_operator_panel() -> str:
         --system: #f8f9fc;
       }
       * { box-sizing: border-box; }
+      html {
+        height: 100%;
+        overflow: hidden;
+      }
       body {
         margin: 0;
+        height: 100%;
+        overflow: hidden;
         font-family: "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
         background:
           radial-gradient(circle at top left, rgba(215, 230, 255, 0.8) 0%, transparent 32%),
@@ -37,22 +43,30 @@ def render_operator_panel() -> str:
         color: var(--ink);
       }
       .layout {
-        min-height: 100vh;
+        height: 100vh;
+        overflow: hidden;
         display: grid;
         grid-template-columns: 320px 1fr;
       }
       .sidebar, .main {
         padding: 18px;
+        min-height: 0;
       }
       .sidebar {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 16px;
+        overflow: hidden;
         border-right: 1px solid var(--line);
         background: rgba(248, 251, 255, 0.88);
         backdrop-filter: blur(8px);
       }
       .main {
         display: grid;
-        grid-template-rows: auto 1fr auto;
+        grid-template-rows: auto minmax(0, 1fr) auto;
         gap: 14px;
+        height: 100%;
+        overflow: hidden;
       }
       .panel {
         background: var(--panel);
@@ -60,6 +74,10 @@ def render_operator_panel() -> str:
         border-radius: 22px;
         padding: 18px;
         box-shadow: 0 18px 40px rgba(72, 95, 130, 0.1);
+      }
+      .sessions-panel {
+        min-height: 0;
+        overflow: auto;
       }
       h1, h2 {
         margin: 0 0 10px;
@@ -117,20 +135,56 @@ def render_operator_panel() -> str:
         color: #587196;
         font-size: 12px;
       }
+      .status-chip.waiting {
+        background: #eef5ff;
+        color: #587196;
+      }
+      .status-chip.active {
+        background: #ecf8f1;
+        color: #4f8063;
+      }
+      .status-chip.closed {
+        background: #f3f5f8;
+        color: #7c8898;
+      }
       .status-dot {
         width: 8px;
         height: 8px;
         border-radius: 999px;
         background: #78a9ff;
       }
+      .status-chip.active .status-dot {
+        background: #61b17a;
+      }
+      .status-chip.closed .status-dot {
+        background: #a6b0bf;
+      }
       .toolbar {
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
       }
+      .chat-meta {
+        display: grid;
+        gap: 12px;
+      }
+      .chat-callout {
+        display: none;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #eef5ff;
+        border: 1px solid #d7e6fb;
+        color: #587196;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .chat-callout.visible {
+        display: block;
+      }
       .history {
         overflow: auto;
-        min-height: 280px;
+        min-height: 0;
+        height: 100%;
         display: flex;
         flex-direction: column;
         gap: 12px;
@@ -147,22 +201,34 @@ def render_operator_panel() -> str:
         word-break: break-word;
       }
       .msg.user {
-        align-self: flex-end;
-        background: var(--user);
+        align-self: flex-start;
+        background: #f5f8fd;
       }
       .msg.assistant {
         align-self: flex-start;
         background: var(--assistant);
       }
       .msg.operator {
-        align-self: flex-start;
-        background: var(--operator);
+        align-self: flex-end;
+        background: var(--user);
       }
       .msg.system {
         align-self: center;
         max-width: 62%;
         background: var(--system);
         color: #647288;
+        font-size: 13px;
+      }
+      .handoff-action {
+        align-self: center;
+        display: flex;
+        justify-content: center;
+        width: min(62%, 520px);
+        margin-top: -6px;
+      }
+      .handoff-action button {
+        padding: 10px 14px;
+        border-radius: 12px;
         font-size: 13px;
       }
       .msg-head {
@@ -246,10 +312,10 @@ def render_operator_panel() -> str:
         <div class="panel">
           <p class="eyebrow">Operator panel</p>
           <h1>Чаты поддержки</h1>
-          <p class="subtle">Здесь видны сессии со статусами WAITING_OPERATOR и HUMAN_ACTIVE.</p>
+          <p class="subtle">Сессии со статусами Ждет оператора и Оператор в диалоге.</p>
           <button id="refreshSessions" class="secondary">Обновить список</button>
         </div>
-        <div class="panel" style="margin-top: 16px;">
+        <div class="panel sessions-panel">
           <ul id="sessions"></ul>
         </div>
       </aside>
@@ -257,10 +323,12 @@ def render_operator_panel() -> str:
         <div class="panel">
           <p class="eyebrow">Active chat</p>
           <h2 id="sessionTitle">Чат не выбран</h2>
-          <div class="status-chip"><span class="status-dot"></span><span id="sessionStatus">Выберите сессию слева</span></div>
-          <div class="toolbar" style="margin-top: 14px;">
-            <button id="takeChat">Взять чат</button>
-            <button id="closeChat" class="secondary">Закрыть чат</button>
+          <div class="chat-meta">
+            <div id="sessionStatusChip" class="status-chip"><span class="status-dot"></span><span id="sessionStatus">Выберите сессию слева</span></div>
+            <div id="chatCallout" class="chat-callout"></div>
+            <div class="toolbar">
+              <button id="closeChat" class="secondary">Закрыть чат</button>
+            </div>
           </div>
         </div>
         <div class="panel history" id="history"></div>
@@ -279,6 +347,16 @@ def render_operator_panel() -> str:
       let wsSessionId = null;
       let currentStatus = null;
 
+      function humanStatus(status) {
+        const labels = {
+          WAITING_OPERATOR: "Ждёт оператора",
+          HUMAN_ACTIVE: "Оператор в диалоге",
+          CLOSED: "Диалог завершён",
+          AI_ACTIVE: "AI активен",
+        };
+        return labels[status] || "Выберите сессию слева";
+      }
+
       function authFetch(url, options = {}) {
         const headers = new Headers(options.headers || {});
         headers.set("x-operator-token", token || "");
@@ -286,19 +364,47 @@ def render_operator_panel() -> str:
       }
 
       function updateControls() {
-        const takeButton = document.getElementById("takeChat");
         const closeButton = document.getElementById("closeChat");
         const sendButton = document.getElementById("sendMessage");
         const input = document.getElementById("messageInput");
+        const statusChip = document.getElementById("sessionStatusChip");
+        const callout = document.getElementById("chatCallout");
 
         const hasSession = Boolean(currentSessionId);
         const isHumanActive = currentStatus === "HUMAN_ACTIVE";
+        const isWaiting = currentStatus === "WAITING_OPERATOR";
         const isClosed = currentStatus === "CLOSED";
 
-        takeButton.disabled = !hasSession || isHumanActive || isClosed;
         closeButton.disabled = !hasSession || isClosed;
         sendButton.disabled = !hasSession || !isHumanActive || !ws || ws.readyState !== WebSocket.OPEN;
         input.disabled = !hasSession || !isHumanActive || !ws || ws.readyState !== WebSocket.OPEN;
+
+        statusChip.className = "status-chip";
+        if (isWaiting) statusChip.classList.add("waiting");
+        if (isHumanActive) statusChip.classList.add("active");
+        if (isClosed) statusChip.classList.add("closed");
+
+        if (isWaiting) {
+          callout.classList.add("visible");
+          callout.textContent = "Клиент ждёт подключения специалиста. Взять чат можно в истории рядом с событием ожидания.";
+        } else if (isHumanActive) {
+          callout.classList.add("visible");
+          callout.textContent = "Чат уже в работе. Сообщения отсюда сразу уходят в клиентский виджет.";
+        } else if (isClosed) {
+          callout.classList.add("visible");
+          callout.textContent = "Диалог завершён. Если нужно, клиент может начать новый чат со своей стороны.";
+        } else {
+          callout.classList.remove("visible");
+          callout.textContent = "";
+        }
+      }
+
+      function isWaitingSystemMessage(item) {
+        return (
+          currentStatus === "WAITING_OPERATOR" &&
+          item.role === "system" &&
+          item.text === "Ожидаем подключения специалиста. Ваше сообщение сохранено в истории диалога."
+        );
       }
 
       function renderHistory(messages) {
@@ -316,6 +422,18 @@ def render_operator_panel() -> str:
           const el = document.createElement("div");
           el.className = `msg ${item.role}`;
           el.innerHTML = `<div class="msg-head">${item.role}</div><div>${item.text}</div>`;
+          if (isWaitingSystemMessage(item)) {
+            history.appendChild(el);
+            const action = document.createElement("div");
+            action.className = "handoff-action";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = "Взять чат";
+            button.onclick = takeChat;
+            action.appendChild(button);
+            history.appendChild(action);
+            continue;
+          }
           history.appendChild(el);
         }
         history.scrollTop = history.scrollHeight;
@@ -330,7 +448,7 @@ def render_operator_panel() -> str:
         for (const item of sessions) {
           const el = document.createElement("li");
           el.className = "session-item" + (item.session_id === currentSessionId ? " active" : "");
-          el.innerHTML = `<strong>${item.session_id}</strong><div class="status" style="margin-top:6px;">${item.status}</div><div class="subtle" style="margin-top:8px;">${item.last_message || "Без сообщений"}</div>`;
+          el.innerHTML = `<strong>${item.session_id}</strong><div class="status" style="margin-top:6px;">${humanStatus(item.status)}</div><div class="subtle" style="margin-top:8px;">${item.last_message || "Без сообщений"}</div>`;
           el.onclick = () => loadSession(item.session_id);
           list.appendChild(el);
         }
@@ -343,9 +461,12 @@ def render_operator_panel() -> str:
         const data = await res.json();
         currentStatus = data.status;
         document.getElementById("sessionTitle").textContent = `Чат ${data.session_id}`;
-        document.getElementById("sessionStatus").textContent = data.status;
+        document.getElementById("sessionStatus").textContent = humanStatus(data.status);
         renderHistory(data.messages);
         updateControls();
+        if (currentStatus === "HUMAN_ACTIVE") {
+          connectWs();
+        }
         await loadSessions();
       }
 
@@ -353,8 +474,8 @@ def render_operator_panel() -> str:
         if (!currentSessionId || currentStatus === "HUMAN_ACTIVE") return;
         const res = await authFetch(`/api/operator/sessions/${currentSessionId}/take`, { method: "POST" });
         if (!res.ok) return;
-        connectWs();
         await loadSession(currentSessionId);
+        connectWs();
       }
 
       async function closeChat() {
@@ -381,7 +502,11 @@ def render_operator_panel() -> str:
         const proto = window.location.protocol === "https:" ? "wss" : "ws";
         wsSessionId = currentSessionId;
         ws = new WebSocket(`${proto}://${window.location.host}/ws/operator?token=${encodeURIComponent(token || "")}&session_id=${encodeURIComponent(currentSessionId)}`);
-        ws.onopen = () => updateControls();
+        ws.onopen = () => {
+          currentStatus = "HUMAN_ACTIVE";
+          document.getElementById("sessionStatus").textContent = humanStatus(currentStatus);
+          updateControls();
+        };
         ws.onmessage = async (event) => {
           const payload = JSON.parse(event.data);
           if (payload.type === "message" || payload.type === "history_update") {
@@ -405,7 +530,6 @@ def render_operator_panel() -> str:
       }
 
       document.getElementById("refreshSessions").onclick = loadSessions;
-      document.getElementById("takeChat").onclick = takeChat;
       document.getElementById("closeChat").onclick = closeChat;
       document.getElementById("sendMessage").onclick = sendMessage;
       updateControls();

@@ -100,10 +100,12 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
     elif policy_result.action == PolicyAction.TRANSFER_OPERATOR:
         await session_store.set_operator_requested(session.session_id, True)
-        answer = (
-            f"{policy_result.safe_context.get('message_to_user', '')} "
-            "Чтобы передать диалог специалисту, пожалуйста, оставьте имя и телефон."
-        ).strip()
+        await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        answer = str(
+            policy_result.safe_context.get("handoff_message")
+            or policy_result.safe_context.get("message_to_user")
+            or "Передаю диалог специалисту. Оператор увидит историю переписки."
+        )
     elif policy_result.action == PolicyAction.CLARIFY:
         answer = str(policy_result.safe_context.get("message_to_user") or "")
     elif policy_result.action == PolicyAction.REJECT:

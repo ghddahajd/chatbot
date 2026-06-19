@@ -235,6 +235,25 @@
         background: #edf1f7;
         color: #8190a6;
       }
+      .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: -4px;
+      }
+      .quick-action {
+        border: 1px solid #d7e6fb;
+        border-radius: 999px;
+        background: #f8fbff;
+        color: #4f6f9f;
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+        padding: 8px 11px;
+      }
+      .quick-action:hover {
+        background: #eef5ff;
+      }
       .composer {
         display: grid;
         grid-template-columns: 1fr auto;
@@ -497,42 +516,55 @@
       }
     }
 
-    applyState(status) {
-      this.state.status = status;
-      const labels = {
-        AI_ACTIVE: "AI-консультант на связи",
-        WAITING_OPERATOR: "Ожидаем подключения специалиста",
-        HUMAN_ACTIVE: "В диалоге специалист",
-        CLOSED: "Диалог завершён",
-      };
-      const banners = {
-        AI_ACTIVE: "",
-        WAITING_OPERATOR:
-          "Ожидаем подключения специалиста. Вы можете дописать детали, они сохранятся в истории диалога.",
-        HUMAN_ACTIVE: "Специалист подключён к диалогу.",
-        CLOSED: "",
-      };
-
-      this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;
-      this.elements.banner.textContent = banners[status] || "";
-      this.elements.banner.classList.toggle("visible", Boolean(banners[status]));
-      this.elements.actions.classList.toggle(
-        "visible",
-        status === STATUS.WAITING_OPERATOR || status === STATUS.CLOSED
-      );
-      this.elements.service.classList.toggle("hidden", !banners[status] && status !== STATUS.WAITING_OPERATOR && status !== STATUS.CLOSED);
-      this.elements.messages.classList.toggle("with-service", !this.elements.service.classList.contains("hidden"));
-      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED);
-      this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
-      this.elements.input.disabled = status === STATUS.CLOSED;
-      this.elements.send.disabled = status === STATUS.CLOSED;
+    clearQuickActions() {
+      this.elements.messages.querySelectorAll(".quick-actions").forEach((node) => node.remove());
     }
 
-    async handleSubmit() {
-      const text = this.elements.input.value.trim();
+    addQuickActions(actions) {
+      this.clearQuickActions();
+      if (!Array.isArray(actions) || actions.length === 0 || this.state.status === STATUS.CLOSED) {
+        return;
+      }
+
+      const wrap = document.createElement("div");
+      wrap.className = "quick-actions";
+
+      for (const action of actions) {
+        const button = document.createElement("button");
+        button.className = "quick-action";
+        button.type = "button";
+        button.textContent = action.label;
+        button.addEventListener("click", () => this.handleQuickAction(action));
+        wrap.appendChild(button);
+      }
+
+      this.elements.messages.appendChild(wrap);
+      this.scrollToBottom();
+    }
+
+    handleQuickAction(action) {
+      if (!action || !action.type) return;
+
+      if (action.type === "open_url") {
+        window.open(action.value, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      if (action.type === "phone") {
+        window.location.href = "tel:" + action.value;
+        return;
+      }
+
+      if (action.type === "reply") {
+        this.sendText(String(action.value || action.label || "").trim());
+      }
+    }
+
+    async sendText(text) {
       if (!text || this.state.sending || this.state.status === STATUS.CLOSED) return;
 
       this.elements.input.value = "";
+      this.clearQuickActions();
       this.addMessage("user", text);
 
       if (this.state.status === STATUS.HUMAN_ACTIVE && this.state.ws) {
@@ -566,6 +598,7 @@
             payload.status === STATUS.HUMAN_ACTIVE || payload.action === "reject" ? "system" : "assistant";
           this.addMessage(role, payload.answer);
         }
+        this.addQuickActions(payload.quick_actions);
         if (payload.status === STATUS.WAITING_OPERATOR || payload.status === STATUS.HUMAN_ACTIVE) {
           this.connectWebSocket();
         }
@@ -575,6 +608,42 @@
         this.state.sending = false;
         this.elements.send.disabled = this.state.status === STATUS.CLOSED;
       }
+    }
+
+    applyState(status) {
+      this.state.status = status;
+      const labels = {
+        AI_ACTIVE: "AI-консультант на связи",
+        WAITING_OPERATOR: "Ожидаем подключения специалиста",
+        HUMAN_ACTIVE: "В диалоге специалист",
+        CLOSED: "Диалог завершён",
+      };
+      const banners = {
+        AI_ACTIVE: "",
+        WAITING_OPERATOR:
+          "Ожидаем подключения специалиста. Вы можете дописать детали, они сохранятся в истории диалога.",
+        HUMAN_ACTIVE: "Специалист подключён к диалогу.",
+        CLOSED: "",
+      };
+
+      this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;
+      this.elements.banner.textContent = banners[status] || "";
+      this.elements.banner.classList.toggle("visible", Boolean(banners[status]));
+      this.elements.actions.classList.toggle(
+        "visible",
+        status === STATUS.WAITING_OPERATOR || status === STATUS.CLOSED
+      );
+      this.elements.service.classList.toggle("hidden", !banners[status] && status !== STATUS.WAITING_OPERATOR && status !== STATUS.CLOSED);
+      this.elements.messages.classList.toggle("with-service", !this.elements.service.classList.contains("hidden"));
+      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED);
+      this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
+      this.elements.input.disabled = status === STATUS.CLOSED;
+      this.elements.send.disabled = status === STATUS.CLOSED;
+    }
+
+    async handleSubmit() {
+      const text = this.elements.input.value.trim();
+      this.sendText(text);
     }
 
     async startNewDialog() {
@@ -594,6 +663,7 @@
         this.state.ws = null;
       }
       this.resetLocalSession();
+      this.clearQuickActions();
       this.elements.messages.innerHTML = "";
       this.pushEmptyMessage();
       this.applyState(STATUS.AI_ACTIVE);

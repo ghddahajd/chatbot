@@ -10,10 +10,40 @@ from ..models import (
     PolicyAction,
     SessionPublicResponse,
     SessionStatus,
+    QuickAction,
 )
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def build_quick_actions(policy_action: PolicyAction, status: SessionStatus, lead_created: bool) -> list[QuickAction]:
+    actions: list[QuickAction] = []
+
+    if status == SessionStatus.AI_ACTIVE:
+        actions.extend(
+            [
+                QuickAction(type="reply", label="Позвать оператора", value="Позовите оператора"),
+                QuickAction(type="reply", label="Оставить телефон", value="Хочу оставить телефон"),
+            ]
+        )
+
+    if status == SessionStatus.WAITING_OPERATOR:
+        actions.extend(
+            [
+                QuickAction(type="reply", label="Дополнить запрос", value="Хочу добавить детали"),
+                QuickAction(type="reply", label="Оставить телефон", value="Хочу оставить телефон"),
+            ]
+        )
+
+    if policy_action in {PolicyAction.CLARIFY, PolicyAction.REJECT}:
+        actions.append(QuickAction(type="reply", label="Список услуг", value="Какие услуги есть?"))
+
+    if lead_created:
+        actions.append(QuickAction(type="phone", label="Позвонить", value="+74950000000"))
+
+    actions.append(QuickAction(type="open_url", label="Открыть сайт", value="https://www.medcenterrosh.ru/"))
+    return actions[:4]
 
 
 @router.get("/session/{session_id}", response_model=SessionPublicResponse)
@@ -60,6 +90,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             action=PolicyAction.REJECT,
             answer=answer,
             lead_created=False,
+            quick_actions=build_quick_actions(PolicyAction.REJECT, session.status, False),
         )
 
     if session.status == SessionStatus.HUMAN_ACTIVE:
@@ -69,6 +100,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             action=PolicyAction.REJECT,
             answer="Чат передан специалисту. Пожалуйста, дождитесь ответа оператора.",
             lead_created=False,
+            quick_actions=[],
         )
 
     policy_result = request.app.state.policy_analyzer(payload.message, session, knowledge_base)
@@ -126,4 +158,5 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         action=policy_result.action,
         answer=answer,
         lead_created=lead_created,
+        quick_actions=build_quick_actions(policy_result.action, session.status, lead_created),
     )

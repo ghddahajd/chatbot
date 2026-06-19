@@ -114,12 +114,19 @@ class ChatMessageRequest(BaseModel):
     message: str
 
 
+class QuickAction(BaseModel):
+    type: str
+    label: str
+    value: str
+
+
 class ChatMessageResponse(BaseModel):
     session_id: str
     status: SessionStatus
     action: PolicyAction
     answer: str
     lead_created: bool = False
+    quick_actions: list[QuickAction] = Field(default_factory=list)
 
 
 class SessionPublicResponse(BaseModel):

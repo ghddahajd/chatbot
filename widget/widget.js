@@ -331,7 +331,7 @@
           <button class="send" type="button">Отправить</button>
         </div>
         <div class="closed-note">
-          <div class="closed-note-inner">Диалог завершён. Чтобы продолжить, начните новый диалог сверху.</div>
+          <div class="closed-note-inner">Чтобы продолжить, начните новый диалог сверху.</div>
         </div>
       </section>
     </div>
@@ -510,7 +510,7 @@
         WAITING_OPERATOR:
           "Ожидаем подключения специалиста. Вы можете дописать детали, они сохранятся в истории диалога.",
         HUMAN_ACTIVE: "Специалист подключён к диалогу.",
-        CLOSED: "Диалог завершён.",
+        CLOSED: "",
       };
 
       this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;

@@ -407,6 +407,35 @@ def render_operator_panel() -> str:
         );
       }
 
+      function isHandoffMessage(item) {
+        return (
+          item.role === "assistant" &&
+          typeof item.text === "string" &&
+          item.text.startsWith("Передаю диалог специалисту.")
+        );
+      }
+
+      function displayRole(item) {
+        return isHandoffMessage(item) ? "system" : item.role;
+      }
+
+      function appendTakeChatAction(history) {
+        const action = document.createElement("div");
+        action.className = "handoff-action";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Взять чат";
+        button.onclick = takeChat;
+        action.appendChild(button);
+        history.appendChild(action);
+      }
+
+      function shouldShowTakeAction(item, index, messages) {
+        if (currentStatus !== "WAITING_OPERATOR") return false;
+        if (isWaitingSystemMessage(item)) return true;
+        return index === messages.length - 1;
+      }
+
       function renderHistory(messages) {
         const history = document.getElementById("history");
         history.innerHTML = "";
@@ -418,20 +447,17 @@ def render_operator_panel() -> str:
         divider.className = "divider";
         divider.textContent = "История";
         history.appendChild(divider);
-        for (const item of messages) {
+        let takeActionAdded = false;
+        for (let index = 0; index < messages.length; index += 1) {
+          const item = messages[index];
+          const role = displayRole(item);
           const el = document.createElement("div");
-          el.className = `msg ${item.role}`;
-          el.innerHTML = `<div class="msg-head">${item.role}</div><div>${item.text}</div>`;
-          if (isWaitingSystemMessage(item)) {
+          el.className = `msg ${role}`;
+          el.innerHTML = `<div class="msg-head">${role}</div><div>${item.text}</div>`;
+          if (!takeActionAdded && shouldShowTakeAction(item, index, messages)) {
             history.appendChild(el);
-            const action = document.createElement("div");
-            action.className = "handoff-action";
-            const button = document.createElement("button");
-            button.type = "button";
-            button.textContent = "Взять чат";
-            button.onclick = takeChat;
-            action.appendChild(button);
-            history.appendChild(action);
+            appendTakeChatAction(history);
+            takeActionAdded = true;
             continue;
           }
           history.appendChild(el);
@@ -532,6 +558,12 @@ def render_operator_panel() -> str:
       document.getElementById("refreshSessions").onclick = loadSessions;
       document.getElementById("closeChat").onclick = closeChat;
       document.getElementById("sendMessage").onclick = sendMessage;
+      document.getElementById("messageInput").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          sendMessage();
+        }
+      });
       updateControls();
       loadSessions();
     </script>

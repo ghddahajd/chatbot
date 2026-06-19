@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import WebSocket
 
@@ -36,8 +36,20 @@ class ConnectionManager:
     async def disconnect_client(self, session_id: str) -> None:
         self._client_connections.pop(session_id, None)
 
-    async def disconnect_operator(self, session_id: str) -> None:
+    async def disconnect_operator(
+        self,
+        session_id: str,
+        websocket: Optional[WebSocket] = None,
+        close_session: bool = True,
+    ) -> None:
+        current = self._operator_connections.get(session_id)
+        if websocket is not None and current is not websocket:
+            return
+
         self._operator_connections.pop(session_id, None)
+        if not close_session:
+            return
+
         await self.session_store.set_status(session_id, SessionStatus.CLOSED)
         await self.send_to_client(
             session_id,

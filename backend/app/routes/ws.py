@@ -61,10 +61,12 @@ async def operator_ws(websocket: WebSocket) -> None:
             if not text:
                 continue
             await session_store.append_message(session_id, MessageRole.OPERATOR, text)
+            operator_payload = {"type": "message", "role": "operator", "text": text, "session_id": session_id}
             await manager.send_to_client(
                 session_id,
-                {"type": "message", "role": "operator", "text": text},
+                operator_payload,
             )
+            await manager.send_to_operator(session_id, operator_payload)
     except WebSocketDisconnect:
         if session.status != SessionStatus.CLOSED:
-            await manager.disconnect_operator(session_id)
+            await manager.disconnect_operator(session_id, websocket=websocket)

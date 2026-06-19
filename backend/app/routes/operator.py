@@ -54,9 +54,15 @@ async def take_session(
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict[str, str]:
     _verify_token(request, x_operator_token)
-    session = await request.app.state.session_store.set_status(session_id, SessionStatus.HUMAN_ACTIVE)
-    if session is None:
+    existing = await request.app.state.session_store.get(session_id)
+    if existing is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if existing.status == SessionStatus.CLOSED:
+        raise HTTPException(status_code=400, detail="Session is already closed")
+    if existing.status == SessionStatus.HUMAN_ACTIVE:
+        return {"status": existing.status.value}
+
+    session = await request.app.state.session_store.set_status(session_id, SessionStatus.HUMAN_ACTIVE)
     return {"status": session.status.value}
 
 

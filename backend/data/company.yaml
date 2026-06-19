@@ -4,6 +4,8 @@ city: Москва
 working_hours: "Пн-Пт 9:00-20:00, Сб 10:00-18:00"
 phone: "+7 (495) 000-00-00"
 address: "Москва, адрес уточняется оператором"
+website_url: "https://www.medcenterrosh.ru/"
+telegram_url: "https://t.me/rosh_demo"
 allowed_topics:
   - услуги центра
   - запись на прием

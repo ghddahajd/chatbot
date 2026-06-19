@@ -40,6 +40,9 @@
         cursor: pointer;
         box-shadow: 0 16px 38px rgba(50, 73, 107, 0.16);
       }
+      .launcher.hidden {
+        display: none;
+      }
       .panel {
         width: min(500px, calc(100vw - 32px));
         height: min(650px, calc(100vh - 110px));
@@ -88,14 +91,6 @@
         text-align: center;
         color: #3a475d;
       }
-      .subtitle {
-        margin: 10px auto 0;
-        max-width: 390px;
-        font-size: 13px;
-        line-height: 1.5;
-        text-align: center;
-        color: #7a869a;
-      }
       .statusbar {
         display: flex;
         align-items: center;
@@ -105,6 +100,15 @@
         font-size: 12px;
         color: #7b8799;
       }
+      .statusbar.status-waiting {
+        color: #8a6b22;
+      }
+      .statusbar.status-human {
+        color: #47775d;
+      }
+      .statusbar.status-closed {
+        color: #8792a4;
+      }
       .dot {
         width: 8px;
         height: 8px;
@@ -112,42 +116,28 @@
         background: #6ea8ff;
         box-shadow: 0 0 0 5px rgba(110, 168, 255, 0.14);
       }
-      .banner {
-        display: none;
-        margin: 0;
-        padding: 13px 15px;
-        border-radius: 14px;
-        background: #eef5ff;
-        border: 1px solid #d7e6fb;
-        color: #587196;
-        font-size: 13px;
-        line-height: 1.5;
+      .status-waiting .dot {
+        background: #e5b84d;
+        box-shadow: 0 0 0 5px rgba(229, 184, 77, 0.16);
+        animation: pulse-waiting 1.4s ease-in-out infinite;
       }
-      .banner.visible { display: block; }
-      .actions {
-        display: none;
-        padding: 0;
+      .status-human .dot {
+        background: #56b77a;
+        box-shadow: 0 0 0 5px rgba(86, 183, 122, 0.14);
       }
-      .actions.visible { display: block; }
-      .service {
-        display: grid;
-        gap: 10px;
-        padding: 12px 18px 14px;
-        border-top: 1px solid rgba(121, 138, 166, 0.1);
-        border-bottom: 1px solid rgba(121, 138, 166, 0.1);
-        background: linear-gradient(180deg, #fcfdff 0%, #f8fbff 100%);
+      .status-closed .dot {
+        background: #aab3c1;
+        box-shadow: 0 0 0 5px rgba(170, 179, 193, 0.12);
       }
-      .service.hidden {
-        display: none;
-      }
-      .ghost {
-        border: 1px solid rgba(121, 138, 166, 0.22);
-        border-radius: 14px;
-        background: rgba(255,255,255,0.9);
-        color: #556378;
-        font: inherit;
-        padding: 10px 12px;
-        cursor: pointer;
+      @keyframes pulse-waiting {
+        0%, 100% {
+          transform: scale(1);
+          box-shadow: 0 0 0 5px rgba(229, 184, 77, 0.16);
+        }
+        50% {
+          transform: scale(1.18);
+          box-shadow: 0 0 0 8px rgba(229, 184, 77, 0.08);
+        }
       }
       .messages {
         padding: 14px 18px;
@@ -156,27 +146,6 @@
         flex-direction: column;
         gap: 12px;
         background: #ffffff;
-      }
-      .messages.with-service {
-        padding-top: 14px;
-      }
-      .divider {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin: 2px 0 4px;
-        color: #9aa6b8;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .divider::before,
-      .divider::after {
-        content: "";
-        height: 1px;
-        flex: 1;
-        background: linear-gradient(90deg, rgba(197, 207, 223, 0) 0%, rgba(197, 207, 223, 0.9) 50%, rgba(197, 207, 223, 0) 100%);
       }
       .empty {
         padding: 16px 18px;
@@ -275,14 +244,18 @@
       .closed-note.visible {
         display: block;
       }
-      .closed-note-inner {
-        padding: 13px 15px;
+      .closed-reset {
+        width: 100%;
+        min-height: 54px;
+        border: 0;
         border-radius: 16px;
-        background: #f7f9fc;
-        border: 1px solid #e3eaf5;
-        color: #657389;
+        background: linear-gradient(180deg, #5f98f4 0%, #467fdd 100%);
+        color: #ffffff;
+        cursor: pointer;
+        font: inherit;
         font-size: 13px;
-        line-height: 1.45;
+        font-weight: 700;
+        box-shadow: 0 10px 18px rgba(70, 127, 221, 0.16);
       }
       .input {
         min-height: 52px;
@@ -337,20 +310,15 @@
           <p class="eyebrow">Medical concierge</p>
           <button class="close" type="button" aria-label="Закрыть чат">×</button>
           <h2 class="title">Чат с поддержкой</h2>
-          <p class="subtitle">Подскажу по услугам, ценам и записи. Если нужно, передам диалог специалисту.</p>
         </header>
-        <div class="statusbar"><span class="dot"></span><span class="status-text">AI-консультант на связи</span></div>
-        <div class="service hidden">
-          <div class="banner"></div>
-          <div class="actions"><button class="ghost" type="button">Начать новый диалог</button></div>
-        </div>
+        <div class="statusbar status-ai"><span class="dot"></span><span class="status-text">AI-консультант на связи</span></div>
         <div class="messages"></div>
         <div class="composer">
           <textarea class="input" rows="1" placeholder="Напишите ваш вопрос"></textarea>
           <button class="send" type="button">Отправить</button>
         </div>
         <div class="closed-note">
-          <div class="closed-note-inner">Чтобы продолжить, начните новый диалог сверху.</div>
+          <button class="closed-reset" type="button">Начать новый диалог</button>
         </div>
       </section>
     </div>
@@ -374,12 +342,10 @@
         messages: this.shadow.querySelector(".messages"),
         input: this.shadow.querySelector(".input"),
         send: this.shadow.querySelector(".send"),
+        statusbar: this.shadow.querySelector(".statusbar"),
         statusText: this.shadow.querySelector(".status-text"),
-        banner: this.shadow.querySelector(".banner"),
-        actions: this.shadow.querySelector(".actions"),
-        reset: this.shadow.querySelector(".ghost"),
+        reset: this.shadow.querySelector(".closed-reset"),
         close: this.shadow.querySelector(".close"),
-        service: this.shadow.querySelector(".service"),
         composer: this.shadow.querySelector(".composer"),
         closedNote: this.shadow.querySelector(".closed-note"),
       };
@@ -431,6 +397,7 @@
     toggle() {
       this.state.open = !this.state.open;
       this.elements.panel.classList.toggle("open", this.state.open);
+      this.elements.launcher.classList.toggle("hidden", this.state.open);
       this.elements.launcher.textContent = this.state.open ? "×" : "+";
       if (this.state.open) {
         this.scrollToBottom();
@@ -452,13 +419,6 @@
       if (empty) empty.remove();
     }
 
-    addDivider(label) {
-      const divider = document.createElement("div");
-      divider.className = "divider";
-      divider.textContent = label;
-      this.elements.messages.appendChild(divider);
-    }
-
     shouldHideSystemMessage(text) {
       const compact = String(text || "").trim();
       return (
@@ -468,18 +428,27 @@
       );
     }
 
+    isHandoffMessage(text) {
+      const compact = String(text || "").trim();
+      return compact.startsWith("Передаю диалог специалисту.") || compact.startsWith("Передаю специалисту.");
+    }
+
+    handoffMessage() {
+      return "Передаю специалисту. Можете добавить детали — оператор увидит историю.";
+    }
+
     renderHistory(messages) {
       this.elements.messages.innerHTML = "";
       if (!messages.length) {
         this.pushEmptyMessage();
         return;
       }
-      this.addDivider("История");
       for (const item of messages) {
         if (item.role === "system" && this.shouldHideSystemMessage(item.text)) {
           continue;
         }
-        this.addMessage(item.role, item.text, true);
+        const isHandoff = item.role === "assistant" && this.isHandoffMessage(item.text);
+        this.addMessage(isHandoff ? "system" : item.role, isHandoff ? this.handoffMessage() : item.text, true);
       }
       this.scrollToBottom();
     }
@@ -509,9 +478,6 @@
       node.appendChild(body);
       this.elements.messages.appendChild(node);
       if (!silent) {
-        if (!this.elements.messages.querySelector(".divider")) {
-          this.addDivider("История");
-        }
         this.scrollToBottom();
       }
     }
@@ -522,7 +488,7 @@
 
     addQuickActions(actions) {
       this.clearQuickActions();
-      if (!Array.isArray(actions) || actions.length === 0 || this.state.status === STATUS.CLOSED) {
+      if (!Array.isArray(actions) || actions.length === 0 || this.state.status !== STATUS.AI_ACTIVE) {
         return;
       }
 
@@ -594,9 +560,10 @@
         }
         this.applyState(payload.status);
         if (payload.answer) {
+          const isHandoff = payload.status === STATUS.WAITING_OPERATOR && this.isHandoffMessage(payload.answer);
           const role =
-            payload.status === STATUS.HUMAN_ACTIVE || payload.action === "reject" ? "system" : "assistant";
-          this.addMessage(role, payload.answer);
+            isHandoff || payload.status === STATUS.HUMAN_ACTIVE || payload.action === "reject" ? "system" : "assistant";
+          this.addMessage(role, isHandoff ? this.handoffMessage() : payload.answer);
         }
         this.addQuickActions(payload.quick_actions);
         if (payload.status === STATUS.WAITING_OPERATOR || payload.status === STATUS.HUMAN_ACTIVE) {
@@ -614,29 +581,29 @@
       this.state.status = status;
       const labels = {
         AI_ACTIVE: "AI-консультант на связи",
-        WAITING_OPERATOR: "Ожидаем подключения специалиста",
-        HUMAN_ACTIVE: "В диалоге специалист",
+        WAITING_OPERATOR: "Ожидаем специалиста",
+        HUMAN_ACTIVE: "Специалист в чате",
         CLOSED: "Диалог завершён",
       };
-      const banners = {
-        AI_ACTIVE: "",
-        WAITING_OPERATOR:
-          "Ожидаем подключения специалиста. Вы можете дописать детали, они сохранятся в истории диалога.",
-        HUMAN_ACTIVE: "Специалист подключён к диалогу.",
-        CLOSED: "",
+      const placeholders = {
+        AI_ACTIVE: "Напишите ваш вопрос",
+        WAITING_OPERATOR: "Добавьте детали, оператор их увидит...",
+        HUMAN_ACTIVE: "Напишите ваш вопрос",
+        CLOSED: "Диалог завершён",
+      };
+      const statusClasses = {
+        AI_ACTIVE: "status-ai",
+        WAITING_OPERATOR: "status-waiting",
+        HUMAN_ACTIVE: "status-human",
+        CLOSED: "status-closed",
       };
 
       this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;
-      this.elements.banner.textContent = banners[status] || "";
-      this.elements.banner.classList.toggle("visible", Boolean(banners[status]));
-      this.elements.actions.classList.toggle(
-        "visible",
-        status === STATUS.WAITING_OPERATOR || status === STATUS.CLOSED
-      );
-      this.elements.service.classList.toggle("hidden", !banners[status] && status !== STATUS.WAITING_OPERATOR && status !== STATUS.CLOSED);
-      this.elements.messages.classList.toggle("with-service", !this.elements.service.classList.contains("hidden"));
+      this.elements.statusbar.classList.remove("status-ai", "status-waiting", "status-human", "status-closed");
+      this.elements.statusbar.classList.add(statusClasses[status] || statusClasses.AI_ACTIVE);
       this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED);
       this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
+      this.elements.input.placeholder = placeholders[status] || placeholders.AI_ACTIVE;
       this.elements.input.disabled = status === STATUS.CLOSED;
       this.elements.send.disabled = status === STATUS.CLOSED;
     }

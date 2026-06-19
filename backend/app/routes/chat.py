@@ -11,38 +11,44 @@ from ..models import (
     SessionPublicResponse,
     SessionStatus,
     QuickAction,
+    CompanyConfig,
 )
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
-def build_quick_actions(policy_action: PolicyAction, status: SessionStatus, lead_created: bool) -> list[QuickAction]:
+def build_quick_actions(
+    policy_action: PolicyAction,
+    status: SessionStatus,
+    lead_created: bool,
+    company: CompanyConfig,
+) -> list[QuickAction]:
     actions: list[QuickAction] = []
 
     if status == SessionStatus.AI_ACTIVE:
         actions.extend(
             [
                 QuickAction(type="reply", label="Позвать оператора", value="Позовите оператора"),
-                QuickAction(type="reply", label="Оставить телефон", value="Хочу оставить телефон"),
             ]
         )
 
-    if status == SessionStatus.WAITING_OPERATOR:
-        actions.extend(
-            [
-                QuickAction(type="reply", label="Дополнить запрос", value="Хочу добавить детали"),
-                QuickAction(type="reply", label="Оставить телефон", value="Хочу оставить телефон"),
-            ]
-        )
-
-    if policy_action in {PolicyAction.CLARIFY, PolicyAction.REJECT}:
+    if status == SessionStatus.AI_ACTIVE and policy_action in {PolicyAction.CLARIFY, PolicyAction.REJECT}:
         actions.append(QuickAction(type="reply", label="Список услуг", value="Какие услуги есть?"))
 
     if lead_created:
-        actions.append(QuickAction(type="phone", label="Позвонить", value="+74950000000"))
+        actions.append(QuickAction(type="phone", label="Позвонить", value=company.phone))
 
-    actions.append(QuickAction(type="open_url", label="Открыть сайт", value="https://www.medcenterrosh.ru/"))
+    should_show_external_links = (
+        status == SessionStatus.WAITING_OPERATOR
+        or lead_created
+        or policy_action in {PolicyAction.CLARIFY, PolicyAction.REJECT}
+    )
+
+    if should_show_external_links and company.telegram_url:
+        actions.append(QuickAction(type="open_url", label="Написать в Telegram", value=company.telegram_url))
+    if should_show_external_links and company.website_url:
+        actions.append(QuickAction(type="open_url", label="Открыть сайт", value=company.website_url))
     return actions[:4]
 
 
@@ -82,15 +88,18 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     await session_store.append_message(session.session_id, MessageRole.USER, payload.message)
 
     if session.status == SessionStatus.WAITING_OPERATOR:
-        answer = "Ожидаем подключения специалиста. Ваше сообщение сохранено в истории диалога."
-        await session_store.append_message(session.session_id, MessageRole.SYSTEM, answer)
         return ChatMessageResponse(
             session_id=session.session_id,
             status=session.status,
             action=PolicyAction.REJECT,
-            answer=answer,
+            answer="",
             lead_created=False,
-            quick_actions=build_quick_actions(PolicyAction.REJECT, session.status, False),
+            quick_actions=build_quick_actions(
+                PolicyAction.REJECT,
+                session.status,
+                False,
+                knowledge_base.company,
+            ),
         )
 
     if session.status == SessionStatus.HUMAN_ACTIVE:
@@ -158,5 +167,10 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         action=policy_result.action,
         answer=answer,
         lead_created=lead_created,
-        quick_actions=build_quick_actions(policy_result.action, session.status, lead_created),
+        quick_actions=build_quick_actions(
+            policy_result.action,
+            session.status,
+            lead_created,
+            knowledge_base.company,
+        ),
     )

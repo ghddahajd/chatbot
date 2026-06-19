@@ -94,6 +94,8 @@ class CompanyConfig(BaseModel):
     working_hours: str
     phone: str
     address: Optional[str] = None
+    website_url: Optional[str] = None
+    telegram_url: Optional[str] = None
     allowed_topics: list[str] = Field(default_factory=list)
     operator_triggers: list[str] = Field(default_factory=list)
     forbidden_claims: list[str] = Field(default_factory=list)

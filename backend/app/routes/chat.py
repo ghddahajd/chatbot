@@ -8,6 +8,7 @@ from ..policy import classify_and_extract
 from ..models import (
     ChatMessageRequest,
     ChatMessageResponse,
+    Message,
     MessageRole,
     PolicyAction,
     QuickAction,
@@ -81,7 +82,15 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
     if local_service_id and not model_service_id:
         return local_result
     if (
-        local_intent in {"list_services", "price_question", "medical_advice", "operator_request", "off_topic"}
+        local_intent
+        in {
+            "list_services",
+            "price_question",
+            "medical_advice",
+            "operator_request",
+            "off_topic",
+            "cosmetic_concern",
+        }
         and model_intent in {"small_talk", "service_mention"}
         and not model_service_id
     ):
@@ -102,18 +111,21 @@ async def safe_complete(
     request: Request,
     context: dict[str, object],
     message: str,
+    history: list[Message],
 ) -> str:
     try:
         return await request.app.state.llm_client.complete(
             request.app.state.system_prompt,
             context,
             message,
+            history,
         )
     except Exception:
         return await fallback_llm_client.complete(
             request.app.state.system_prompt,
             context,
             message,
+            history,
         )
 
 
@@ -225,7 +237,12 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     elif policy_result.action == PolicyAction.REJECT:
         answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
     else:
-        answer = await safe_complete(request, policy_result.safe_context, payload.message)
+        answer = await safe_complete(
+            request,
+            policy_result.safe_context,
+            payload.message,
+            session.messages[-8:],
+        )
 
     await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
     session = await session_store.get(session.session_id)

@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 import httpx
 
+from .models import Message
+
 
 PRICE_DISCLAIMER = "Предварительно так, точнее сообщит специалист."
 DEFAULT_FALLBACK = "Уточните, пожалуйста, ваш вопрос, и я постараюсь помочь в рамках услуг центра."
@@ -15,6 +17,8 @@ SYSTEM_PROMPT = (
     "Ты консультант медицинского/косметологического центра. Ты не врач и не ставишь диагнозы. "
     "Отвечай только по переданному safe_context. Не придумывай цены, сроки, услуги или рекомендации. "
     "Если данных нет, предложи уточнение или специалиста. "
+    "Учитывай контекст предыдущих сообщений в этом диалоге. "
+    "Если пользователь продолжает тему — не переспрашивай то что уже сказал. "
     f"Если отвечаешь про цену или длительность, обязательно добавь фразу: {PRICE_DISCLAIMER} "
     "Отвечай кратко, по-русски, без Markdown."
 )
@@ -34,6 +38,8 @@ INTENT_CLASSIFICATION_PROMPT = (
     "('чистку лица' = 'чистка лица', тот же service_id).\n"
     "- Если упомянута услуга которой точно нет в списке — service_id: null, "
     "intent: unknown_service.\n"
+    "- cosmetic_concern — эстетическая жалоба на внешний вид кожи/волос "
+    "(НЕ боль, НЕ болезнь, НЕ медицинский симптом).\n"
     "Ответь ТОЛЬКО JSON, без текста вокруг."
 )
 SMALL_TALK_PROMPT = (
@@ -47,7 +53,13 @@ class BaseLLMClient(ABC):
     """Abstract LLM client interface."""
 
     @abstractmethod
-    async def complete(self, system_prompt: str, context: dict[str, Any], user_message: str) -> str:
+    async def complete(
+        self,
+        system_prompt: str,
+        context: dict[str, Any],
+        user_message: str,
+        history: list[Message],
+    ) -> str:
         """Return a model completion based on provided safe context."""
 
     async def classify_and_extract(
@@ -70,8 +82,14 @@ class BaseLLMClient(ABC):
 class MockLLMClient(BaseLLMClient):
     """Deterministic response builder used when no external LLM is configured."""
 
-    async def complete(self, system_prompt: str, context: dict[str, Any], user_message: str) -> str:
-        del system_prompt, user_message
+    async def complete(
+        self,
+        system_prompt: str,
+        context: dict[str, Any],
+        user_message: str,
+        history: list[Message],
+    ) -> str:
+        del system_prompt, user_message, history
 
         message_to_user = context.get("message_to_user")
         if isinstance(message_to_user, str) and message_to_user.strip():
@@ -82,6 +100,7 @@ class MockLLMClient(BaseLLMClient):
         company = context.get("company") or {}
         question_type = context.get("question_type")
         all_services = context.get("all_services")
+        suggested_services = context.get("suggested_services")
 
         if question_type == "list_services" and isinstance(all_services, list):
             service_names = [
@@ -91,6 +110,19 @@ class MockLLMClient(BaseLLMClient):
             ]
             if service_names:
                 return "В центре доступны услуги: " + ", ".join(service_names) + ". Какая услуга вас интересует?"
+
+        if question_type == "cosmetic_concern" and isinstance(suggested_services, list):
+            service_names = [
+                str(service.get("name"))
+                for service in suggested_services
+                if isinstance(service, dict) and service.get("name")
+            ]
+            if service_names:
+                return (
+                    "Для такого запроса обычно подходят: "
+                    + ", ".join(service_names)
+                    + ". Точные рекомендации даст специалист на консультации."
+                )
 
         service_name = service.get("name")
         short_description = service.get("short_description")
@@ -208,14 +240,35 @@ class OpenAIClient(BaseLLMClient):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    async def complete(self, system_prompt: str, context: dict[str, Any], user_message: str) -> str:
+    async def complete(
+        self,
+        system_prompt: str,
+        context: dict[str, Any],
+        user_message: str,
+        history: list[Message],
+    ) -> str:
         safe_context = json.dumps(context, ensure_ascii=False, default=str)
+        history_payload = json.dumps(
+            [
+                {
+                    "role": message.role.value,
+                    "text": message.text,
+                }
+                for message in history[-8:]
+            ],
+            ensure_ascii=False,
+            default=str,
+        )
         payload = {
             "model": self.model,
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{system_prompt}\n\nsafe_context JSON:\n{safe_context}",
+                    "content": (
+                        f"{system_prompt}\n\n"
+                        f"safe_context JSON:\n{safe_context}\n\n"
+                        f"recent_history JSON:\n{history_payload}"
+                    ),
                 },
                 {
                     "role": "user",

@@ -20,6 +20,9 @@ MEDICAL_KEYWORDS = {
     "пить",
     "назначить",
     "антибиотик",
+    "болит",
+    "боль",
+    "температура",
     "акне",
     "прыщ",
     "сыпь",
@@ -38,6 +41,14 @@ OFF_TOPIC_KEYWORDS = {
     "пицца",
     "пиво",
 }
+UNKNOWN_SERVICE_KEYWORDS = {
+    "ботокс",
+    "ботулинотерапия",
+    "филлер",
+    "филлеры",
+    "контурная пластика",
+    "увеличение губ",
+}
 PRICE_KEYWORDS = {"цена", "цену", "стоимость", "уточнить цену", "уточнить стоимость", "сколько стоит", "прайс"}
 DURATION_KEYWORDS = {"сколько длится", "длительность", "по времени", "сколько времени"}
 SERVICE_LIST_KEYWORDS = {
@@ -55,6 +66,29 @@ SERVICE_LIST_KEYWORDS = {
     "услуги есть",
     "что есть",
     "что у вас есть",
+}
+COSMETIC_CONCERN_KEYWORDS = {
+    "жирная кожа",
+    "сальная кожа",
+    "поры",
+    "расширенные поры",
+    "черные точки",
+    "черные точки",
+    "тусклый цвет",
+    "тусклая кожа",
+    "цвет лица",
+    "неровный тон",
+}
+COSMETIC_CONCERN_SERVICE_MAP = {
+    "жирная кожа": ["facial_cleansing", "cosmetologist_consultation"],
+    "сальная кожа": ["facial_cleansing", "cosmetologist_consultation"],
+    "поры": ["facial_cleansing", "cosmetologist_consultation"],
+    "расширенные поры": ["facial_cleansing", "cosmetologist_consultation"],
+    "черные точки": ["facial_cleansing", "cosmetologist_consultation"],
+    "тусклый цвет": ["biorevitalization", "cosmetologist_consultation"],
+    "тусклая кожа": ["biorevitalization", "cosmetologist_consultation"],
+    "цвет лица": ["biorevitalization", "cosmetologist_consultation"],
+    "неровный тон": ["cosmetologist_consultation", "facial_cleansing"],
 }
 GENERIC_PRICE_MESSAGES = {
     "хочу уточнить цену",
@@ -176,6 +210,8 @@ def classify_and_extract(message: str, known_services: list[dict[str, Any]]) -> 
     normalized_message = normalize_text(message)
     if _contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
+    if _contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):
+        return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
 
     service_id = _local_service_id(message, known_services)
     if normalized_message in SERVICE_LIST_FAST_MESSAGES or _contains_keyword(
@@ -186,6 +222,8 @@ def classify_and_extract(message: str, known_services: list[dict[str, Any]]) -> 
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if _contains_keyword(normalized_message, MEDICAL_KEYWORDS):
         return {"intent": "medical_advice", "service_id": service_id, "confidence": 0.86}
+    if _contains_keyword(normalized_message, COSMETIC_CONCERN_KEYWORDS):
+        return {"intent": "cosmetic_concern", "service_id": service_id, "confidence": 0.82}
     if service_id:
         return {"intent": "service_mention", "service_id": service_id, "confidence": 0.78}
     if _contains_keyword(normalized_message, SMALL_TALK_KEYWORDS):
@@ -271,6 +309,66 @@ def _service_name_quick_actions(knowledge_base: KnowledgeBase) -> list[dict[str,
     return actions
 
 
+def _services_summary(services: list[Any]) -> list[dict[str, str]]:
+    return [
+        {
+            "id": service.id,
+            "name": service.name,
+            "short_description": service.short_description,
+        }
+        for service in services
+    ]
+
+
+def _similar_services_result(
+    message: str,
+    knowledge_base: KnowledgeBase,
+    confidence: float,
+) -> Optional[PolicyResult]:
+    similar_services = knowledge_base.find_similar_services(message)
+    if not similar_services:
+        return None
+
+    service_names = ", ".join(service.name for service in similar_services)
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.SIMILAR_SERVICES_FOUND,
+        confidence=confidence,
+        safe_context={
+            "similar": _services_summary(similar_services),
+            "message_to_user": f"Такой услуги в базе не вижу, но есть похожие: {service_names}. Интересно?",
+        },
+        quick_actions=[
+            {"label": service.name, "type": "message", "value": service.name}
+            for service in similar_services
+        ],
+    )
+
+
+def _cosmetic_concern_services(message: str, knowledge_base: KnowledgeBase) -> list[Any]:
+    normalized_message = normalize_text(message)
+    service_ids: list[str] = []
+    for keyword, mapped_service_ids in COSMETIC_CONCERN_SERVICE_MAP.items():
+        if keyword in normalized_message:
+            service_ids.extend(mapped_service_ids)
+
+    services = [
+        service
+        for service_id in service_ids
+        if (service := knowledge_base.find_service_by_id(service_id)) is not None
+    ]
+    if not services:
+        services = knowledge_base.find_similar_services(message, threshold=0.45)
+
+    unique_services: list[Any] = []
+    seen_ids: set[str] = set()
+    for service in services:
+        if service.id not in seen_ids:
+            unique_services.append(service)
+            seen_ids.add(service.id)
+    return unique_services[:3]
+
+
 def _mentions_unknown_service(normalized_message: str) -> bool:
     if normalized_message in GENERIC_PRICE_MESSAGES:
         return False
@@ -291,6 +389,15 @@ def _mentions_unknown_service(normalized_message: str) -> bool:
     return bool(tokens)
 
 
+def _last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -> Optional[str]:
+    previous_messages = session.messages[:-1]
+    for history_message in reversed(previous_messages[-8:]):
+        service = knowledge_base.search_service(history_message.text)
+        if service is not None:
+            return service.id
+    return None
+
+
 def analyze_message(
     message: str,
     session: Session,
@@ -304,6 +411,10 @@ def analyze_message(
     classifier_confidence = float(classification["confidence"])
     normalized_message = normalize_text(message)
     service = knowledge_base.find_service_by_id(classification.get("service_id"))
+    if service is None and (
+        intent in {"price_question", "service_mention"} or _contains_keyword(normalized_message, DURATION_KEYWORDS)
+    ):
+        service = knowledge_base.find_service_by_id(_last_service_from_history(session, knowledge_base))
     phone = _extract_phone(message)
     operator_requested = _contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
@@ -375,7 +486,33 @@ def analyze_message(
             quick_actions=["Позвать оператора", "Оставить телефон"],
         )
 
+    if intent == "cosmetic_concern":
+        suggested_services = _cosmetic_concern_services(message, knowledge_base)
+        if suggested_services:
+            service_names = ", ".join(service.name for service in suggested_services)
+            return PolicyResult(
+                action=PolicyAction.ANSWER,
+                reason=PolicyReason.OK,
+                confidence=classifier_confidence or 0.82,
+                safe_context={
+                    "question_type": "cosmetic_concern",
+                    "suggested_services": _services_summary(suggested_services),
+                    "message_to_user": (
+                        f"Для такого запроса обычно подходят: {service_names}. "
+                        "Точные рекомендации даст специалист на консультации."
+                    ),
+                },
+                quick_actions=[
+                    {"label": service.name, "type": "message", "value": service.name}
+                    for service in suggested_services
+                ],
+            )
+
     if intent == "unknown_service":
+        similar_result = _similar_services_result(message, knowledge_base, classifier_confidence or 0.78)
+        if similar_result is not None:
+            return similar_result
+
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.UNKNOWN_SERVICE,
@@ -440,6 +577,10 @@ def analyze_message(
                     },
                     quick_actions=_service_name_quick_actions(knowledge_base),
                 )
+
+            similar_result = _similar_services_result(message, knowledge_base, 0.78)
+            if similar_result is not None:
+                return similar_result
 
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
@@ -512,6 +653,10 @@ def analyze_message(
             confidence=0.9,
             safe_context={"message_to_user": "Сейчас чат недоступен для AI-ответов."},
         )
+
+    similar_result = _similar_services_result(message, knowledge_base, classifier_confidence or 0.7)
+    if similar_result is not None:
+        return similar_result
 
     return PolicyResult(
         action=PolicyAction.CLARIFY,

@@ -37,6 +37,7 @@ class PolicyAction(str, Enum):
 class PolicyReason(str, Enum):
     OK = "ok"
     UNKNOWN_SERVICE = "unknown_service"
+    SIMILAR_SERVICES_FOUND = "similar_services_found"
     MEDICAL_ADVICE = "medical_advice"
     PRICE_QUESTION = "price_question"
     PRICE_QUESTION_NO_SERVICE = "price_question_no_service"

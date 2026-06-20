@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
@@ -113,6 +114,48 @@ class KnowledgeBase:
                     return service
 
         return None
+
+    def find_similar_services(self, query: str, threshold: float = 0.6) -> list[Service]:
+        normalized_query = normalize_text(query)
+        query_tokens = set(_tokens(query))
+        if not normalized_query:
+            return []
+
+        scored_services: list[tuple[float, Service]] = []
+        for service in self.services:
+            variants = [service.name, *service.synonyms]
+            best_score = 0.0
+            for variant in variants:
+                normalized_variant = normalize_text(variant)
+                variant_tokens = set(_tokens(variant))
+                if not normalized_variant:
+                    continue
+
+                sequence_score = SequenceMatcher(None, normalized_query, normalized_variant).ratio()
+                token_score = 0.0
+                if query_tokens and variant_tokens:
+                    overlap = query_tokens & variant_tokens
+                    prefix_overlap = {
+                        query_token
+                        for query_token in query_tokens
+                        if any(
+                            _token_prefix_match(query_token, variant_token)
+                            for variant_token in variant_tokens
+                        )
+                    }
+                    token_score = max(
+                        len(overlap) / len(variant_tokens),
+                        len(prefix_overlap) / len(variant_tokens),
+                    )
+                    if overlap or prefix_overlap:
+                        token_score = max(token_score, 0.62)
+                best_score = max(best_score, sequence_score, token_score)
+
+            if best_score >= threshold:
+                scored_services.append((best_score, service))
+
+        scored_services.sort(key=lambda item: item[0], reverse=True)
+        return [service for _, service in scored_services[:3]]
 
     def get_service_context(self, service: Optional[Service]) -> dict[str, object]:
         if service is None:

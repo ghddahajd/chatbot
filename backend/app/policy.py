@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Optional
 
-from .knowledge import KnowledgeBase, normalize_text
+from .knowledge import KnowledgeBase, _token_prefix_match, normalize_text
 from .models import PolicyAction, PolicyReason, PolicyResult, Session
 
 
@@ -38,7 +38,7 @@ OFF_TOPIC_KEYWORDS = {
     "пицца",
     "пиво",
 }
-PRICE_KEYWORDS = {"цена", "стоимость", "сколько стоит", "прайс"}
+PRICE_KEYWORDS = {"цена", "цену", "стоимость", "уточнить цену", "уточнить стоимость", "сколько стоит", "прайс"}
 DURATION_KEYWORDS = {"сколько длится", "длительность", "по времени", "сколько времени"}
 SERVICE_LIST_KEYWORDS = {
     "какие услуги",
@@ -50,6 +50,8 @@ SERVICE_LIST_KEYWORDS = {
     "список процедур",
     "покажи список услуг",
     "хочу глянуть прайс",
+    "хочу услуги",
+    "хочу список услуг",
     "услуги есть",
     "что есть",
     "что у вас есть",
@@ -97,19 +99,98 @@ def _contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
     return any(keyword in normalized_text for keyword in keywords)
 
 
-def classify_intent(message: str) -> str:
-    """Fast local intent classification before optional LLM fallback."""
+ALLOWED_CLASSIFIER_INTENTS = {
+    "small_talk",
+    "off_topic",
+    "list_services",
+    "price_question",
+    "cosmetic_concern",
+    "medical_advice",
+    "operator_request",
+    "service_mention",
+    "unknown_service",
+}
+
+
+def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
+    terms = [str(service_payload.get("name") or "")]
+    synonyms = service_payload.get("synonyms") or []
+    if isinstance(synonyms, list):
+        terms.extend(str(synonym) for synonym in synonyms)
+    return [term for term in terms if term]
+
+
+def _local_service_id(message: str, known_services: list[dict[str, Any]]) -> Optional[str]:
+    query_tokens = [token for token in normalize_text(message).split() if token]
+    if not query_tokens:
+        return None
+
+    normalized_message = " ".join(query_tokens)
+    if "почист" in normalized_message and "лиц" in normalized_message:
+        for service_payload in known_services:
+            if service_payload.get("id") == "facial_cleansing":
+                return "facial_cleansing"
+
+    for service_payload in known_services:
+        for term in _known_service_terms(service_payload):
+            normalized_term = normalize_text(term)
+            if normalized_term and normalized_term in normalized_message:
+                return str(service_payload.get("id"))
+
+            term_tokens = [token for token in normalized_term.split() if token]
+            if term_tokens and all(
+                any(_token_prefix_match(term_token, query_token) for query_token in query_tokens)
+                for term_token in term_tokens
+            ):
+                return str(service_payload.get("id"))
+
+    return None
+
+
+def _normalize_classification(raw_result: dict[str, Any]) -> dict[str, object]:
+    intent = str(raw_result.get("intent") or "service_mention").strip().lower()
+    if intent not in ALLOWED_CLASSIFIER_INTENTS:
+        intent = "service_mention"
+
+    service_id = raw_result.get("service_id")
+    if service_id is not None:
+        service_id = str(service_id).strip()
+    if not service_id or service_id == "null":
+        service_id = None
+
+    try:
+        confidence = float(raw_result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    return {
+        "intent": intent,
+        "service_id": service_id,
+        "confidence": min(max(confidence, 0.0), 1.0),
+    }
+
+
+def classify_and_extract(message: str, known_services: list[dict[str, Any]]) -> dict[str, object]:
+    """Local fallback when the external classifier is unavailable."""
 
     normalized_message = normalize_text(message)
-    if normalized_message in SERVICE_LIST_FAST_MESSAGES:
-        return "list_services"
-    if _contains_keyword(normalized_message, SERVICE_LIST_KEYWORDS):
-        return "list_services"
-    if _contains_keyword(normalized_message, SMALL_TALK_KEYWORDS):
-        return "small_talk"
     if _contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
-        return "off_topic"
-    return "unknown"
+        return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
+
+    service_id = _local_service_id(message, known_services)
+    if normalized_message in SERVICE_LIST_FAST_MESSAGES or _contains_keyword(
+        normalized_message, SERVICE_LIST_KEYWORDS
+    ):
+        return {"intent": "list_services", "service_id": service_id, "confidence": 0.9}
+    if _contains_keyword(normalized_message, PRICE_KEYWORDS):
+        return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
+    if _contains_keyword(normalized_message, MEDICAL_KEYWORDS):
+        return {"intent": "medical_advice", "service_id": service_id, "confidence": 0.86}
+    if service_id:
+        return {"intent": "service_mention", "service_id": service_id, "confidence": 0.78}
+    if _contains_keyword(normalized_message, SMALL_TALK_KEYWORDS):
+        return {"intent": "small_talk", "service_id": None, "confidence": 0.76}
+    return {"intent": "service_mention", "service_id": None, "confidence": 0.0}
 
 
 def _extract_phone(message: str) -> Optional[str]:
@@ -214,27 +295,29 @@ def analyze_message(
     message: str,
     session: Session,
     knowledge_base: KnowledgeBase,
-    intent: str = "in_domain",
+    classification: Optional[dict[str, object]] = None,
 ) -> PolicyResult:
     """Classify the message before any LLM interaction."""
 
+    classification = _normalize_classification(classification or {})
+    intent = str(classification["intent"])
+    classifier_confidence = float(classification["confidence"])
     normalized_message = normalize_text(message)
-    service = knowledge_base.search_service(message)
+    service = knowledge_base.find_service_by_id(classification.get("service_id"))
     phone = _extract_phone(message)
     operator_requested = _contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
-    )
-    price_requested = _contains_keyword(normalized_message, PRICE_KEYWORDS)
+    ) or intent == "operator_request"
+    price_requested = intent == "price_question" or _contains_keyword(normalized_message, PRICE_KEYWORDS)
     duration_requested = _contains_keyword(normalized_message, DURATION_KEYWORDS)
-    medical_requested = _contains_keyword(normalized_message, MEDICAL_KEYWORDS)
-    service_list_requested = _contains_keyword(normalized_message, SERVICE_LIST_KEYWORDS)
+    medical_requested = intent == "medical_advice" or _contains_keyword(normalized_message, MEDICAL_KEYWORDS)
     unsupported_city = _find_unsupported_city(normalized_message, knowledge_base.company.city)
 
     if intent == "small_talk":
         return PolicyResult(
             action=PolicyAction.SMALL_TALK,
             reason=PolicyReason.SMALL_TALK,
-            confidence=0.9,
+            confidence=classifier_confidence or 0.9,
             safe_context={"company_name": knowledge_base.company.company_name},
         )
 
@@ -242,7 +325,7 @@ def analyze_message(
         return PolicyResult(
             action=PolicyAction.OFF_TOPIC,
             reason=PolicyReason.OFF_TOPIC,
-            confidence=0.9,
+            confidence=classifier_confidence or 0.9,
             safe_context={
                 "message_to_user": (
                     "Это не по моей части — я консультирую по услугам центра. "
@@ -256,7 +339,7 @@ def analyze_message(
         return PolicyResult(
             action=PolicyAction.ANSWER,
             reason=PolicyReason.OK,
-            confidence=0.9,
+            confidence=classifier_confidence or 0.9,
             safe_context={
                 "all_services": _all_services_context(knowledge_base),
                 "question_type": "list_services",
@@ -290,6 +373,19 @@ def analyze_message(
                 "handoff_message": HANDOFF_MESSAGE,
             },
             quick_actions=["Позвать оператора", "Оставить телефон"],
+        )
+
+    if intent == "unknown_service":
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.UNKNOWN_SERVICE,
+            confidence=classifier_confidence or 0.8,
+            safe_context={
+                "message_to_user": (
+                    "В базе такой услуги не вижу. Могу показать список услуг или передать вопрос специалисту."
+                )
+            },
+            quick_actions=["Позвать оператора", "Посмотреть услуги"],
         )
 
     if operator_requested:
@@ -329,15 +425,6 @@ def analyze_message(
                 },
                 "service": service.model_dump() if service else None,
             },
-        )
-
-    if service_list_requested:
-        return PolicyResult(
-            action=PolicyAction.CLARIFY,
-            reason=PolicyReason.OK,
-            confidence=0.9,
-            safe_context={"message_to_user": _format_service_list(knowledge_base)},
-            quick_actions=["Позвать оператора"],
         )
 
     if price_requested:
@@ -428,12 +515,13 @@ def analyze_message(
 
     return PolicyResult(
         action=PolicyAction.CLARIFY,
-        reason=PolicyReason.UNKNOWN_SERVICE,
-        confidence=0.7,
+        reason=PolicyReason.OK,
+        confidence=classifier_confidence or 0.65,
         safe_context={
             "message_to_user": (
-                "В базе такой услуги не вижу. Могу показать список услуг или передать вопрос специалисту."
+                "Уточните, пожалуйста, что вас интересует? "
+                "Могу рассказать про услуги, цены или записать к специалисту."
             )
         },
-        quick_actions=["Позвать оператора", "Посмотреть услуги"],
+        quick_actions=["Посмотреть услуги", "Позвать оператора"],
     )

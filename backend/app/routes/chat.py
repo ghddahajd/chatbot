@@ -3,7 +3,8 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from ..leads import build_lead_from_contact
-from ..policy import classify_intent
+from ..llm import MockLLMClient
+from ..policy import classify_and_extract
 from ..models import (
     ChatMessageRequest,
     ChatMessageResponse,
@@ -16,26 +17,7 @@ from ..models import (
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-DOMAIN_HINTS = {
-    "оператор",
-    "специалист",
-    "услуг",
-    "цена",
-    "стоимость",
-    "сколько стоит",
-    "запис",
-    "прием",
-    "приём",
-    "акне",
-    "прыщ",
-    "пить",
-    "лечение",
-    "эпиляц",
-    "биоревитал",
-    "косметолог",
-    "дерматолог",
-}
+fallback_llm_client = MockLLMClient()
 
 
 def format_quick_actions(labels: list[object], request: Request) -> list[QuickAction]:
@@ -68,19 +50,71 @@ def format_quick_actions(labels: list[object], request: Request) -> list[QuickAc
     return actions
 
 
-async def resolve_intent(message: str, request: Request) -> str:
-    local_intent = classify_intent(message)
-    if local_intent != "unknown":
-        return local_intent
+def service_classifier_payload(request: Request) -> list[dict[str, object]]:
+    return [
+        {
+            "id": service.id,
+            "name": service.name,
+            "synonyms": service.synonyms,
+        }
+        for service in request.app.state.knowledge_base.services
+    ]
 
-    normalized_message = message.lower().replace("ё", "е")
-    if any(hint in normalized_message for hint in DOMAIN_HINTS):
-        return "in_domain"
 
+async def resolve_classification(message: str, request: Request) -> dict[str, object]:
+    known_services = service_classifier_payload(request)
+    local_result = classify_and_extract(message, known_services)
     try:
-        return await request.app.state.llm_client.classify_intent(message)
+        model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
     except Exception:
-        return "in_domain"
+        return local_result
+
+    model_intent = str(model_result.get("intent") or "")
+    local_intent = str(local_result.get("intent") or "")
+    model_service_id = model_result.get("service_id")
+    local_service_id = local_result.get("service_id")
+    model_confidence = float(model_result.get("confidence") or 0.0)
+    local_confidence = float(local_result.get("confidence") or 0.0)
+
+    if model_intent == "unknown_service":
+        return model_result
+    if local_service_id and not model_service_id:
+        return local_result
+    if (
+        local_intent in {"list_services", "price_question", "medical_advice", "operator_request", "off_topic"}
+        and model_intent in {"small_talk", "service_mention"}
+        and not model_service_id
+    ):
+        return local_result
+    if model_confidence < 0.5 and local_confidence > model_confidence:
+        return local_result
+    return model_result
+
+
+async def safe_small_talk(request: Request, company_name: str, message: str) -> str:
+    try:
+        return await request.app.state.llm_client.small_talk(company_name, message)
+    except Exception:
+        return await fallback_llm_client.small_talk(company_name, message)
+
+
+async def safe_complete(
+    request: Request,
+    context: dict[str, object],
+    message: str,
+) -> str:
+    try:
+        return await request.app.state.llm_client.complete(
+            request.app.state.system_prompt,
+            context,
+            message,
+        )
+    except Exception:
+        return await fallback_llm_client.complete(
+            request.app.state.system_prompt,
+            context,
+            message,
+        )
 
 
 @router.get("/session/{session_id}", response_model=SessionPublicResponse)
@@ -112,7 +146,6 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
 async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMessageResponse:
     session_store = request.app.state.session_store
     knowledge_base = request.app.state.knowledge_base
-    llm_client = request.app.state.llm_client
     lead_service = request.app.state.lead_service
 
     session = await session_store.get_or_create(payload.session_id, payload.company_id)
@@ -138,8 +171,13 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             quick_actions=[],
         )
 
-    intent = await resolve_intent(payload.message, request)
-    policy_result = request.app.state.policy_analyzer(payload.message, session, knowledge_base, intent)
+    classification = await resolve_classification(payload.message, request)
+    policy_result = request.app.state.policy_analyzer(
+        payload.message,
+        session,
+        knowledge_base,
+        classification,
+    )
 
     lead_created = False
     answer = ""
@@ -167,10 +205,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             await session_store.set_operator_requested(session.session_id, True)
             await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
     elif policy_result.action == PolicyAction.SMALL_TALK:
-        answer = await llm_client.small_talk(
-            knowledge_base.company.company_name,
-            payload.message,
-        )
+        answer = await safe_small_talk(request, knowledge_base.company.company_name, payload.message)
     elif policy_result.action == PolicyAction.OFF_TOPIC:
         answer = str(policy_result.safe_context.get("message_to_user") or "")
     elif policy_result.action == PolicyAction.TRANSFER_OPERATOR:
@@ -190,11 +225,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     elif policy_result.action == PolicyAction.REJECT:
         answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
     else:
-        answer = await llm_client.complete(
-            request.app.state.system_prompt,
-            policy_result.safe_context,
-            payload.message,
-        )
+        answer = await safe_complete(request, policy_result.safe_context, payload.message)
 
     await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
     session = await session_store.get(session.session_id)

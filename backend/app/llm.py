@@ -19,14 +19,22 @@ SYSTEM_PROMPT = (
     "Отвечай кратко, по-русски, без Markdown."
 )
 INTENT_CLASSIFICATION_PROMPT = (
-    "Классифицируй сообщение пользователя в одну категорию:\n"
-    "small_talk — приветствие, благодарность, общая болтовня\n"
-    "off_topic — вопрос не связан с медициной/косметологией центра\n"
-    "list_services — пользователь хочет увидеть список/перечень услуг центра "
-    "(любая формулировка: 'покажи услуги', 'а можно услуги', 'что у вас есть', "
-    "'хочу глянуть прайс', 'список процедур')\n"
-    "in_domain — вопрос про услуги, цены, запись, медицину, оператора\n"
-    "Ответь ТОЛЬКО одним словом: small_talk, off_topic, list_services или in_domain."
+    "Тебе дан список услуг центра: {services}.\n"
+    "Проанализируй сообщение пользователя и верни JSON:\n"
+    "{\n"
+    '  "intent": "small_talk|off_topic|list_services|price_question|'
+    'cosmetic_concern|medical_advice|operator_request|service_mention|unknown_service",\n'
+    '  "service_id": "<id из списка или null>",\n'
+    '  "confidence": 0.0-1.0\n'
+    "}\n\n"
+    "ВАЖНО:\n"
+    "- Если в сообщении одновременно приветствие И конкретный запрос "
+    "(услуга/цена/список) — классифицируй по запросу, не по приветствию.\n"
+    "- service_id матчи по смыслу, учитывай падежи и склонения "
+    "('чистку лица' = 'чистка лица', тот же service_id).\n"
+    "- Если упомянута услуга которой точно нет в списке — service_id: null, "
+    "intent: unknown_service.\n"
+    "Ответь ТОЛЬКО JSON, без текста вокруг."
 )
 SMALL_TALK_PROMPT = (
     "Ты вежливый консультант медицинского/косметологического центра. "
@@ -42,11 +50,15 @@ class BaseLLMClient(ABC):
     async def complete(self, system_prompt: str, context: dict[str, Any], user_message: str) -> str:
         """Return a model completion based on provided safe context."""
 
-    async def classify_intent(self, user_message: str) -> str:
-        """Classify message intent without business context."""
+    async def classify_and_extract(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+    ) -> dict[str, object]:
+        """Classify intent and extract a service id."""
 
-        del user_message
-        return "in_domain"
+        del user_message, known_services
+        return {"intent": "service_mention", "service_id": None, "confidence": 0.0}
 
     async def small_talk(self, company_name: str, user_message: str) -> str:
         """Return a lightweight conversational answer without KB data."""
@@ -69,6 +81,16 @@ class MockLLMClient(BaseLLMClient):
         price = context.get("price") or {}
         company = context.get("company") or {}
         question_type = context.get("question_type")
+        all_services = context.get("all_services")
+
+        if question_type == "list_services" and isinstance(all_services, list):
+            service_names = [
+                str(service.get("name"))
+                for service in all_services
+                if isinstance(service, dict) and service.get("name")
+            ]
+            if service_names:
+                return "В центре доступны услуги: " + ", ".join(service_names) + ". Какая услуга вас интересует?"
 
         service_name = service.get("name")
         short_description = service.get("short_description")
@@ -102,6 +124,15 @@ class MockLLMClient(BaseLLMClient):
         del user_message
         return f"Здравствуйте! Я консультант {company_name}. Чем могу помочь по услугам центра?"
 
+    async def classify_and_extract(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+    ) -> dict[str, object]:
+        from .policy import classify_and_extract
+
+        return classify_and_extract(user_message, known_services)
+
 
 def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
     """Keep hard business rules outside model behavior."""
@@ -122,6 +153,44 @@ def enforce_small_talk_pivot(answer: str, company_name: str) -> str:
     if "услуг" not in clean_answer.lower() and "цент" not in clean_answer.lower():
         return f"{clean_answer} {pivot}"
     return clean_answer
+
+
+def normalize_classification_result(
+    raw_result: dict[str, Any],
+    known_services: list[dict[str, str]],
+) -> dict[str, object]:
+    """Validate model JSON so policy only sees supported values."""
+
+    allowed_intents = {
+        "small_talk",
+        "off_topic",
+        "list_services",
+        "price_question",
+        "cosmetic_concern",
+        "medical_advice",
+        "operator_request",
+        "service_mention",
+        "unknown_service",
+    }
+    known_service_ids = {str(service.get("id")) for service in known_services}
+
+    intent = str(raw_result.get("intent") or "service_mention").strip().lower()
+    if intent not in allowed_intents:
+        intent = "service_mention"
+
+    service_id = raw_result.get("service_id")
+    if service_id is not None:
+        service_id = str(service_id).strip()
+    if not service_id or service_id == "null" or service_id not in known_service_ids:
+        service_id = None
+
+    try:
+        confidence = float(raw_result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = min(max(confidence, 0.0), 1.0)
+
+    return {"intent": intent, "service_id": service_id, "confidence": confidence}
 
 
 class OpenAIClient(BaseLLMClient):
@@ -178,15 +247,23 @@ class OpenAIClient(BaseLLMClient):
         )
         return enforce_required_disclaimers(answer, context)
 
-    async def classify_intent(self, user_message: str) -> str:
+    async def classify_and_extract(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+    ) -> dict[str, object]:
+        services_payload = json.dumps(known_services, ensure_ascii=False, default=str)
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": INTENT_CLASSIFICATION_PROMPT},
+                {
+                    "role": "system",
+                    "content": INTENT_CLASSIFICATION_PROMPT.replace("{services}", services_payload),
+                },
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0,
-            "max_tokens": 8,
+            "max_tokens": 120,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
@@ -199,14 +276,25 @@ class OpenAIClient(BaseLLMClient):
             response.raise_for_status()
 
         data = response.json()
-        intent = (
+        content = (
             data.get("choices", [{}])[0]
             .get("message", {})
-            .get("content", "in_domain")
+            .get("content", "{}")
             .strip()
-            .lower()
         )
-        return intent if intent in {"small_talk", "off_topic", "list_services", "in_domain"} else "in_domain"
+        try:
+            raw_result = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    raw_result = json.loads(content[start : end + 1])
+                except json.JSONDecodeError:
+                    raw_result = {}
+            else:
+                raw_result = {}
+        return normalize_classification_result(raw_result, known_services)
 
     async def small_talk(self, company_name: str, user_message: str) -> str:
         payload = {

@@ -7,7 +7,13 @@ from typing import Optional
 
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import MessageRole, Session
-from .constants import KNOWN_CITY_FORMS, LOCATION_MISMATCH_KEYWORDS, LOCATION_PATTERNS, PHONE_PATTERN
+from .constants import (
+    KNOWN_CITY_FORMS,
+    LOCATION_MISMATCH_KEYWORDS,
+    LOCATION_PATTERNS,
+    OPERATOR_SOFT_OFFER_MESSAGE,
+    PHONE_PATTERN,
+)
 
 
 def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
@@ -92,3 +98,10 @@ def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -
         if service is not None:
             return service.id
     return None
+
+
+def has_operator_soft_offer(session: Session) -> bool:
+    return any(
+        message.role == MessageRole.ASSISTANT and OPERATOR_SOFT_OFFER_MESSAGE in message.text
+        for message in session.messages
+    )

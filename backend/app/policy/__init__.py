@@ -12,6 +12,7 @@ from .constants import (
     GENERIC_PRICE_MESSAGES,
     HANDOFF_MESSAGE,
     MEDICAL_KEYWORDS,
+    OPERATOR_SOFT_OFFER_MESSAGE,
     PRICE_KEYWORDS,
     TELEGRAM_KEYWORDS,
     VISIT_KEYWORDS,
@@ -22,6 +23,7 @@ from .extractors import (
     extract_name,
     extract_phone,
     find_unsupported_city,
+    has_operator_soft_offer,
     is_location_mismatch,
     last_service_from_history,
 )
@@ -237,6 +239,26 @@ def analyze_message(
                     },
                     "service": service.model_dump() if service else None,
                 },
+            )
+        if not has_operator_soft_offer(session):
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.OPERATOR_REQUESTED,
+                service_id=service.id if service else None,
+                confidence=0.9,
+                safe_context={"message_to_user": OPERATOR_SOFT_OFFER_MESSAGE},
+                quick_actions=[
+                    {
+                        "label": "Сразу к специалисту",
+                        "type": "message",
+                        "value": "Да, оператора",
+                    },
+                    {
+                        "label": "Сначала спрошу тут",
+                        "type": "message",
+                        "value": "Сначала спрошу тут",
+                    },
+                ],
             )
         return PolicyResult(
             action=PolicyAction.TRANSFER_OPERATOR,

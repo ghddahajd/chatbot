@@ -30,6 +30,8 @@ class PolicyAction(str, Enum):
     TRANSFER_OPERATOR = "transfer_operator"
     REJECT = "reject"
     CLARIFY = "clarify"
+    SMALL_TALK = "small_talk"
+    OFF_TOPIC = "off_topic"
 
 
 class PolicyReason(str, Enum):
@@ -37,11 +39,14 @@ class PolicyReason(str, Enum):
     UNKNOWN_SERVICE = "unknown_service"
     MEDICAL_ADVICE = "medical_advice"
     PRICE_QUESTION = "price_question"
+    PRICE_QUESTION_NO_SERVICE = "price_question_no_service"
     OPERATOR_REQUESTED = "operator_requested"
     UNSUPPORTED_CITY = "unsupported_city"
     CONTACT_PROVIDED = "contact_provided"
     DURATION_QUESTION = "duration_question"
     OUT_OF_SCOPE = "out_of_scope"
+    SMALL_TALK = "small_talk"
+    OFF_TOPIC = "off_topic"
 
 
 class Message(BaseModel):
@@ -109,7 +114,7 @@ class PolicyResult(BaseModel):
     service_id: Optional[str] = None
     confidence: float = 0.0
     safe_context: dict[str, Any] = Field(default_factory=dict)
-    quick_actions: list[str] = Field(default_factory=list)
+    quick_actions: list[Any] = Field(default_factory=list)
 
 
 class ChatMessageRequest(BaseModel):

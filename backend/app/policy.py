@@ -21,17 +21,47 @@ MEDICAL_KEYWORDS = {
     "назначить",
     "антибиотик",
     "акне",
+    "прыщ",
     "сыпь",
     "симптом",
+}
+SMALL_TALK_KEYWORDS = {"привет", "здравствуй", "добрый день", "хай", "ку", "спасибо", "благодарю"}
+SERVICE_LIST_FAST_MESSAGES = {"услуги", "список услуг", "прайс"}
+OFF_TOPIC_KEYWORDS = {
+    "велик",
+    "велосипед",
+    "цепь",
+    "машина",
+    "авто",
+    "ноутбук",
+    "телефон слом",
+    "пицца",
+    "пиво",
 }
 PRICE_KEYWORDS = {"цена", "стоимость", "сколько стоит", "прайс"}
 DURATION_KEYWORDS = {"сколько длится", "длительность", "по времени", "сколько времени"}
 SERVICE_LIST_KEYWORDS = {
     "какие услуги",
+    "покажи услуги",
+    "показать услуги",
+    "можно услуги",
+    "посмотреть услуги",
     "список услуг",
+    "список процедур",
     "покажи список услуг",
+    "хочу глянуть прайс",
     "услуги есть",
     "что есть",
+    "что у вас есть",
+}
+GENERIC_PRICE_MESSAGES = {
+    "хочу уточнить цену",
+    "уточнить цену",
+    "сколько стоит",
+    "сколько стоит?",
+    "цена",
+    "стоимость",
+    "прайс",
 }
 KNOWN_CITY_FORMS = {
     "москва": "Москва",
@@ -65,6 +95,21 @@ PHONE_PATTERN = re.compile(
 
 def _contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
     return any(keyword in normalized_text for keyword in keywords)
+
+
+def classify_intent(message: str) -> str:
+    """Fast local intent classification before optional LLM fallback."""
+
+    normalized_message = normalize_text(message)
+    if normalized_message in SERVICE_LIST_FAST_MESSAGES:
+        return "list_services"
+    if _contains_keyword(normalized_message, SERVICE_LIST_KEYWORDS):
+        return "list_services"
+    if _contains_keyword(normalized_message, SMALL_TALK_KEYWORDS):
+        return "small_talk"
+    if _contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
+        return "off_topic"
+    return "unknown"
 
 
 def _extract_phone(message: str) -> Optional[str]:
@@ -114,7 +159,63 @@ def _format_service_list(knowledge_base: KnowledgeBase) -> str:
     return "\n".join(lines)
 
 
-def analyze_message(message: str, session: Session, knowledge_base: KnowledgeBase) -> PolicyResult:
+def _all_services_context(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
+    return [
+        {
+            "name": service.name,
+            "category": service.category,
+            "short_description": service.short_description,
+        }
+        for service in knowledge_base.services
+    ]
+
+
+def _service_name_quick_actions(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
+    services = knowledge_base.services[:4] if len(knowledge_base.services) > 5 else knowledge_base.services
+    actions = [
+        {
+            "label": service.name,
+            "type": "message",
+            "value": service.name,
+        }
+        for service in services
+    ]
+    actions.append(
+        {
+            "label": "Посмотреть все услуги",
+            "type": "message",
+            "value": "покажи услуги",
+        }
+    )
+    return actions
+
+
+def _mentions_unknown_service(normalized_message: str) -> bool:
+    if normalized_message in GENERIC_PRICE_MESSAGES:
+        return False
+    service_noise = {
+        "сколько",
+        "стоит",
+        "цена",
+        "стоимость",
+        "прайс",
+        "хочу",
+        "уточнить",
+        "услуга",
+        "услугу",
+        "процедура",
+        "процедуру",
+    }
+    tokens = [token for token in normalized_message.split() if token not in service_noise]
+    return bool(tokens)
+
+
+def analyze_message(
+    message: str,
+    session: Session,
+    knowledge_base: KnowledgeBase,
+    intent: str = "in_domain",
+) -> PolicyResult:
     """Classify the message before any LLM interaction."""
 
     normalized_message = normalize_text(message)
@@ -128,6 +229,40 @@ def analyze_message(message: str, session: Session, knowledge_base: KnowledgeBas
     medical_requested = _contains_keyword(normalized_message, MEDICAL_KEYWORDS)
     service_list_requested = _contains_keyword(normalized_message, SERVICE_LIST_KEYWORDS)
     unsupported_city = _find_unsupported_city(normalized_message, knowledge_base.company.city)
+
+    if intent == "small_talk":
+        return PolicyResult(
+            action=PolicyAction.SMALL_TALK,
+            reason=PolicyReason.SMALL_TALK,
+            confidence=0.9,
+            safe_context={"company_name": knowledge_base.company.company_name},
+        )
+
+    if intent == "off_topic":
+        return PolicyResult(
+            action=PolicyAction.OFF_TOPIC,
+            reason=PolicyReason.OFF_TOPIC,
+            confidence=0.9,
+            safe_context={
+                "message_to_user": (
+                    "Это не по моей части — я консультирую по услугам центра. "
+                    f"{knowledge_base.company.company_name}. Могу подсказать по услугам или ценам."
+                )
+            },
+            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        )
+
+    if intent == "list_services":
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=0.9,
+            safe_context={
+                "all_services": _all_services_context(knowledge_base),
+                "question_type": "list_services",
+            },
+            quick_actions=["Уточнить цену", "Позвать оператора"],
+        )
 
     if unsupported_city:
         return PolicyResult(
@@ -207,12 +342,26 @@ def analyze_message(message: str, session: Session, knowledge_base: KnowledgeBas
 
     if price_requested:
         if service is None:
+            if not _mentions_unknown_service(normalized_message):
+                return PolicyResult(
+                    action=PolicyAction.CLARIFY,
+                    reason=PolicyReason.PRICE_QUESTION_NO_SERVICE,
+                    confidence=0.86,
+                    safe_context={
+                        "message_to_user": "Уточните, пожалуйста, какая услуга вас интересует?",
+                        "available_services": [service.name for service in knowledge_base.services],
+                    },
+                    quick_actions=_service_name_quick_actions(knowledge_base),
+                )
+
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
                 reason=PolicyReason.UNKNOWN_SERVICE,
                 confidence=0.8,
                 safe_context={
-                    "message_to_user": "Уточните, пожалуйста, какая именно услуга вас интересует."
+                    "message_to_user": (
+                        "В базе такой услуги не вижу. Могу показать список услуг или передать вопрос специалисту."
+                    )
                 },
                 quick_actions=["Позвать оператора", "Посмотреть услуги"],
             )

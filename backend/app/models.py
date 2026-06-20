@@ -62,6 +62,7 @@ class Session(BaseModel):
     company_id: str
     status: SessionStatus = SessionStatus.AI_ACTIVE
     messages: list[Message] = Field(default_factory=list)
+    message_count: int = 0
     lead_requested: bool = False
     operator_requested: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)

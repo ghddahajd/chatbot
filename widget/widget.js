@@ -12,6 +12,10 @@
     HUMAN_ACTIVE: "HUMAN_ACTIVE",
     CLOSED: "CLOSED",
   };
+  const MIN_TYPING_VISIBLE_MS = 450;
+
+  const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
 
   const STORAGE_KEY = "ai-chat-widget-session-id";
 
@@ -189,6 +193,33 @@
         border: 1px solid #d4e6fb;
         border-bottom-left-radius: 8px;
       }
+      .message.typing {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #7a8aa3;
+      }
+      .typing-dots {
+        display: inline-flex;
+        gap: 4px;
+      }
+      .typing-dots span {
+        width: 5px;
+        height: 5px;
+        border-radius: 999px;
+        background: #9bb0cf;
+        animation: typing-pulse 1s ease-in-out infinite;
+      }
+      .typing-dots span:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+      .typing-dots span:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+      @keyframes typing-pulse {
+        0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+        40% { opacity: 1; transform: translateY(-2px); }
+      }
       .badge {
         display: inline-block;
         margin-bottom: 5px;
@@ -333,6 +364,8 @@
         status: STATUS.AI_ACTIVE,
         sessionId: window.localStorage.getItem(STORAGE_KEY) || "",
         ws: null,
+        typingNode: null,
+        typingStartedAt: 0,
       };
       this.shadow = this.attachShadow({ mode: "closed" });
       this.shadow.appendChild(template.content.cloneNode(true));
@@ -482,6 +515,40 @@
       }
     }
 
+    showTyping() {
+      this.hideTyping();
+      this.clearEmptyState();
+      const node = document.createElement("article");
+      node.className = "message assistant typing";
+      node.setAttribute("aria-label", "AI-консультант печатает");
+
+      const text = document.createElement("span");
+      text.textContent = "печатает";
+      const dots = document.createElement("span");
+      dots.className = "typing-dots";
+      for (let index = 0; index < 3; index += 1) {
+        dots.appendChild(document.createElement("span"));
+      }
+      node.appendChild(text);
+      node.appendChild(dots);
+      this.elements.messages.appendChild(node);
+      this.state.typingNode = node;
+      this.state.typingStartedAt = Date.now();
+      this.scrollToBottom();
+    }
+
+    async hideTyping() {
+      if (this.state.typingNode) {
+        const elapsed = Date.now() - this.state.typingStartedAt;
+        if (elapsed < MIN_TYPING_VISIBLE_MS) {
+          await wait(MIN_TYPING_VISIBLE_MS - elapsed);
+        }
+        this.state.typingNode.remove();
+        this.state.typingNode = null;
+        this.state.typingStartedAt = 0;
+      }
+    }
+
     clearQuickActions() {
       this.elements.messages.querySelectorAll(".quick-actions").forEach((node) => node.remove());
     }
@@ -541,6 +608,8 @@
 
       this.state.sending = true;
       this.elements.send.disabled = true;
+      this.showTyping();
+      await nextFrame();
 
       try {
         const response = await fetch(API_BASE + "/api/chat/message", {
@@ -555,6 +624,7 @@
         if (!response.ok) throw new Error("Chat request failed");
 
         const payload = await response.json();
+        await this.hideTyping();
         if (payload.session_id) {
           this.state.sessionId = payload.session_id;
           window.localStorage.setItem(STORAGE_KEY, payload.session_id);
@@ -571,6 +641,7 @@
           this.connectWebSocket();
         }
       } catch (error) {
+        await this.hideTyping();
         this.addMessage("system", "Не удалось отправить сообщение. Попробуйте ещё раз.");
       } finally {
         this.state.sending = false;

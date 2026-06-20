@@ -38,6 +38,8 @@ class SessionStore:
             if session is None:
                 return None
             session.messages.append(Message(role=role, text=text))
+            if role == MessageRole.USER:
+                session.message_count += 1
             session.updated_at = datetime.utcnow()
             return session
 

@@ -1,5 +1,7 @@
 """Chat API routes."""
 
+import re
+
 from fastapi import APIRouter, HTTPException, Request
 
 from ..leads import build_lead_from_contact
@@ -19,6 +21,13 @@ from ..models import (
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 fallback_llm_client = MockLLMClient()
+MAX_SESSION_MESSAGES = 30
+MAX_MESSAGE_LENGTH = 1000
+HAS_LETTER_OR_DIGIT = re.compile(r"[0-9A-Za-zА-Яа-яЁё]")
+RATE_LIMIT_ANSWER = (
+    "Похоже, разговор затянулся. Если остались вопросы — оставьте телефон, "
+    "мы свяжемся, или попробуйте начать новый диалог."
+)
 
 
 def format_quick_actions(labels: list[object], request: Request) -> list[QuickAction]:
@@ -173,16 +182,52 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     lead_service = request.app.state.lead_service
 
     session = await session_store.get_or_create(payload.session_id, payload.company_id)
-    await session_store.append_message(session.session_id, MessageRole.USER, payload.message)
+    raw_message = payload.message or ""
+    stripped_message = raw_message.strip()
+
+    if not stripped_message:
+        return ChatMessageResponse(
+            session_id=session.session_id,
+            status=session.status,
+            action=PolicyAction.CLARIFY,
+            answer="Похоже, сообщение пустое. Напишите вопрос, и я подскажу.",
+            lead_created=False,
+            quick_actions=[],
+        )
+
+    if not HAS_LETTER_OR_DIGIT.search(stripped_message):
+        return ChatMessageResponse(
+            session_id=session.session_id,
+            status=session.status,
+            action=PolicyAction.CLARIFY,
+            answer="Не совсем понял вопрос. Можете переформулировать словами?",
+            lead_created=False,
+            quick_actions=[],
+        )
+
+    if session.message_count >= MAX_SESSION_MESSAGES:
+        return ChatMessageResponse(
+            session_id=session.session_id,
+            status=session.status,
+            action=PolicyAction.CLARIFY,
+            answer=RATE_LIMIT_ANSWER,
+            lead_created=False,
+            quick_actions=[
+                QuickAction(label="Начать новый диалог", type="message", value="Начать новый диалог")
+            ],
+        )
+
+    message = stripped_message[:MAX_MESSAGE_LENGTH]
+    await session_store.append_message(session.session_id, MessageRole.USER, message)
 
     if session.status == SessionStatus.WAITING_OPERATOR:
         local_classification = classify_and_extract(
-            payload.message,
+            message,
             service_classifier_payload(request),
             knowledge_base.company.city,
         )
         waiting_policy_result = request.app.state.policy_analyzer(
-            payload.message,
+            message,
             session,
             knowledge_base,
             local_classification,
@@ -192,7 +237,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             lead = build_lead_from_contact(
                 session_id=session.session_id,
                 contact=contact,
-                summary=payload.message,
+                summary=message,
                 service_id=waiting_policy_result.service_id,
             )
             await lead_service.save(lead)
@@ -231,9 +276,9 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             quick_actions=[],
         )
 
-    classification = await resolve_classification(payload.message, request)
+    classification = await resolve_classification(message, request)
     policy_result = request.app.state.policy_analyzer(
-        payload.message,
+        message,
         session,
         knowledge_base,
         classification,
@@ -248,7 +293,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             lead = build_lead_from_contact(
                 session_id=session.session_id,
                 contact=contact,
-                summary=payload.message,
+                summary=message,
                 service_id=policy_result.service_id,
             )
             await lead_service.save(lead)
@@ -265,7 +310,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             await session_store.set_operator_requested(session.session_id, True)
             await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
     elif policy_result.action == PolicyAction.SMALL_TALK:
-        answer = await safe_small_talk(request, knowledge_base.company.company_name, payload.message)
+        answer = await safe_small_talk(request, knowledge_base.company.company_name, message)
     elif policy_result.action == PolicyAction.OFF_TOPIC:
         answer = str(policy_result.safe_context.get("message_to_user") or "")
     elif policy_result.action == PolicyAction.TRANSFER_OPERATOR:
@@ -288,7 +333,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         answer = await safe_complete(
             request,
             policy_result.safe_context,
-            payload.message,
+            message,
             session.messages[-8:],
         )
 

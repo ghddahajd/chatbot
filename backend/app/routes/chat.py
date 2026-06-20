@@ -64,7 +64,18 @@ def service_classifier_payload(request: Request) -> list[dict[str, object]]:
 
 async def resolve_classification(message: str, request: Request) -> dict[str, object]:
     known_services = service_classifier_payload(request)
-    local_result = classify_and_extract(message, known_services)
+    local_result = classify_and_extract(
+        message,
+        known_services,
+        request.app.state.knowledge_base.company.city,
+    )
+    settings = request.app.state.settings
+    skip_local_classifier = settings.llm_skip_classifier_for_local
+    if skip_local_classifier is None:
+        skip_local_classifier = settings.llm_provider.lower().strip() == "openai_compatible"
+    if settings.llm_provider.lower().strip() == "openai_compatible" and skip_local_classifier:
+        return local_result
+
     try:
         model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
     except Exception:
@@ -90,6 +101,7 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
             "operator_request",
             "off_topic",
             "cosmetic_concern",
+            "location_mismatch",
         }
         and model_intent in {"small_talk", "service_mention"}
         and not model_service_id
@@ -164,6 +176,42 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     await session_store.append_message(session.session_id, MessageRole.USER, payload.message)
 
     if session.status == SessionStatus.WAITING_OPERATOR:
+        local_classification = classify_and_extract(
+            payload.message,
+            service_classifier_payload(request),
+            knowledge_base.company.city,
+        )
+        waiting_policy_result = request.app.state.policy_analyzer(
+            payload.message,
+            session,
+            knowledge_base,
+            local_classification,
+        )
+        contact = waiting_policy_result.safe_context.get("contact")
+        if waiting_policy_result.action == PolicyAction.ASK_CONTACT and contact:
+            lead = build_lead_from_contact(
+                session_id=session.session_id,
+                contact=contact,
+                summary=payload.message,
+                service_id=waiting_policy_result.service_id,
+            )
+            await lead_service.save(lead)
+            await session_store.set_lead_requested(session.session_id, True)
+            answer = (
+                "Спасибо. Передали ваши контакты специалисту. "
+                "С вами свяжутся для уточнения деталей."
+            )
+            await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+            session = await session_store.get(session.session_id)
+            return ChatMessageResponse(
+                session_id=session.session_id,
+                status=session.status,
+                action=waiting_policy_result.action,
+                answer=answer,
+                lead_created=True,
+                quick_actions=[],
+            )
+
         return ChatMessageResponse(
             session_id=session.session_id,
             status=session.status,

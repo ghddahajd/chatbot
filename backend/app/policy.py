@@ -119,6 +119,32 @@ KNOWN_CITY_FORMS = {
     "уфа": "Уфа",
     "воронеж": "Воронеж",
 }
+LOCATION_MISMATCH_KEYWORDS = {
+    "таджикистан",
+    "таджикистана",
+    "узбекистан",
+    "узбекистана",
+    "казахстан",
+    "казахстана",
+    "кыргызстан",
+    "кыргызстана",
+    "беларусь",
+    "беларуси",
+    "армения",
+    "армении",
+    "грузия",
+    "грузии",
+    "турция",
+    "турции",
+    "азербайджан",
+    "азербайджана",
+}
+LOCATION_PATTERNS = (
+    re.compile(r"\bя\s+из\s+([а-яa-z\-\s]{3,40})", re.IGNORECASE),
+    re.compile(r"\bмы\s+из\s+([а-яa-z\-\s]{3,40})", re.IGNORECASE),
+    re.compile(r"\bживу\s+в\s+([а-яa-z\-\s]{3,40})", re.IGNORECASE),
+    re.compile(r"\bнахожусь\s+в\s+([а-яa-z\-\s]{3,40})", re.IGNORECASE),
+)
 HANDOFF_MESSAGE = (
     "Передаю диалог специалисту. Можете дописать детали, оператор увидит историю. "
     "Если хотите, оставьте имя и телефон для обратной связи."
@@ -143,6 +169,7 @@ ALLOWED_CLASSIFIER_INTENTS = {
     "operator_request",
     "service_mention",
     "unknown_service",
+    "location_mismatch",
 }
 
 
@@ -204,10 +231,16 @@ def _normalize_classification(raw_result: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def classify_and_extract(message: str, known_services: list[dict[str, Any]]) -> dict[str, object]:
+def classify_and_extract(
+    message: str,
+    known_services: list[dict[str, Any]],
+    company_city: str = "Москва",
+) -> dict[str, object]:
     """Local fallback when the external classifier is unavailable."""
 
     normalized_message = normalize_text(message)
+    if _is_location_mismatch(message, normalized_message, company_city):
+        return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
     if _contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
     if _contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):
@@ -264,6 +297,23 @@ def _find_unsupported_city(normalized_message: str, company_city: str) -> Option
         if city_form in normalized_message and normalize_text(city_name) != normalized_company_city:
             return city_name
     return None
+
+
+def _is_location_mismatch(message: str, normalized_message: str, company_city: str) -> bool:
+    normalized_company_city = normalize_text(company_city)
+    if _contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
+        return True
+    if _find_unsupported_city(normalized_message, company_city):
+        return True
+
+    for pattern in LOCATION_PATTERNS:
+        match = pattern.search(message)
+        if match is None:
+            continue
+        location = normalize_text(match.group(1))
+        if location and normalized_company_city not in location:
+            return True
+    return False
 
 
 def _format_service_list(knowledge_base: KnowledgeBase) -> str:
@@ -423,6 +473,36 @@ def analyze_message(
     duration_requested = _contains_keyword(normalized_message, DURATION_KEYWORDS)
     medical_requested = intent == "medical_advice" or _contains_keyword(normalized_message, MEDICAL_KEYWORDS)
     unsupported_city = _find_unsupported_city(normalized_message, knowledge_base.company.city)
+
+    if intent == "location_mismatch" or _is_location_mismatch(
+        message, normalized_message, knowledge_base.company.city
+    ):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.LOCATION_MISMATCH,
+            confidence=classifier_confidence or 0.86,
+            safe_context={
+                "company_city": knowledge_base.company.city,
+                "message_to_user": (
+                    f"Очный приём только в {knowledge_base.company.city}. "
+                    "Уточните, пожалуйста, у специалиста — возможно есть удалённый формат консультации для вашего случая."
+                ),
+                "context_for_model": {
+                    "company_city": knowledge_base.company.city,
+                    "note": (
+                        f"очный приём только в {knowledge_base.company.city}, "
+                        "можно уточнить формат у специалиста"
+                    ),
+                },
+            },
+            quick_actions=[
+                {
+                    "label": "Позвать оператора",
+                    "type": "message",
+                    "value": "Хочу узнать про удалённый формат",
+                }
+            ],
+        )
 
     if intent == "small_talk":
         return PolicyResult(

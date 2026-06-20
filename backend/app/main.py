@@ -64,7 +64,11 @@ app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), na
 
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "current_provider": settings.llm_provider,
+        "current_model": settings.llm_model,
+    }
 
 
 @app.get("/demo/demo.html")

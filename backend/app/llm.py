@@ -9,6 +9,7 @@ from typing import Any, Optional
 import httpx
 
 from .models import Message
+from .validator import fallback_after_invalid_response, validate_response
 
 
 PRICE_DISCLAIMER = "Предварительно так, точнее сообщит специалист."
@@ -19,6 +20,8 @@ SYSTEM_PROMPT = (
     "Если данных нет, предложи уточнение или специалиста. "
     "Учитывай контекст предыдущих сообщений в этом диалоге. "
     "Если пользователь продолжает тему — не переспрашивай то что уже сказал. "
+    "Не выводи JSON, не перечисляй поля построчно, не показывай ключи объекта. "
+    "Дай один связный ответ обычным языком, как живой консультант. "
     f"Если отвечаешь про цену или длительность, обязательно добавь фразу: {PRICE_DISCLAIMER} "
     "Отвечай кратко, по-русски, без Markdown."
 )
@@ -27,7 +30,7 @@ INTENT_CLASSIFICATION_PROMPT = (
     "Проанализируй сообщение пользователя и верни JSON:\n"
     "{\n"
     '  "intent": "small_talk|off_topic|list_services|price_question|'
-    'cosmetic_concern|medical_advice|operator_request|service_mention|unknown_service",\n'
+    'cosmetic_concern|medical_advice|operator_request|service_mention|unknown_service|location_mismatch",\n'
     '  "service_id": "<id из списка или null>",\n'
     '  "confidence": 0.0-1.0\n'
     "}\n\n"
@@ -40,6 +43,8 @@ INTENT_CLASSIFICATION_PROMPT = (
     "intent: unknown_service.\n"
     "- cosmetic_concern — эстетическая жалоба на внешний вид кожи/волос "
     "(НЕ боль, НЕ болезнь, НЕ медицинский симптом).\n"
+    "- location_mismatch — пользователь упоминает, что он из другого города или другой страны, "
+    "не из города центра.\n"
     "Ответь ТОЛЬКО JSON, без текста вокруг."
 )
 SMALL_TALK_PROMPT = (
@@ -142,10 +147,6 @@ class MockLLMClient(BaseLLMClient):
             parts.append(f"Стоимость: {price['price_text']}. {PRICE_DISCLAIMER}")
         elif service_name:
             parts.append("Точные детали по стоимости и длительности уточнит специалист.")
-        if address:
-            parts.append(f"Адрес: {address}.")
-        if working_hours:
-            parts.append(f"Режим работы: {working_hours}.")
 
         if parts:
             return " ".join(parts)
@@ -187,6 +188,37 @@ def enforce_small_talk_pivot(answer: str, company_name: str) -> str:
     return clean_answer
 
 
+def tolerant_json_parse(raw_text: str) -> dict[str, Any] | None:
+    """Parse JSON from local/cloud models that may wrap it in extra text."""
+
+    cleaned_text = raw_text.strip()
+    if cleaned_text.startswith("```"):
+        lines = cleaned_text.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned_text = "\n".join(lines).strip()
+
+    for candidate in (cleaned_text,):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        return parsed if isinstance(parsed, dict) else None
+
+    start = cleaned_text.find("{")
+    end = cleaned_text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            parsed = json.loads(cleaned_text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    return None
+
+
 def normalize_classification_result(
     raw_result: dict[str, Any],
     known_services: list[dict[str, str]],
@@ -203,6 +235,7 @@ def normalize_classification_result(
         "operator_request",
         "service_mention",
         "unknown_service",
+        "location_mismatch",
     }
     known_service_ids = {str(service.get("id")) for service in known_services}
 
@@ -234,11 +267,73 @@ class OpenAIClient(BaseLLMClient):
         model: str = "gpt-4o-mini",
         base_url: str = "https://api.openai.com/v1",
         timeout: float = 30.0,
+        disable_thinking: bool = False,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.disable_thinking = disable_thinking
+
+    async def _post_chat_completions(self, payload: dict[str, Any], headers: dict[str, str]) -> httpx.Response:
+        request_payload = dict(payload)
+        if self.disable_thinking:
+            request_payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=request_payload,
+                headers=headers,
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as error:
+                if self.disable_thinking and error.response.status_code in {400, 404, 422}:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    return response
+                raise
+            return response
+
+    def _context_for_model(self, context: dict[str, Any]) -> str:
+        lines: list[str] = []
+        service = context.get("service") if isinstance(context.get("service"), dict) else {}
+        price = context.get("price") if isinstance(context.get("price"), dict) else {}
+        company = context.get("company") if isinstance(context.get("company"), dict) else {}
+
+        if service.get("name"):
+            lines.append(f"Услуга: {service['name']}")
+        if service.get("short_description"):
+            lines.append(f"Описание: {service['short_description']}")
+        if price.get("price_text"):
+            lines.append(f"Стоимость: {price['price_text']}")
+        if company.get("working_hours"):
+            lines.append(f"Режим работы: {company['working_hours']}")
+        if company.get("address"):
+            lines.append(f"Адрес: {company['address']}")
+        if context.get("question_type"):
+            lines.append(f"Тип вопроса: {context['question_type']}")
+
+        suggested_services = context.get("suggested_services")
+        if isinstance(suggested_services, list) and suggested_services:
+            names = [
+                str(service_item.get("name"))
+                for service_item in suggested_services
+                if isinstance(service_item, dict) and service_item.get("name")
+            ]
+            if names:
+                lines.append("Подходящие услуги: " + ", ".join(names))
+
+        message_to_user = context.get("message_to_user")
+        if isinstance(message_to_user, str) and message_to_user.strip():
+            lines.append(f"Готовый безопасный смысл ответа: {message_to_user.strip()}")
+
+        return "\n".join(lines) or "Нет дополнительных данных. Нужно мягко уточнить запрос."
 
     async def complete(
         self,
@@ -247,7 +342,7 @@ class OpenAIClient(BaseLLMClient):
         user_message: str,
         history: list[Message],
     ) -> str:
-        safe_context = json.dumps(context, ensure_ascii=False, default=str)
+        context_for_model = self._context_for_model(context)
         history_payload = json.dumps(
             [
                 {
@@ -266,14 +361,15 @@ class OpenAIClient(BaseLLMClient):
                     "role": "system",
                     "content": (
                         f"{system_prompt}\n\n"
-                        f"safe_context JSON:\n{safe_context}\n\n"
+                        f"Контекст для ответа:\n{context_for_model}\n\n"
                         f"recent_history JSON:\n{history_payload}"
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        "Сформулируй ответ клиенту только на основе safe_context. "
+                        "Сформулируй один готовый ответ клиенту только на основе контекста выше. "
+                        "Не показывай служебные поля, JSON, списки ключей или внутренние данные. "
                         f"Тип вопроса: {context.get('question_type', 'general')}. "
                         f"Сообщение клиента для тональности: {user_message}"
                     ),
@@ -283,13 +379,7 @@ class OpenAIClient(BaseLLMClient):
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
+        response = await self._post_chat_completions(payload, headers)
 
         data = response.json()
         answer = (
@@ -298,7 +388,10 @@ class OpenAIClient(BaseLLMClient):
             .get("content", DEFAULT_FALLBACK)
             .strip()
         )
-        return enforce_required_disclaimers(answer, context)
+        answer = enforce_required_disclaimers(answer, context)
+        if not validate_response(answer):
+            return fallback_after_invalid_response(answer, context)
+        return answer
 
     async def classify_and_extract(
         self,
@@ -320,13 +413,7 @@ class OpenAIClient(BaseLLMClient):
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
+        response = await self._post_chat_completions(payload, headers)
 
         data = response.json()
         content = (
@@ -335,18 +422,9 @@ class OpenAIClient(BaseLLMClient):
             .get("content", "{}")
             .strip()
         )
-        try:
-            raw_result = json.loads(content)
-        except json.JSONDecodeError:
-            start = content.find("{")
-            end = content.rfind("}")
-            if start >= 0 and end > start:
-                try:
-                    raw_result = json.loads(content[start : end + 1])
-                except json.JSONDecodeError:
-                    raw_result = {}
-            else:
-                raw_result = {}
+        raw_result = tolerant_json_parse(content)
+        if raw_result is None:
+            return {"intent": "service_mention", "service_id": None, "confidence": 0.0}
         return normalize_classification_result(raw_result, known_services)
 
     async def small_talk(self, company_name: str, user_message: str) -> str:
@@ -364,13 +442,7 @@ class OpenAIClient(BaseLLMClient):
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
+        response = await self._post_chat_completions(payload, headers)
 
         data = response.json()
         answer = (
@@ -399,6 +471,7 @@ def build_llm_client(
             api_key=api_key,
             model=model,
             base_url=base_url,
+            disable_thinking=normalized_provider == "openai_compatible",
         )
 
     return MockLLMClient()

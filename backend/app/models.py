@@ -43,6 +43,7 @@ class PolicyReason(str, Enum):
     PRICE_QUESTION_NO_SERVICE = "price_question_no_service"
     OPERATOR_REQUESTED = "operator_requested"
     UNSUPPORTED_CITY = "unsupported_city"
+    LOCATION_MISMATCH = "location_mismatch"
     CONTACT_PROVIDED = "contact_provided"
     DURATION_QUESTION = "duration_question"
     OUT_OF_SCOPE = "out_of_scope"

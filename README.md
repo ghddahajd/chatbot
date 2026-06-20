@@ -119,6 +119,31 @@ LLM_BASE_URL=https://your-endpoint.example/v1
 LLM_MODEL=your-model-name
 ```
 
+### Локальная модель (Ollama)
+
+Если хочется гонять LLM локально без счёта за токены, можно подключить Ollama через OpenAI-compatible endpoint.
+
+На macOS / Apple Silicon лучше запускать Ollama нативно на хосте, не внутри Docker, чтобы работало ускорение через Metal:
+
+```bash
+ollama pull qwen3:4b
+ollama serve
+```
+
+В `.env` для backend:
+
+```env
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+LLM_MODEL=qwen3:4b
+LLM_API_KEY=local
+LLM_SKIP_CLASSIFIER_FOR_LOCAL=true
+```
+
+Почему `host.docker.internal`: backend живёт внутри Docker-контейнера, и `localhost` внутри контейнера указывает не на macOS, а на сам контейнер. Этот адрес даёт контейнеру достучаться до Ollama на хосте.
+
+JSON от небольших локальных моделей менее стабилен, чем от Claude/Gemini: они могут оборачивать ответ в Markdown или добавлять текст вокруг JSON. В коде есть tolerant parser и fallback, но для скорости локального режима классификатор LLM можно отключить через `LLM_SKIP_CLASSIFIER_FOR_LOCAL=true`. Тогда backend использует быстрый regex/policy слой и зовёт локальную модель только для ответа. Для показа клиенту я бы всё равно включал облачную модель. Локальная модель больше подходит для разработки и тестов без расходов.
+
 ## Что можно проверить руками
 
 На demo-странице можно прогнать такие сценарии:

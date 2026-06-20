@@ -1,76 +1,22 @@
 # Chat Widget MVP
 
-Тестовое MVP встраиваемого чат-виджета для медицинского / косметологического центра.
+Встраиваемый AI-чат для сайта медицинского / косметологического центра.
 
-Идея такая:
-- виджет подключается одной строкой через `<script>`
-- бот отвечает только по локальной базе знаний
-- по медицинским вопросам не импровизирует, а переводит на специалиста
-- если нужен человек, чат можно передать оператору
+Виджет подключается одной строкой через `<script>`, отвечает по локальной базе знаний, не даёт медицинские рекомендации и умеет передавать диалог оператору.
 
-Проект не про “умный универсальный AI-ассистент”, а про понятный и управляемый сценарий для сайта клиники.
+## Что внутри
 
-## Что здесь уже есть
-
+- `Vanilla JS` виджет на `Shadow DOM`
 - backend на `FastAPI`
-- knowledge base на `JSON / YAML`
-- `policy guard`, который работает до LLM
-- `MockLLM` по умолчанию
-- возможность подключить `Gemini` или другой OpenAI-compatible API
-- сбор лидов в `jsonl`
-- operator panel
-- `WebSocket`-handoff между клиентом и оператором
-- demo widget на `Vanilla JS + Shadow DOM`
-- восстановление состояния чата после перезагрузки страницы
+- база знаний в `backend/data`
+- policy guard перед LLM
+- `MockLLM` без ключей по умолчанию
+- поддержка Gemini / OpenAI-compatible / Ollama
+- лиды в `backend/logs/leads.jsonl`
+- operator panel + WebSocket handoff
+- demo-страница и пример внешнего сайта
 
-## Стек
-
-- frontend widget: `Vanilla JS`, `Shadow DOM`, `Custom Elements`
-- backend: `Python`, `FastAPI`
-- transport: `HTTP + WebSocket`
-- knowledge base: `YAML / JSON`
-- infra: `Docker Compose`
-
-## Структура
-
-```text
-backend/
-  app/
-    main.py
-    config.py
-    models.py
-    knowledge.py
-    sessions.py
-    leads.py
-    ws_manager.py
-    validator.py
-    llm/
-      base.py
-      mock.py
-      openai_compatible.py
-      parsing.py
-      prompts.py
-    policy/
-      __init__.py
-      constants.py
-      extractors.py
-      intent.py
-      quick_actions.py
-      rules.py
-    routes/
-      chat.py
-      chat_utils.py
-      operator.py
-      ws.py
-      leads.py
-  data/
-  logs/
-widget/
-demo/
-docker-compose.yml
-```
-
-## Быстрый запуск
+## Запуск
 
 ```bash
 cp .env.example .env
@@ -79,12 +25,12 @@ docker compose up --build
 
 После запуска:
 
-- demo страница: `http://localhost:8000/demo/demo.html`
-- demo внешнего сайта с embedded-виджетом: `http://localhost:8000/demo/external-site.html`
+- внешний demo-сайт: `http://localhost:8000/demo/external-site.html`
+- простое demo: `http://localhost:8000/demo/demo.html`
 - operator panel: `http://localhost:8000/operator?token=demo-operator-token`
 - healthcheck: `http://localhost:8000/health`
 
-## Локальный запуск без Docker
+## Локально без Docker
 
 ```bash
 cd backend
@@ -92,53 +38,67 @@ pip install -r requirements.txt
 python3 -m uvicorn app.main:app --reload --port 8000
 ```
 
-## Какой тут flow
+## Как встроить виджет
 
-У сессии есть 4 состояния:
+```html
+<script
+  src="http://localhost:8000/static/widget.js"
+  data-company-id="rosh_demo"
+  defer
+></script>
+```
+
+Если backend живёт на другом домене, можно передать base URL:
+
+```html
+<script
+  src="https://api.example.com/static/widget.js"
+  data-company-id="rosh_demo"
+  data-api-base="https://api.example.com"
+  defer
+></script>
+```
+
+## Основной flow
 
 ```text
 AI_ACTIVE -> WAITING_OPERATOR -> HUMAN_ACTIVE -> CLOSED
 ```
 
-Что это значит:
-
-- `AI_ACTIVE` — бот отвечает через `/api/chat/message`
-- `WAITING_OPERATOR` — бот больше не отвечает, ждём подключения человека
-- `HUMAN_ACTIVE` — оператор пишет напрямую в чат через `WebSocket`
+- `AI_ACTIVE` — бот отвечает сам
+- `WAITING_OPERATOR` — пользователь ждёт специалиста, AI молчит
+- `HUMAN_ACTIVE` — оператор пишет в виджет напрямую
 - `CLOSED` — диалог завершён
 
-Если пользователь перезагружает страницу, виджет восстанавливает текущую сессию и её состояние.
+Сессия хранится в `localStorage`, поэтому после перезагрузки страницы виджет восстанавливает историю и текущий статус.
 
 ## Что бот не делает
 
-- не выдумывает услуги, которых нет в базе
-- не выдумывает цены и сроки
-- не даёт медицинские рекомендации
+- не выдумывает услуги и цены
 - не ставит диагнозы
+- не назначает препараты
+- не даёт медицинские рекомендации
 - не обещает результат
 
-Если спрашивают то, что нельзя безопасно ответить через базу знаний, логика уводит чат либо в уточнение, либо в сценарий со специалистом.
+На медицинские вопросы бот переводит к специалисту. По неизвестным услугам предлагает список услуг или оператора.
 
-## Какой LLM используется
+## LLM
 
-По умолчанию проект работает вообще без внешнего API:
+По умолчанию всё работает без внешнего API:
 
-- `LLM_PROVIDER=mock`
+```env
+LLM_PROVIDER=mock
+```
 
-То есть для demo можно запускать всё без ключей.
-
-Если нужно протестировать на внешней модели, можно подключить Gemini.
-
-Пример:
+Gemini:
 
 ```env
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_key
-LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 LLM_MODEL=gemini-3.5-flash
 ```
 
-Либо можно использовать любой OpenAI-compatible endpoint:
+OpenAI-compatible endpoint:
 
 ```env
 LLM_PROVIDER=openai_compatible
@@ -147,18 +107,12 @@ LLM_BASE_URL=https://your-endpoint.example/v1
 LLM_MODEL=your-model-name
 ```
 
-### Локальная модель (Ollama)
-
-Если хочется гонять LLM локально без счёта за токены, можно подключить Ollama через OpenAI-compatible endpoint.
-
-На macOS / Apple Silicon лучше запускать Ollama нативно на хосте, не внутри Docker, чтобы работало ускорение через Metal:
+Ollama локально:
 
 ```bash
 ollama pull qwen3:4b
 ollama serve
 ```
-
-В `.env` для backend:
 
 ```env
 LLM_PROVIDER=openai_compatible
@@ -168,63 +122,30 @@ LLM_API_KEY=local
 LLM_SKIP_CLASSIFIER_FOR_LOCAL=true
 ```
 
-Почему `host.docker.internal`: backend живёт внутри Docker-контейнера, и `localhost` внутри контейнера указывает не на macOS, а на сам контейнер. Этот адрес даёт контейнеру достучаться до Ollama на хосте.
+## Что проверить руками
 
-JSON от небольших локальных моделей менее стабилен, чем от Claude/Gemini: они могут оборачивать ответ в Markdown или добавлять текст вокруг JSON. В коде есть tolerant parser и fallback, но для скорости локального режима классификатор LLM можно отключить через `LLM_SKIP_CLASSIFIER_FOR_LOCAL=true`. Тогда backend использует быстрый regex/policy слой и зовёт локальную модель только для ответа. Для показа клиенту я бы всё равно включал облачную модель. Локальная модель больше подходит для разработки и тестов без расходов.
+- `Сколько стоит лазерная эпиляция?`
+- `Хочу чистку`
+- `Что пить от прыщей?`
+- `Есть ботокс?`
+- `Я не из Москвы`
+- `Позовите оператора`
+- `Иван, +7 999 123-45-67`
+- взять чат в operator panel и ответить клиенту
 
-## Что можно проверить руками
-
-На demo-странице можно прогнать такие сценарии:
-
-1. Спросить цену услуги из базы.
-2. Спросить про длительность, которой нет в базе.
-3. Задать медицинский вопрос.
-4. Спросить услугу, которой нет в knowledge base.
-5. Попросить оператора.
-6. Оставить имя и телефон.
-7. Открыть operator panel и взять чат.
-8. Перезагрузить страницу и проверить, что состояние сессии восстановилось.
-
-## Где лежат данные
+## Где менять данные
 
 - `backend/data/company.yaml`
 - `backend/data/services.json`
 - `backend/data/prices.json`
 - `backend/data/faq.md`
 
-Лиды пишутся сюда:
+## Что не входило в MVP
 
-- `backend/logs/leads.jsonl`
-
-## Что это за уровень готовности
-
-Это именно MVP / тестовое, не production.
-
-Что здесь сознательно не делалось:
-
+- CRM
 - полноценный RAG
-- CRM-интеграции
-- автопарсинг всего сайта
-- сложная админка
-- тяжёлый frontend framework для виджета
+- автопарсинг сайта
+- постоянное хранилище сессий
+- production auth для операторов
 
-## Что можно улучшать дальше
-
-- допилить operator panel
-- добавить smoke tests
-- сделать более аккуратную demo-страницу
-- улучшить мобильный UI виджета
-- добавить TTL / retention-логику для сессий
-- вынести хранилище сессий из памяти во что-то постоянное
-
-## Почему так сделано
-
-Я специально собирал проект без лишней сложности.
-
-Здесь идея не в том, чтобы показать “супер-AI”, а в том, чтобы показать рабочий встраиваемый сценарий:
-
-- controlled knowledge base
-- policy-before-LLM
-- handoff на оператора
-- понятное поведение после reload
-- возможность быстро поднять всё локально или через Docker
+Это тестовое MVP: цель была показать управляемый AI-виджет с безопасной логикой, базой знаний и передачей человеку.

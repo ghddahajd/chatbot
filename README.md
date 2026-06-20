@@ -36,6 +36,33 @@
 ```text
 backend/
   app/
+    main.py
+    config.py
+    models.py
+    knowledge.py
+    sessions.py
+    leads.py
+    ws_manager.py
+    validator.py
+    llm/
+      base.py
+      mock.py
+      openai_compatible.py
+      parsing.py
+      prompts.py
+    policy/
+      __init__.py
+      constants.py
+      extractors.py
+      intent.py
+      quick_actions.py
+      rules.py
+    routes/
+      chat.py
+      chat_utils.py
+      operator.py
+      ws.py
+      leads.py
   data/
   logs/
 widget/

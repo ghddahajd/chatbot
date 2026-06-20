@@ -488,7 +488,7 @@
 
     addQuickActions(actions) {
       this.clearQuickActions();
-      if (!Array.isArray(actions) || actions.length === 0 || this.state.status !== STATUS.AI_ACTIVE) {
+      if (!Array.isArray(actions) || actions.length === 0 || this.state.status === STATUS.CLOSED) {
         return;
       }
 
@@ -496,34 +496,35 @@
       wrap.className = "quick-actions";
 
       for (const action of actions) {
+        const normalizedAction =
+          typeof action === "string"
+            ? { label: action, type: "message", value: action }
+            : action;
+        const label = String(normalizedAction?.label || "").trim();
+        const type = String(normalizedAction?.type || "message").trim();
+        const value = String(normalizedAction?.value || label).trim();
+        if (!label || !value) continue;
+
         const button = document.createElement("button");
         button.className = "quick-action";
         button.type = "button";
-        button.textContent = action.label;
-        button.addEventListener("click", () => this.handleQuickAction(action));
+        button.textContent = label;
+        button.addEventListener("click", () => this.handleQuickAction({ type, value }));
         wrap.appendChild(button);
       }
 
+      if (!wrap.childElementCount) return;
       this.elements.messages.appendChild(wrap);
       this.scrollToBottom();
     }
 
     handleQuickAction(action) {
-      if (!action || !action.type) return;
-
-      if (action.type === "open_url") {
+      if (action.type === "link") {
         window.open(action.value, "_blank", "noopener,noreferrer");
         return;
       }
 
-      if (action.type === "phone") {
-        window.location.href = "tel:" + action.value;
-        return;
-      }
-
-      if (action.type === "reply") {
-        this.sendText(String(action.value || action.label || "").trim());
-      }
+      this.sendText(String(action.value || "").trim());
     }
 
     async sendText(text) {
@@ -564,8 +565,8 @@
           const role =
             isHandoff || payload.status === STATUS.HUMAN_ACTIVE || payload.action === "reject" ? "system" : "assistant";
           this.addMessage(role, isHandoff ? this.handoffMessage() : payload.answer);
+          this.addQuickActions(payload.quick_actions);
         }
-        this.addQuickActions(payload.quick_actions);
         if (payload.status === STATUS.WAITING_OPERATOR || payload.status === STATUS.HUMAN_ACTIVE) {
           this.connectWebSocket();
         }

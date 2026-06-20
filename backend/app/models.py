@@ -38,6 +38,7 @@ class PolicyReason(str, Enum):
     MEDICAL_ADVICE = "medical_advice"
     PRICE_QUESTION = "price_question"
     OPERATOR_REQUESTED = "operator_requested"
+    UNSUPPORTED_CITY = "unsupported_city"
     CONTACT_PROVIDED = "contact_provided"
     DURATION_QUESTION = "duration_question"
     OUT_OF_SCOPE = "out_of_scope"
@@ -108,6 +109,7 @@ class PolicyResult(BaseModel):
     service_id: Optional[str] = None
     confidence: float = 0.0
     safe_context: dict[str, Any] = Field(default_factory=dict)
+    quick_actions: list[str] = Field(default_factory=list)
 
 
 class ChatMessageRequest(BaseModel):
@@ -117,8 +119,8 @@ class ChatMessageRequest(BaseModel):
 
 
 class QuickAction(BaseModel):
-    type: str
     label: str
+    type: str
     value: str
 
 

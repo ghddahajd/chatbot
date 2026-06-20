@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 import httpx
 
 
-PRICE_DISCLAIMER = "Предварительно так, точную информацию подтвердит специалист."
+PRICE_DISCLAIMER = "Предварительно так, точнее сообщит специалист."
 DEFAULT_FALLBACK = "Уточните, пожалуйста, ваш вопрос, и я постараюсь помочь в рамках услуг центра."
 SYSTEM_PROMPT = (
     "Ты консультант медицинского/косметологического центра. Ты не врач и не ставишь диагнозы. "
     "Отвечай только по переданному safe_context. Не придумывай цены, сроки, услуги или рекомендации. "
-    "Если данных нет, предложи уточнение или специалиста."
+    "Если данных нет, предложи уточнение или специалиста. "
+    f"Если отвечаешь про цену или длительность, обязательно добавь фразу: {PRICE_DISCLAIMER} "
+    "Отвечай кратко, по-русски, без Markdown."
 )
 
 
@@ -69,6 +72,15 @@ class MockLLMClient(BaseLLMClient):
         return DEFAULT_FALLBACK
 
 
+def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
+    """Keep hard business rules outside model behavior."""
+
+    clean_answer = answer.strip() or DEFAULT_FALLBACK
+    if context.get("question_type") in {"price", "duration"} and PRICE_DISCLAIMER not in clean_answer:
+        return f"{clean_answer} {PRICE_DISCLAIMER}"
+    return clean_answer
+
+
 class OpenAIClient(BaseLLMClient):
     """Minimal OpenAI-compatible client."""
 
@@ -85,13 +97,24 @@ class OpenAIClient(BaseLLMClient):
         self.timeout = timeout
 
     async def complete(self, system_prompt: str, context: dict[str, Any], user_message: str) -> str:
+        safe_context = json.dumps(context, ensure_ascii=False, default=str)
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "system", "content": f"safe_context: {context}"},
-                {"role": "user", "content": user_message},
+                {
+                    "role": "system",
+                    "content": f"{system_prompt}\n\nsafe_context JSON:\n{safe_context}",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Сформулируй ответ клиенту только на основе safe_context. "
+                        f"Тип вопроса: {context.get('question_type', 'general')}. "
+                        f"Сообщение клиента для тональности: {user_message}"
+                    ),
+                },
             ],
+            "temperature": 0.2,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
@@ -104,12 +127,13 @@ class OpenAIClient(BaseLLMClient):
             response.raise_for_status()
 
         data = response.json()
-        return (
+        answer = (
             data.get("choices", [{}])[0]
             .get("message", {})
             .get("content", DEFAULT_FALLBACK)
             .strip()
         )
+        return enforce_required_disclaimers(answer, context)
 
 
 def build_llm_client(

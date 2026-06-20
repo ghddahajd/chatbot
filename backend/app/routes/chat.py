@@ -8,48 +8,33 @@ from ..models import (
     ChatMessageResponse,
     MessageRole,
     PolicyAction,
+    QuickAction,
     SessionPublicResponse,
     SessionStatus,
-    QuickAction,
-    CompanyConfig,
 )
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
-def build_quick_actions(
-    policy_action: PolicyAction,
-    status: SessionStatus,
-    lead_created: bool,
-    company: CompanyConfig,
-) -> list[QuickAction]:
+def format_quick_actions(labels: list[str], request: Request) -> list[QuickAction]:
+    company = request.app.state.knowledge_base.company
+    values = {
+        "Позвать оператора": ("message", "Хочу поговорить с оператором"),
+        "Посмотреть услуги": ("message", "Покажи список услуг"),
+        "Оставить телефон": ("message", "Хочу оставить телефон"),
+        "Уточнить цену": ("message", "Хочу уточнить цену"),
+        "Написать в Telegram": ("link", company.telegram_url or ""),
+        "Открыть сайт": ("link", company.website_url or ""),
+    }
+
     actions: list[QuickAction] = []
-
-    if status == SessionStatus.AI_ACTIVE:
-        actions.extend(
-            [
-                QuickAction(type="reply", label="Позвать оператора", value="Позовите оператора"),
-            ]
-        )
-
-    if status == SessionStatus.AI_ACTIVE and policy_action in {PolicyAction.CLARIFY, PolicyAction.REJECT}:
-        actions.append(QuickAction(type="reply", label="Список услуг", value="Какие услуги есть?"))
-
-    if lead_created:
-        actions.append(QuickAction(type="phone", label="Позвонить", value=company.phone))
-
-    should_show_external_links = (
-        status == SessionStatus.WAITING_OPERATOR
-        or lead_created
-        or policy_action in {PolicyAction.CLARIFY, PolicyAction.REJECT}
-    )
-
-    if should_show_external_links and company.telegram_url:
-        actions.append(QuickAction(type="open_url", label="Написать в Telegram", value=company.telegram_url))
-    if should_show_external_links and company.website_url:
-        actions.append(QuickAction(type="open_url", label="Открыть сайт", value=company.website_url))
-    return actions[:4]
+    for label in labels:
+        action_type, value = values.get(label, ("message", label))
+        if action_type == "link" and not value:
+            continue
+        actions.append(QuickAction(label=label, type=action_type, value=value))
+    return actions
 
 
 @router.get("/session/{session_id}", response_model=SessionPublicResponse)
@@ -94,12 +79,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             action=PolicyAction.REJECT,
             answer="",
             lead_created=False,
-            quick_actions=build_quick_actions(
-                PolicyAction.REJECT,
-                session.status,
-                False,
-                knowledge_base.company,
-            ),
+            quick_actions=[],
         )
 
     if session.status == SessionStatus.HUMAN_ACTIVE:
@@ -148,7 +128,11 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             or "Передаю диалог специалисту. Оператор увидит историю переписки."
         )
     elif policy_result.action == PolicyAction.CLARIFY:
-        answer = str(policy_result.safe_context.get("message_to_user") or "")
+        answer = str(
+            policy_result.safe_context.get("message_to_user")
+            or policy_result.safe_context.get("city_note")
+            or ""
+        )
     elif policy_result.action == PolicyAction.REJECT:
         answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
     else:
@@ -167,10 +151,5 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         action=policy_result.action,
         answer=answer,
         lead_created=lead_created,
-        quick_actions=build_quick_actions(
-            policy_result.action,
-            session.status,
-            lead_created,
-            knowledge_base.company,
-        ),
+        quick_actions=format_quick_actions(policy_result.quick_actions, request),
     )

@@ -86,21 +86,31 @@
       }
       .close {
         position: absolute;
-        top: 16px;
+        top: 50%;
         right: 16px;
+        transform: translateY(-50%);
         width: 40px;
         height: 40px;
+        padding: 0;
         border: 0;
         border-radius: 999px;
         background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--accent-soft) 100%);
         color: var(--text-secondary);
         font: inherit;
-        font-size: 26px;
+        font-size: 0;
         line-height: 1;
         cursor: pointer;
         display: grid;
         place-items: center;
         box-shadow: inset 0 0 0 1px var(--border-subtle);
+      }
+      .close::before {
+        content: "×";
+        display: block;
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1;
+        transform: translateY(-1px);
       }
       .eyebrow {
         display: none;
@@ -817,6 +827,6 @@
   }
 
   window.addEventListener("load", function () {
-    window.setTimeout(initWidget, 5000);
+    initWidget();
   });
 })();

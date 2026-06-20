@@ -24,7 +24,18 @@ MEDICAL_KEYWORDS = {
     "сыпь",
     "симптом",
 }
-SMALL_TALK_KEYWORDS = {"привет", "здравствуй", "добрый день", "хай", "ку", "спасибо", "благодарю"}
+SMALL_TALK_KEYWORDS = {
+    "привет",
+    "здравствуй",
+    "добрый день",
+    "хай",
+    "ку",
+    "спасибо",
+    "благодарю",
+    "как дела",
+    "что делаешь",
+    "чем занимаешься",
+}
 SERVICE_LIST_FAST_MESSAGES = {"услуги", "список услуг", "прайс"}
 OFF_TOPIC_KEYWORDS = {
     "велик",
@@ -63,6 +74,22 @@ SERVICE_LIST_KEYWORDS = {
     "что есть",
     "что у вас есть",
 }
+CONTACT_LINK_KEYWORDS = {
+    "телеграм",
+    "telegram",
+    "тг",
+    "tg",
+    "сайт",
+    "ссылку",
+    "ссылка",
+    "контакты",
+    "контакт",
+    "куда написать",
+    "как связаться",
+}
+TELEGRAM_KEYWORDS = {"телеграм", "telegram", "тг", "tg", "куда написать"}
+WEBSITE_KEYWORDS = {"сайт", "ссылку", "ссылка", "website"}
+VISIT_KEYWORDS = {"можно к вам", "к вам можно", "приехать к вам", "попасть к вам", "записаться к вам"}
 COSMETIC_CONCERN_KEYWORDS = {
     "жирная кожа",
     "сальная кожа",
@@ -134,6 +161,16 @@ LOCATION_MISMATCH_KEYWORDS = {
     "турции",
     "азербайджан",
     "азербайджана",
+    "не из москвы",
+    "не в москве",
+    "москва далеко",
+    "далеко от москвы",
+    "онлайн можно",
+    "можно онлайн",
+    "онлайн консультация",
+    "удаленно",
+    "удалённо",
+    "дистанционно",
 }
 LOCATION_PATTERNS = (
     re.compile(r"\bя\s+из\s+([а-яa-z\-\s]{3,40})", re.IGNORECASE),
@@ -157,6 +194,7 @@ ALLOWED_CLASSIFIER_INTENTS = {
     "cosmetic_concern",
     "medical_advice",
     "operator_request",
+    "contact_link",
     "service_mention",
     "unknown_service",
     "location_mismatch",

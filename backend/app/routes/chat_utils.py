@@ -99,6 +99,7 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
             "price_question",
             "medical_advice",
             "operator_request",
+            "contact_link",
             "off_topic",
             "cosmetic_concern",
             "location_mismatch",

@@ -77,3 +77,13 @@ def mentions_unknown_service(normalized_message: str) -> bool:
     }
     tokens = [token for token in normalized_message.split() if token not in service_noise]
     return bool(tokens)
+
+
+def city_prepositional(city: str) -> str:
+    """Tiny display helper for demo copy, not a general morphology engine."""
+
+    city_forms = {
+        "Москва": "Москве",
+        "Санкт-Петербург": "Санкт-Петербурге",
+    }
+    return city_forms.get(city, city)

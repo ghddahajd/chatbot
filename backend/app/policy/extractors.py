@@ -6,7 +6,7 @@ import re
 from typing import Optional
 
 from ..knowledge import KnowledgeBase, normalize_text
-from ..models import Session
+from ..models import MessageRole, Session
 from .constants import KNOWN_CITY_FORMS, LOCATION_MISMATCH_KEYWORDS, LOCATION_PATTERNS, PHONE_PATTERN
 
 
@@ -41,7 +41,7 @@ def extract_name(message: str, phone: Optional[str]) -> Optional[str]:
 def find_unsupported_city(normalized_message: str, company_city: str) -> Optional[str]:
     normalized_company_city = normalize_text(company_city)
     if f"не из {normalized_company_city}" in normalized_message:
-        return company_city
+        return f"not_{company_city}"
 
     for city_form, city_name in KNOWN_CITY_FORMS.items():
         if city_form in normalized_message and normalize_text(city_name) != normalized_company_city:
@@ -68,7 +68,26 @@ def is_location_mismatch(message: str, normalized_message: str, company_city: st
 
 def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -> Optional[str]:
     previous_messages = session.messages[:-1]
+    barrier_keywords = {
+        "ботокс",
+        "ботулинотерапия",
+        "филлер",
+        "филлеры",
+        "контурная пластика",
+        "увеличение губ",
+        "не из",
+        "онлайн",
+        "удаленно",
+        "удалённо",
+        "дистанционно",
+        "далеко",
+    }
     for history_message in reversed(previous_messages[-8:]):
+        if history_message.role != MessageRole.USER:
+            continue
+        normalized_history = normalize_text(history_message.text)
+        if contains_keyword(normalized_history, barrier_keywords):
+            return None
         service = knowledge_base.search_service(history_message.text)
         if service is not None:
             return service.id

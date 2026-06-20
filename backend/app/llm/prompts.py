@@ -18,7 +18,8 @@ INTENT_CLASSIFICATION_PROMPT = (
     "Проанализируй сообщение пользователя и верни JSON:\n"
     "{\n"
     '  "intent": "small_talk|off_topic|list_services|price_question|'
-    'cosmetic_concern|medical_advice|operator_request|service_mention|unknown_service|location_mismatch",\n'
+    'cosmetic_concern|medical_advice|operator_request|contact_link|service_mention|'
+    'unknown_service|location_mismatch",\n'
     '  "service_id": "<id из списка или null>",\n'
     '  "confidence": 0.0-1.0\n'
     "}\n\n"
@@ -33,6 +34,7 @@ INTENT_CLASSIFICATION_PROMPT = (
     "(НЕ боль, НЕ болезнь, НЕ медицинский симптом).\n"
     "- location_mismatch — пользователь упоминает, что он из другого города или другой страны, "
     "не из города центра.\n"
+    "- contact_link — пользователь просит сайт, Telegram, контакты или способ связи.\n"
     "Ответь ТОЛЬКО JSON, без текста вокруг."
 )
 SMALL_TALK_PROMPT = (

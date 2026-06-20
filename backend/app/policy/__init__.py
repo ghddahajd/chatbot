@@ -9,9 +9,13 @@ from ..models import PolicyAction, PolicyReason, PolicyResult, Session
 from .constants import (
     CONTACT_PROMPT,
     DURATION_KEYWORDS,
+    GENERIC_PRICE_MESSAGES,
     HANDOFF_MESSAGE,
     MEDICAL_KEYWORDS,
     PRICE_KEYWORDS,
+    TELEGRAM_KEYWORDS,
+    VISIT_KEYWORDS,
+    WEBSITE_KEYWORDS,
 )
 from .extractors import (
     contains_keyword,
@@ -23,7 +27,12 @@ from .extractors import (
 )
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
-from .rules import cosmetic_concern_services, mentions_unknown_service, similar_services_result
+from .rules import (
+    city_prepositional,
+    cosmetic_concern_services,
+    mentions_unknown_service,
+    similar_services_result,
+)
 
 
 def analyze_message(
@@ -39,8 +48,10 @@ def analyze_message(
     classifier_confidence = float(classification["confidence"])
     normalized_message = normalize_text(message)
     service = knowledge_base.find_service_by_id(classification.get("service_id"))
+    if intent == "price_question" and normalized_message in GENERIC_PRICE_MESSAGES:
+        service = None
     if service is None and (
-        intent in {"price_question", "service_mention"} or contains_keyword(normalized_message, DURATION_KEYWORDS)
+        intent == "price_question" or contains_keyword(normalized_message, DURATION_KEYWORDS)
     ):
         service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
     phone = extract_phone(message)
@@ -51,6 +62,7 @@ def analyze_message(
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     medical_requested = intent == "medical_advice" or contains_keyword(normalized_message, MEDICAL_KEYWORDS)
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
+    city_in_text = city_prepositional(knowledge_base.company.city)
 
     if intent == "location_mismatch" or is_location_mismatch(
         message, normalized_message, knowledge_base.company.city
@@ -62,7 +74,7 @@ def analyze_message(
             safe_context={
                 "company_city": knowledge_base.company.city,
                 "message_to_user": (
-                    f"Очный приём только в {knowledge_base.company.city}. "
+                    f"Очный приём только в {city_in_text}. "
                     "Уточните, пожалуйста, у специалиста — возможно есть удалённый формат консультации для вашего случая."
                 ),
                 "context_for_model": {
@@ -116,6 +128,34 @@ def analyze_message(
             quick_actions=["Уточнить цену", "Позвать оператора"],
         )
 
+    if intent == "contact_link":
+        wants_telegram = contains_keyword(normalized_message, TELEGRAM_KEYWORDS)
+        wants_website = contains_keyword(normalized_message, WEBSITE_KEYWORDS)
+        wants_visit = contains_keyword(normalized_message, VISIT_KEYWORDS)
+        if wants_visit:
+            message_to_user = (
+                f"Очный приём проходит в {city_in_text}. "
+                "Можно уточнить запись и подходящий формат у специалиста."
+            )
+            quick_actions = ["Позвать оператора", "Открыть сайт"]
+        elif wants_telegram and not wants_website:
+            message_to_user = "Можно написать нам в Telegram — кнопка ниже."
+            quick_actions = ["Написать в Telegram"]
+        elif wants_website and not wants_telegram:
+            message_to_user = "Сайт центра можно открыть по кнопке ниже."
+            quick_actions = ["Открыть сайт"]
+        else:
+            message_to_user = "Могу дать ссылку на сайт или Telegram, а при необходимости позвать оператора."
+            quick_actions = ["Написать в Telegram", "Открыть сайт", "Позвать оператора"]
+
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=classifier_confidence or 0.88,
+            safe_context={"message_to_user": message_to_user},
+            quick_actions=quick_actions,
+        )
+
     if unsupported_city:
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -124,7 +164,7 @@ def analyze_message(
             confidence=0.82,
             safe_context={
                 "city_note": (
-                    f"Очный приём только в {knowledge_base.company.city}. "
+                    f"Очный приём только в {city_in_text}. "
                     "Можем уточнить формат."
                 )
             },

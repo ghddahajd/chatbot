@@ -8,6 +8,7 @@ from ..knowledge import _token_prefix_match, normalize_text
 from .constants import (
     ALLOWED_CLASSIFIER_INTENTS,
     COSMETIC_CONCERN_KEYWORDS,
+    CONTACT_LINK_KEYWORDS,
     MEDICAL_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
     PRICE_KEYWORDS,
@@ -15,6 +16,7 @@ from .constants import (
     SERVICE_LIST_KEYWORDS,
     SMALL_TALK_KEYWORDS,
     UNKNOWN_SERVICE_KEYWORDS,
+    VISIT_KEYWORDS,
 )
 from .extractors import contains_keyword, is_location_mismatch
 
@@ -97,6 +99,10 @@ def classify_and_extract(
         normalized_message, SERVICE_LIST_KEYWORDS
     ):
         return {"intent": "list_services", "service_id": service_id, "confidence": 0.9}
+    if contains_keyword(normalized_message, CONTACT_LINK_KEYWORDS) or contains_keyword(
+        normalized_message, VISIT_KEYWORDS
+    ):
+        return {"intent": "contact_link", "service_id": None, "confidence": 0.88}
     if contains_keyword(normalized_message, PRICE_KEYWORDS):
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, MEDICAL_KEYWORDS):

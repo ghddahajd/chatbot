@@ -80,6 +80,7 @@ docker compose up --build
 После запуска:
 
 - demo страница: `http://localhost:8000/demo/demo.html`
+- demo внешнего сайта с embedded-виджетом: `http://localhost:8000/demo/external-site.html`
 - operator panel: `http://localhost:8000/operator?token=demo-operator-token`
 - healthcheck: `http://localhost:8000/health`
 

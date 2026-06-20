@@ -74,3 +74,8 @@ async def healthcheck() -> dict[str, str]:
 @app.get("/demo/demo.html")
 async def demo_page() -> FileResponse:
     return FileResponse(Path(settings.demo_dir) / "demo.html")
+
+
+@app.get("/demo/external-site.html")
+async def external_demo_page() -> FileResponse:
+    return FileResponse(Path(settings.demo_dir) / "external-site.html")

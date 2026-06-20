@@ -17,7 +17,19 @@ from .constants import (
 
 
 def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
-    return any(keyword in normalized_text for keyword in keywords)
+    tokens = set(normalized_text.split())
+    for keyword in keywords:
+        if " " in keyword:
+            if keyword in normalized_text:
+                return True
+            continue
+        if len(keyword) <= 3:
+            if keyword in tokens:
+                return True
+            continue
+        if keyword in normalized_text:
+            return True
+    return False
 
 
 def extract_phone(message: str) -> Optional[str]:

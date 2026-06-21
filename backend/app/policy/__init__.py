@@ -9,6 +9,7 @@ from ..models import PolicyAction, PolicyReason, PolicyResult, Session
 from .constants import (
     CONTACT_PROMPT,
     DURATION_KEYWORDS,
+    EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     HANDOFF_MESSAGE,
     MEDICAL_KEYWORDS,
@@ -62,6 +63,7 @@ def analyze_message(
     ) or intent == "operator_request"
     price_requested = intent == "price_question" or contains_keyword(normalized_message, PRICE_KEYWORDS)
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
+    explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     medical_requested = intent == "medical_advice" or contains_keyword(normalized_message, MEDICAL_KEYWORDS)
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
@@ -335,6 +337,34 @@ def analyze_message(
             confidence=0.95,
             safe_context={**context, "question_type": "price"},
             quick_actions=["Уточнить цену", "Оставить телефон"],
+        )
+
+    if explanation_requested:
+        if service is None:
+            service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+        if service is None:
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.SERVICE_EXPLANATION,
+                confidence=0.78,
+                safe_context={
+                    "message_to_user": "Уточните, пожалуйста, по какой услуге рассказать подробнее."
+                },
+                quick_actions=["Посмотреть услуги", "Позвать оператора"],
+            )
+
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.SERVICE_EXPLANATION,
+            service_id=service.id,
+            confidence=0.9,
+            safe_context={
+                "message_to_user": (
+                    f"{service.name} — {service.short_description} "
+                    "Детали, показания и формат проведения уточнит специалист."
+                )
+            },
+            quick_actions=["Уточнить цену", "Позвать оператора"],
         )
 
     if duration_requested:

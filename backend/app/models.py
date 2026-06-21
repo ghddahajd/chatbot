@@ -46,6 +46,7 @@ class PolicyReason(str, Enum):
     LOCATION_MISMATCH = "location_mismatch"
     CONTACT_PROVIDED = "contact_provided"
     DURATION_QUESTION = "duration_question"
+    SERVICE_EXPLANATION = "service_explanation"
     OUT_OF_SCOPE = "out_of_scope"
     SMALL_TALK = "small_talk"
     OFF_TOPIC = "off_topic"

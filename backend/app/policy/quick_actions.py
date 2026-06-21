@@ -1,4 +1,4 @@
-"""Policy quick action builders."""
+"""сборщики быстрых действий для политики."""
 
 from __future__ import annotations
 

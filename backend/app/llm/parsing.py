@@ -1,4 +1,4 @@
-"""LLM parsing helpers."""
+"""вспомогательные функции для парсинга ответов llm."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from ..policy.constants import ALLOWED_CLASSIFIER_INTENTS
 
 
 def tolerant_json_parse(raw_text: str) -> dict[str, Any] | None:
-    """Parse JSON from local/cloud models that may wrap it in extra text."""
+    """парсит json от локальных/облачных моделей, которые могут оборачивать его лишним текстом."""
 
     cleaned_text = raw_text.strip()
     if cleaned_text.startswith("```"):
@@ -43,7 +43,7 @@ def normalize_classification_result(
     raw_result: dict[str, Any],
     known_services: list[dict[str, str]],
 ) -> dict[str, object]:
-    """Validate model JSON so policy only sees supported values."""
+    """валидирует json модели, чтобы политика видела только поддерживаемые значения."""
 
     known_service_ids = {str(service.get("id")) for service in known_services}
 

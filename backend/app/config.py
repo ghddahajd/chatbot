@@ -1,4 +1,4 @@
-"""Application configuration."""
+"""конфигурация приложения."""
 
 from functools import lru_cache
 from pathlib import Path
@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def resolve_project_dir() -> Path:
-    """Resolve the runtime project root for local dev and Docker."""
+    """определяет runtime-корень проекта для локальной разработки и docker."""
 
     repo_root = BASE_DIR.parent
     if (repo_root / "widget").exists() and (repo_root / "demo").exists():
@@ -24,7 +24,7 @@ PROJECT_DIR = resolve_project_dir()
 
 
 class Settings(BaseSettings):
-    """Runtime settings for the backend application."""
+    """runtime-настройки backend-приложения."""
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_DIR / ".env"),
@@ -56,14 +56,14 @@ class Settings(BaseSettings):
     demo_dir: Path = Field(default_factory=lambda: PROJECT_DIR / "demo")
 
     def cors_origins(self) -> List[str]:
-        """Return CORS origins from a comma-separated env value."""
+        """возвращает cors origins из env-строки через запятую."""
 
         return [item.strip() for item in self.allowed_origins.split(",") if item.strip()]
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return a cached settings instance."""
+    """возвращает закешированный экземпляр настроек."""
 
     settings = Settings()
     if not settings.llm_api_key:

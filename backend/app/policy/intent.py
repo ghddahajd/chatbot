@@ -1,4 +1,4 @@
-"""Local policy intent classification."""
+"""локальная классификация намерений для политики."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def classify_and_extract(
     known_services: list[dict[str, Any]],
     company_city: str = "Москва",
 ) -> dict[str, object]:
-    """Local fallback when the external classifier is unavailable."""
+    """локальный резервный путь, если внешний классификатор недоступен."""
 
     normalized_message = normalize_text(message)
     if normalized_message in CLARIFY_SHORT_MESSAGES:

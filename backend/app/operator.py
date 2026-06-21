@@ -1,8 +1,8 @@
-"""Operator panel rendering helpers."""
+"""вспомогательные функции для рендера панели оператора."""
 
 
 def render_operator_panel() -> str:
-    """Return a minimal operator HTML page for the MVP."""
+    """возвращает минимальную html-страницу оператора для mvp."""
 
     return """<!doctype html>
 <html lang="ru">

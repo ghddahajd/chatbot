@@ -1,4 +1,4 @@
-"""Knowledge base loading and lookup helpers."""
+"""загрузка базы знаний и вспомогательные функции для поиска."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .models import CompanyConfig, PriceEntry, Service
 
 
 def normalize_text(value: str) -> str:
-    """Normalize text for fuzzy keyword matching."""
+    """нормализует текст для нечёткого поиска по ключевым словам."""
 
     normalized = value.lower().replace("ё", "е")
     normalized = re.sub(r"[^a-zа-я0-9\s]+", " ", normalized)
@@ -33,7 +33,7 @@ def _token_prefix_match(left: str, right: str) -> bool:
 
 
 class KnowledgeBase:
-    """Loads and queries local knowledge-base files."""
+    """загружает и опрашивает локальные файлы базы знаний."""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class KnowledgeBase:
 
     @classmethod
     def load(cls, data_dir: Path) -> "KnowledgeBase":
-        """Load the knowledge base from local JSON/YAML files."""
+        """загружает базу знаний из локальных json/yaml-файлов."""
 
         company = CompanyConfig.model_validate(
             yaml.safe_load((data_dir / "company.yaml").read_text(encoding="utf-8"))

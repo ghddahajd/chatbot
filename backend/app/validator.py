@@ -1,4 +1,4 @@
-"""Response validation and deterministic fallbacks."""
+"""валидация ответов и детерминированные резервные ответы."""
 
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
 
 
 def validate_response(answer: str, context: dict[str, Any] | None = None) -> bool:
-    """Return False when the model leaked raw context/JSON-like data."""
+    """возвращает false, если модель вывела сырой контекст или json-подобные данные."""
 
     if not answer.strip():
         return False
@@ -109,7 +109,7 @@ def validate_response(answer: str, context: dict[str, Any] | None = None) -> boo
 
 
 def validate_consultation_response(answer: str) -> bool:
-    """Softer guard for LLM-only consultation wording."""
+    """более мягкая защита для консультационных ответов только от llm."""
 
     if not answer.strip():
         return False
@@ -121,7 +121,7 @@ def validator_intercept_count() -> int:
 
 
 def clean_template_answer(context: dict[str, Any]) -> str:
-    """Build a safe plain-language answer from approved context fields."""
+    """собирает безопасный ответ обычным языком из разрешённых полей контекста."""
 
     message_to_user = context.get("message_to_user")
     if isinstance(message_to_user, str) and message_to_user.strip():
@@ -158,7 +158,7 @@ def clean_template_answer(context: dict[str, Any]) -> str:
 
 
 def fallback_after_invalid_response(answer: str, context: dict[str, Any]) -> str:
-    """Log validator interception and return a deterministic clean answer."""
+    """логирует перехват валидатором и возвращает детерминированный чистый ответ."""
 
     global _intercept_count
     _intercept_count += 1

@@ -1,4 +1,4 @@
-"""Reusable policy rule helpers."""
+"""переиспользуемые вспомогательные функции для правил политики."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def mentions_unknown_service(normalized_message: str) -> bool:
 
 
 def city_prepositional(city: str) -> str:
-    """Tiny display helper for demo copy, not a general morphology engine."""
+    """маленькая вспомогательная функция для демо-текста, не полноценная морфология."""
 
     city_forms = {
         "Москва": "Москве",

@@ -1,4 +1,4 @@
-"""Lead API routes."""
+"""api-роуты лидов."""
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel

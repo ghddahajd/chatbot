@@ -751,7 +751,7 @@
             method: "POST",
           });
         } catch (error) {
-          // Ignore best-effort cancel failures for the MVP.
+          // игнорируем best-effort ошибки отмены для MVP.
         }
       }
 

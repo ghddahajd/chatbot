@@ -1,4 +1,4 @@
-"""Deterministic mock LLM client."""
+
 
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ def medical_risk_template(user_message: str) -> str:
 
 
 class MockLLMClient(BaseLLMClient):
-    """Deterministic response builder used when no external LLM is configured."""
+    """детерминированный сборщик ответов, если внешняя llm не настроена."""
 
     async def complete(
         self,

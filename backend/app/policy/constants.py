@@ -1,4 +1,4 @@
-"""Policy constants and keyword sets."""
+"""константы политики и наборы ключевых слов."""
 
 from __future__ import annotations
 

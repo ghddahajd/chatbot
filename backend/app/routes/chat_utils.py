@@ -1,4 +1,4 @@
-"""Helpers for chat routes."""
+"""вспомогательные функции для роутов чата."""
 
 from __future__ import annotations
 

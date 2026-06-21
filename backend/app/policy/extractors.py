@@ -1,4 +1,4 @@
-"""Policy extraction helpers."""
+"""вспомогательные функции для извлечения данных в политике."""
 
 from __future__ import annotations
 

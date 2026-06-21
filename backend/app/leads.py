@@ -1,4 +1,4 @@
-"""Lead persistence and optional notifications."""
+"""сохранение лидов и опциональные уведомления."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def _lead_to_payload(lead: Lead) -> dict[str, Any]:
 
 
 class LeadService:
-    """Stores leads locally and optionally sends them to Telegram."""
+    """сохраняет лиды локально и опционально отправляет их в telegram."""
 
     def __init__(
         self,
@@ -75,7 +75,7 @@ def build_lead_from_contact(
     summary: str,
     service_id: Optional[str] = None,
 ) -> Lead:
-    """Create a lead object from parsed contact data."""
+    """создаёт объект лида из распарсенных контактных данных."""
 
     return Lead(
         session_id=session_id,

@@ -1,5 +1,3 @@
-"""OpenAI-compatible LLM client, including local Ollama."""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
-    """Keep hard business rules outside model behavior."""
+    """держит жёсткие бизнес-правила вне поведения модели."""
 
     from .prompts import PRICE_DISCLAIMER
 
@@ -42,7 +40,7 @@ def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
 
 
 def enforce_small_talk_pivot(answer: str, company_name: str, user_message: str = "") -> str:
-    """Make lightweight chat useful even if the model replies too briefly."""
+    """делает лёгкий чат полезным, даже если модель ответила слишком коротко."""
 
     del company_name
     clean_answer = answer.strip()
@@ -54,7 +52,7 @@ def enforce_small_talk_pivot(answer: str, company_name: str, user_message: str =
 
 
 class OpenAIClient(BaseLLMClient):
-    """Minimal OpenAI-compatible client."""
+    """минимальный openai-compatible клиент."""
 
     def __init__(
         self,

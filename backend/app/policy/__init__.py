@@ -1,4 +1,4 @@
-"""Policy guard executed before any LLM call."""
+"""защитный слой политики, который выполняется до любого вызова llm."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def analyze_message(
     knowledge_base: KnowledgeBase,
     classification: Optional[dict[str, object]] = None,
 ) -> PolicyResult:
-    """Classify the message before any LLM interaction."""
+    """классифицирует сообщение до любого взаимодействия с llm."""
 
     classification = normalize_classification(classification or {})
     intent = str(classification["intent"])

@@ -1,4 +1,4 @@
-"""Pydantic models and enums."""
+"""pydantic-модели и перечисления."""
 
 from __future__ import annotations
 

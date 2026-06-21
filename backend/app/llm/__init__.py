@@ -1,4 +1,4 @@
-"""LLM provider abstraction."""
+"""абстракция llm-провайдера."""
 
 from .base import BaseLLMClient
 from .mock import MockLLMClient
@@ -23,7 +23,7 @@ def build_llm_client(
     model: str,
     base_url: str,
 ) -> BaseLLMClient:
-    """Select the default LLM provider."""
+    """выбирает llm-провайдера по умолчанию."""
 
     normalized_provider = provider.lower().strip()
     if normalized_provider == "mock" or not api_key:
@@ -41,6 +41,6 @@ def build_llm_client(
 
 
 def get_system_prompt() -> str:
-    """Return the fixed system prompt."""
+    """возвращает фиксированный system prompt."""
 
     return SYSTEM_PROMPT

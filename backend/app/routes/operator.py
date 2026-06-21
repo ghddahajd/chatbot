@@ -1,4 +1,4 @@
-"""Operator routes."""
+"""роуты оператора."""
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse

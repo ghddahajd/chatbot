@@ -1,4 +1,4 @@
-"""Chat API routes."""
+"""api-роуты чата."""
 
 from fastapi import APIRouter, HTTPException, Request
 

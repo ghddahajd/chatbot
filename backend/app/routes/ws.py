@@ -1,4 +1,4 @@
-"""WebSocket routes."""
+"""websocket-роуты."""
 
 import json
 import logging

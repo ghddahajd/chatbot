@@ -1,4 +1,4 @@
-"""WebSocket connection manager."""
+"""менеджер websocket-соединений."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .sessions import SessionStore
 
 
 class ConnectionManager:
-    """Tracks client and operator websockets per session."""
+    """отслеживает клиентские и операторские websocket-соединения по сессиям."""
 
     def __init__(self, session_store: SessionStore) -> None:
         self.session_store = session_store

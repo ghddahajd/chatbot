@@ -1,4 +1,4 @@
-"""In-memory session store."""
+"""in-memory хранилище сессий."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from .models import Message, MessageRole, OperatorSessionSummary, Session, Sessi
 
 
 class SessionStore:
-    """Simple in-memory session storage for MVP."""
+    """простое in-memory хранилище сессий для mvp."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}

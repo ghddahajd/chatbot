@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 from ..models import Message
 
@@ -41,9 +41,11 @@ class BaseLLMClient(ABC):
         self,
         context: dict[str, Any],
         user_message: str,
+        history: Optional[list[Message]] = None,
     ) -> str:
         """Return a soft consultation answer for a known service or cosmetic concern."""
 
+        del history
         del user_message
         message_to_user = context.get("message_to_user")
         if isinstance(message_to_user, str) and message_to_user.strip():

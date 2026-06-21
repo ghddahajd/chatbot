@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import random
-from typing import Any
+import hashlib
+from typing import Any, Optional
 
 from ..knowledge import normalize_text
 from ..models import Message
@@ -14,6 +14,12 @@ from .prompts import (
     PRICE_DISCLAIMER,
     SMALL_TALK_SERVICE_PIVOT,
 )
+
+
+def _choose_stable_variant(seed: str, variants: list[str]) -> str:
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    index = int(digest[:8], 16) % len(variants)
+    return variants[index]
 
 
 def small_talk_template(user_message: str) -> str:
@@ -35,18 +41,28 @@ def small_talk_template(user_message: str) -> str:
     return f"Я здесь, чтобы помочь по услугам центра. {SMALL_TALK_SERVICE_PIVOT}"
 
 
-def service_consultation_template(context: dict[str, Any], user_message: str) -> str:
-    del user_message
-
+def service_consultation_template(
+    context: dict[str, Any],
+    user_message: str,
+    history: Optional[list[Message]] = None,
+) -> str:
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
     service_name = str(service.get("name") or "").strip()
+    recent_user_messages = [
+        message.text
+        for message in (history or [])[-4:]
+        if message.role.value == "user"
+    ]
+    seed = "|".join([service_name, user_message, *recent_user_messages])
     if service_name:
         variants = [
             f"Понял, вы про «{service_name}». Могу подсказать стоимость или позвать специалиста.",
             f"Да, «{service_name}» есть в базе центра. Могу сориентировать по цене или передать вопрос специалисту.",
             f"По услуге «{service_name}» могу помочь в рамках информации центра. Если нужно, уточним стоимость или позовём специалиста.",
+            f"Могу коротко сориентировать по «{service_name}»: дальше удобнее уточнить цену или передать вопрос специалисту.",
+            f"Если речь про «{service_name}», я могу помочь с общей информацией центра или подключить специалиста.",
         ]
-        return random.choice(variants)
+        return _choose_stable_variant(seed, variants)
 
     suggested_services = context.get("suggested_services")
     if isinstance(suggested_services, list) and suggested_services:
@@ -61,8 +77,9 @@ def service_consultation_template(context: dict[str, Any], user_message: str) ->
                 f"Понимаю, хочется подобрать уход под этот запрос. В центре есть близкие направления: {service_text}; точнее сориентирует специалист.",
                 f"Для такого запроса можно начать с консультации и посмотреть близкие услуги: {service_text}. Если хотите, передам вопрос специалисту.",
                 f"Тут лучше не угадывать заочно. Могу показать близкие услуги ({service_text}) или позвать специалиста.",
+                f"По такому запросу лучше идти аккуратно: могу показать близкие услуги ({service_text}) или передать вопрос специалисту.",
             ]
-            return random.choice(variants)
+            return _choose_stable_variant(seed + service_text, variants)
 
     return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
 
@@ -73,6 +90,9 @@ def medical_risk_template(user_message: str) -> str:
         "болит",
         "боль",
         "кровит",
+        "кровоточит",
+        "кровоточить",
+        "кровоточение",
         "кровь",
         "кровотечение",
         "родинка",
@@ -187,8 +207,9 @@ class MockLLMClient(BaseLLMClient):
         self,
         context: dict[str, Any],
         user_message: str,
+        history: Optional[list[Message]] = None,
     ) -> str:
-        return service_consultation_template(context, user_message)
+        return service_consultation_template(context, user_message, history)
 
     async def classify_medical_risk(self, user_message: str) -> str:
         return medical_risk_template(user_message)

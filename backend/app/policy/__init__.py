@@ -7,12 +7,15 @@ from typing import Optional
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import PolicyAction, PolicyReason, PolicyResult, Session
 from .constants import (
+    BOOKING_CONTACT_PROMPT,
+    BOOKING_KEYWORDS,
     CONTACT_PROMPT,
     DURATION_KEYWORDS,
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     HANDOFF_MESSAGE,
     MEDICAL_KEYWORDS,
+    NEGATIVE_MESSAGES,
     OPERATOR_SOFT_OFFER_MESSAGE,
     PRICE_KEYWORDS,
     TELEGRAM_KEYWORDS,
@@ -24,6 +27,7 @@ from .extractors import (
     extract_name,
     extract_phone,
     find_unsupported_city,
+    has_booking_contact_prompt,
     has_operator_soft_offer,
     is_location_mismatch,
     last_service_from_history,
@@ -62,11 +66,38 @@ def analyze_message(
         normalized_message, set(knowledge_base.company.operator_triggers)
     ) or intent == "operator_request"
     price_requested = intent == "price_question" or contains_keyword(normalized_message, PRICE_KEYWORDS)
+    booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     medical_requested = intent == "medical_advice" or contains_keyword(normalized_message, MEDICAL_KEYWORDS)
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
+
+    if has_booking_contact_prompt(session) and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.BOOKING_REQUEST,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "booking_request_cancelled": True,
+                "message_to_user": "Ок, заявку на запись не оформляем. Могу подсказать по услугам, ценам или позвать специалиста.",
+            },
+            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        )
+
+    if has_booking_contact_prompt(session) and not phone:
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.BOOKING_REQUEST,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "booking_request": True,
+                "message_to_user": BOOKING_CONTACT_PROMPT,
+            },
+            quick_actions=["Оставить телефон", "Позвать оператора"],
+        )
 
     if intent == "location_mismatch" or is_location_mismatch(
         message, normalized_message, knowledge_base.company.city
@@ -116,6 +147,18 @@ def analyze_message(
                     "Это не по моей части — я консультирую по услугам центра. "
                     f"{knowledge_base.company.company_name}. Могу подсказать по услугам или ценам."
                 )
+            },
+            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        )
+
+    if intent == "clarify":
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=classifier_confidence or 0.7,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": "Не совсем понял. Уточните, пожалуйста, услугу, цену или вопрос для специалиста.",
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
@@ -272,6 +315,67 @@ def analyze_message(
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
+    if booking_requested:
+        if service is None:
+            service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+        if service is None and not phone:
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.BOOKING_REQUEST,
+                confidence=0.86,
+                safe_context={
+                    "force_direct_answer": True,
+                    "booking_request": True,
+                    "message_to_user": "На какую услугу хотите оставить заявку на запись?",
+                },
+                quick_actions=service_name_quick_actions(knowledge_base),
+            )
+        if phone:
+            return PolicyResult(
+                action=PolicyAction.ASK_CONTACT,
+                reason=PolicyReason.BOOKING_REQUEST,
+                service_id=service.id if service else None,
+                confidence=0.94,
+                safe_context={
+                    "booking_request": True,
+                    "contact": {
+                        "name": extract_name(message, phone),
+                        "phone": phone,
+                    },
+                    "service": service.model_dump() if service else None,
+                },
+            )
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.BOOKING_REQUEST,
+            service_id=service.id if service else None,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "booking_request": True,
+                "message_to_user": BOOKING_CONTACT_PROMPT,
+            },
+            quick_actions=["Оставить телефон", "Позвать оператора"],
+        )
+
+    if phone and has_booking_contact_prompt(session):
+        if service is None:
+            service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+        return PolicyResult(
+            action=PolicyAction.ASK_CONTACT,
+            reason=PolicyReason.BOOKING_REQUEST,
+            service_id=service.id if service else None,
+            confidence=0.94,
+            safe_context={
+                "booking_request": True,
+                "contact": {
+                    "name": extract_name(message, phone),
+                    "phone": phone,
+                },
+                "service": service.model_dump() if service else None,
+            },
+        )
+
     if phone:
         return PolicyResult(
             action=PolicyAction.ASK_CONTACT,
@@ -353,15 +457,18 @@ def analyze_message(
                 quick_actions=["Посмотреть услуги", "Позвать оператора"],
             )
 
+        context = knowledge_base.get_service_context(service)
         return PolicyResult(
             action=PolicyAction.ANSWER,
             reason=PolicyReason.SERVICE_EXPLANATION,
             service_id=service.id,
             confidence=0.9,
             safe_context={
+                **context,
+                "question_type": "explanation",
                 "message_to_user": (
                     f"{service.name} — {service.short_description} "
-                    "Детали, показания и формат проведения уточнит специалист."
+                    "Детали уточнит специалист."
                 )
             },
             quick_actions=["Уточнить цену", "Позвать оператора"],

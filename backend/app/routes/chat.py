@@ -9,6 +9,7 @@ from ..models import (
     ChatMessageResponse,
     MessageRole,
     PolicyAction,
+    PolicyReason,
     QuickAction,
     SessionPublicResponse,
     SessionStatus,
@@ -19,7 +20,9 @@ from .chat_utils import (
     MAX_SESSION_MESSAGES,
     RATE_LIMIT_ANSWER,
     classify_consultation_medical_risk,
+    contextual_affirmative_response,
     format_quick_actions,
+    maybe_contextual_classification,
     resolve_classification,
     safe_complete,
     safe_medical_handoff,
@@ -158,13 +161,17 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             quick_actions=[],
         )
 
-    classification = await resolve_classification(message, request)
-    policy_result = request.app.state.policy_analyzer(
-        message,
-        session,
-        knowledge_base,
-        classification,
-    )
+    policy_result = contextual_affirmative_response(message, session)
+    if policy_result is None:
+        classification = maybe_contextual_classification(message, session)
+        if classification is None:
+            classification = await resolve_classification(message, request)
+        policy_result = request.app.state.policy_analyzer(
+            message,
+            session,
+            knowledge_base,
+            classification,
+        )
 
     lead_created = False
     answer = ""
@@ -174,20 +181,27 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     if policy_result.action == PolicyAction.ASK_CONTACT:
         contact = policy_result.safe_context.get("contact")
         if contact:
+            is_booking_request = bool(policy_result.safe_context.get("booking_request"))
             lead = build_lead_from_contact(
                 session_id=session.session_id,
                 contact=contact,
-                summary=message,
+                summary=("Заявка на запись: " + message) if is_booking_request else message,
                 service_id=policy_result.service_id,
             )
             await lead_service.save(lead)
             lead_created = True
             await session_store.set_lead_requested(session.session_id, True)
-            answer = (
-                "Спасибо. Передали ваши контакты специалисту. "
-                "С вами свяжутся для уточнения деталей."
-            )
-            if session.operator_requested or policy_result.service_id is None:
+            if is_booking_request:
+                answer = (
+                    "Спасибо. Заявку на запись передали. "
+                    "С вами свяжутся, чтобы подтвердить время и детали."
+                )
+            else:
+                answer = (
+                    "Спасибо. Передали ваши контакты специалисту. "
+                    "С вами свяжутся для уточнения деталей."
+                )
+            if not is_booking_request and (session.operator_requested or policy_result.service_id is None):
                 await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         else:
             answer = str(policy_result.safe_context.get("message_to_user") or "")
@@ -206,11 +220,24 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             or "Передаю диалог специалисту. Оператор увидит историю переписки."
         )
     elif policy_result.action == PolicyAction.CLARIFY:
-        answer = str(
-            policy_result.safe_context.get("message_to_user")
-            or policy_result.safe_context.get("city_note")
-            or ""
-        )
+        direct_clarify_reasons = {
+            PolicyReason.OPERATOR_REQUESTED,
+            PolicyReason.LOCATION_MISMATCH,
+            PolicyReason.UNSUPPORTED_CITY,
+        }
+        if policy_result.reason in direct_clarify_reasons or policy_result.safe_context.get("force_direct_answer"):
+            answer = str(
+                policy_result.safe_context.get("message_to_user")
+                or policy_result.safe_context.get("city_note")
+                or ""
+            )
+        else:
+            answer = await safe_complete(
+                request,
+                policy_result.safe_context,
+                message,
+                session.messages[-8:],
+            )
     elif policy_result.action == PolicyAction.REJECT:
         answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
     elif should_use_consultation_llm(policy_result.safe_context):

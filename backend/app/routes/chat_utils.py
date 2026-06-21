@@ -10,8 +10,10 @@ from uuid import uuid4
 from fastapi import Request
 
 from ..llm import MockLLMClient
-from ..models import Message, QuickAction
+from ..knowledge import normalize_text
+from ..models import Message, MessageRole, PolicyAction, PolicyReason, PolicyResult, QuickAction, Session
 from ..policy import classify_and_extract
+from ..policy.constants import AFFIRMATIVE_MESSAGES
 
 
 fallback_llm_client = MockLLMClient()
@@ -66,6 +68,67 @@ def service_classifier_payload(request: Request) -> list[dict[str, object]]:
     ]
 
 
+def _last_assistant_text(session: Session) -> str:
+    for message in reversed(session.messages[:-1]):
+        if message.role == MessageRole.ASSISTANT:
+            return normalize_text(message.text)
+    return ""
+
+
+def maybe_contextual_classification(
+    message: str,
+    session: Session,
+) -> dict[str, object] | None:
+    normalized_message = normalize_text(message)
+    if normalized_message not in AFFIRMATIVE_MESSAGES:
+        return None
+
+    last_assistant_text = _last_assistant_text(session)
+    if (
+        "могу рассказать про услуги" in last_assistant_text
+        or "давайте я расскажу про наши услуги" in last_assistant_text
+        or "услуги и цены" in last_assistant_text
+    ):
+        return {"intent": "list_services", "service_id": None, "confidence": 0.9}
+
+    return None
+
+
+def contextual_affirmative_response(
+    message: str,
+    session: Session,
+) -> PolicyResult | None:
+    normalized_message = normalize_text(message)
+    if normalized_message not in AFFIRMATIVE_MESSAGES:
+        return None
+
+    for history_message in reversed(session.messages[:-1]):
+        if history_message.role != MessageRole.USER:
+            continue
+        if normalize_text(history_message.text) in AFFIRMATIVE_MESSAGES:
+            continue
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": "Что уточнить по этой услуге: цену, детали или соединить со специалистом?"
+            },
+            quick_actions=[
+                "Уточнить цену",
+                {
+                    "label": "Подробнее",
+                    "type": "message",
+                    "value": "Расскажи подробнее про эту услугу",
+                },
+                "Позвать оператора",
+            ],
+        )
+
+    return None
+
+
 async def resolve_classification(message: str, request: Request) -> dict[str, object]:
     known_services = service_classifier_payload(request)
     local_result = classify_and_extract(
@@ -92,6 +155,8 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
     model_confidence = float(model_result.get("confidence") or 0.0)
     local_confidence = float(local_result.get("confidence") or 0.0)
 
+    if local_intent in {"unknown_service", "clarify"}:
+        return local_result
     if model_intent == "unknown_service":
         return model_result
     if local_service_id and not model_service_id:
@@ -166,10 +231,8 @@ async def classify_consultation_medical_risk(
 
 
 async def safe_medical_handoff(request: Request, message: str) -> str:
-    try:
-        return await request.app.state.llm_client.medical_handoff(message)
-    except Exception:
-        return await fallback_llm_client.medical_handoff(message)
+    del request, message
+    return await fallback_llm_client.medical_handoff("")
 
 
 async def safe_complete(
@@ -178,21 +241,33 @@ async def safe_complete(
     message: str,
     history: list[Message],
 ) -> str:
-    if not should_use_consultation_llm(context):
-        return await fallback_llm_client.complete(
+    if should_use_consultation_llm(context):
+        try:
+            return await request.app.state.llm_client.service_consultation(
+                context,
+                message,
+                history,
+            )
+        except Exception as error:
+            logger.info("service_consultation_source=fallback reason=helper_error error=%s", type(error).__name__)
+            return await fallback_llm_client.service_consultation(
+                context,
+                message,
+                history,
+            )
+
+    try:
+        return await request.app.state.llm_client.complete(
             request.app.state.system_prompt,
             context,
             message,
             history,
         )
-
-    try:
-        return await request.app.state.llm_client.service_consultation(
+    except Exception as error:
+        logger.info("complete_source=fallback reason=helper_error error=%s", type(error).__name__)
+        return await fallback_llm_client.complete(
+            request.app.state.system_prompt,
             context,
             message,
-        )
-    except Exception:
-        return await fallback_llm_client.service_consultation(
-            context,
-            message,
+            history,
         )

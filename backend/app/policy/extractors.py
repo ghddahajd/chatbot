@@ -8,9 +8,11 @@ from typing import Optional
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import MessageRole, Session
 from .constants import (
+    BOOKING_CONTACT_PROMPT,
     KNOWN_CITY_FORMS,
     LOCATION_MISMATCH_KEYWORDS,
     LOCATION_PATTERNS,
+    NEGATIVE_MESSAGES,
     OPERATOR_SOFT_OFFER_MESSAGE,
     PHONE_PATTERN,
 )
@@ -87,6 +89,7 @@ def is_location_mismatch(message: str, normalized_message: str, company_city: st
 def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -> Optional[str]:
     previous_messages = session.messages[:-1]
     barrier_keywords = {
+        "ботекс",
         "ботокс",
         "ботулинотерапия",
         "филлер",
@@ -123,3 +126,15 @@ def has_operator_soft_offer(session: Session) -> bool:
         message.role == MessageRole.ASSISTANT and OPERATOR_SOFT_OFFER_MESSAGE in message.text
         for message in session.messages
     )
+
+
+def has_booking_contact_prompt(session: Session) -> bool:
+    for message in reversed(session.messages):
+        normalized_message = normalize_text(message.text)
+        if message.role == MessageRole.USER and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+            return False
+        if message.role == MessageRole.ASSISTANT and "заявку на запись передали" in normalized_message:
+            return False
+        if message.role == MessageRole.ASSISTANT and BOOKING_CONTACT_PROMPT in message.text:
+            return True
+    return False

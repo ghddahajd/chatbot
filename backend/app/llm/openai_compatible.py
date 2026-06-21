@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -24,6 +25,9 @@ from .prompts import (
     SERVICE_CONSULTATION_TONE_VARIANTS,
     SMALL_TALK_PROMPT,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
@@ -96,6 +100,28 @@ class OpenAIClient(BaseLLMClient):
         service = context.get("service") if isinstance(context.get("service"), dict) else {}
         price = context.get("price") if isinstance(context.get("price"), dict) else {}
         company = context.get("company") if isinstance(context.get("company"), dict) else {}
+        question_type = context.get("question_type")
+
+        if question_type == "list_services":
+            all_services = context.get("all_services")
+            if isinstance(all_services, list):
+                names = [
+                    str(service_item.get("name"))
+                    for service_item in all_services
+                    if isinstance(service_item, dict) and service_item.get("name")
+                ]
+                if names:
+                    lines.append("Услуги центра: " + ", ".join(names))
+            lines.append("Тип вопроса: list_services")
+            return "\n".join(lines) or "Нет списка услуг."
+
+        if question_type == "explanation":
+            if service.get("name"):
+                lines.append(f"Услуга: {service['name']}")
+            if service.get("short_description"):
+                lines.append(f"Описание: {service['short_description']}")
+            lines.append("Тип вопроса: explanation")
+            return "\n".join(lines) or "Нет описания услуги."
 
         if service.get("name"):
             lines.append(f"Услуга: {service['name']}")
@@ -103,12 +129,14 @@ class OpenAIClient(BaseLLMClient):
             lines.append(f"Описание: {service['short_description']}")
         if price.get("price_text"):
             lines.append(f"Стоимость: {price['price_text']}")
+        if service.get("duration"):
+            lines.append(f"Длительность: {service['duration']}")
         if company.get("working_hours"):
             lines.append(f"Режим работы: {company['working_hours']}")
         if company.get("address"):
             lines.append(f"Адрес: {company['address']}")
-        if context.get("question_type"):
-            lines.append(f"Тип вопроса: {context['question_type']}")
+        if question_type:
+            lines.append(f"Тип вопроса: {question_type}")
 
         suggested_services = context.get("suggested_services")
         if isinstance(suggested_services, list) and suggested_services:
@@ -145,6 +173,17 @@ class OpenAIClient(BaseLLMClient):
                 lines.append("Близкие направления: " + ", ".join(names))
 
         return "\n".join(lines) or "Есть только общий косметологический запрос без точной услуги."
+
+    def _consultation_history_for_model(self, history: Optional[list[Message]]) -> str:
+        lines: list[str] = []
+        for message in (history or [])[-6:]:
+            if message.role.value not in {"user", "assistant"}:
+                continue
+            role = "Клиент" if message.role.value == "user" else "Ассистент"
+            text = message.text.strip()
+            if text:
+                lines.append(f"{role}: {text}")
+        return "\n".join(lines) or "Истории нет."
 
     async def complete(
         self,
@@ -187,6 +226,7 @@ class OpenAIClient(BaseLLMClient):
                 },
             ],
             "temperature": 0.2,
+            "max_tokens": 180,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
@@ -200,7 +240,7 @@ class OpenAIClient(BaseLLMClient):
             .strip()
         )
         answer = enforce_required_disclaimers(answer, context)
-        if not validate_response(answer):
+        if not validate_response(answer, context):
             return fallback_after_invalid_response(answer, context)
         return answer
 
@@ -268,8 +308,10 @@ class OpenAIClient(BaseLLMClient):
         self,
         context: dict[str, Any],
         user_message: str,
+        history: Optional[list[Message]] = None,
     ) -> str:
         context_for_model = self._consultation_context_for_model(context)
+        history_for_model = self._consultation_history_for_model(history)
         payload = {
             "model": self.model,
             "messages": [
@@ -285,12 +327,13 @@ class OpenAIClient(BaseLLMClient):
                     "role": "user",
                     "content": (
                         f"Контекст найденной услуги:\n{context_for_model}\n\n"
+                        f"Короткая история диалога:\n{history_for_model}\n\n"
                         f"Сообщение пользователя: {user_message}"
                     ),
                 },
             ],
-            "temperature": 0.55,
-            "max_tokens": 90,
+            "temperature": 0.45 if self.disable_thinking else 0.72,
+            "max_tokens": 120,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
@@ -299,8 +342,9 @@ class OpenAIClient(BaseLLMClient):
                 self._post_chat_completions(payload, headers),
                 timeout=min(self.timeout, 8.0),
             )
-        except Exception:
-            return service_consultation_template(context, user_message)
+        except Exception as error:
+            logger.warning("service_consultation_source=fallback reason=request_error error=%s", type(error).__name__)
+            return service_consultation_template(context, user_message, history)
 
         data = response.json()
         answer = (
@@ -310,7 +354,9 @@ class OpenAIClient(BaseLLMClient):
             .strip()
         )
         if not validate_consultation_response(answer):
-            return service_consultation_template(context, user_message)
+            logger.warning("service_consultation_source=fallback reason=validator answer=%r", answer[:240])
+            return service_consultation_template(context, user_message, history)
+        logger.info("service_consultation_source=provider model=%s", self.model)
         return answer
 
     async def classify_medical_risk(self, user_message: str) -> str:

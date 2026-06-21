@@ -7,6 +7,8 @@ from typing import Any, Optional
 from ..knowledge import _token_prefix_match, normalize_text
 from .constants import (
     ALLOWED_CLASSIFIER_INTENTS,
+    BOOKING_KEYWORDS,
+    CLARIFY_SHORT_MESSAGES,
     COSMETIC_CONCERN_KEYWORDS,
     CONTACT_LINK_KEYWORDS,
     MEDICAL_KEYWORDS,
@@ -87,6 +89,8 @@ def classify_and_extract(
     """Local fallback when the external classifier is unavailable."""
 
     normalized_message = normalize_text(message)
+    if normalized_message in CLARIFY_SHORT_MESSAGES:
+        return {"intent": "clarify", "service_id": None, "confidence": 0.7}
     if is_location_mismatch(message, normalized_message, company_city):
         return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
     if contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
@@ -105,6 +109,8 @@ def classify_and_extract(
         return {"intent": "contact_link", "service_id": None, "confidence": 0.88}
     if contains_keyword(normalized_message, PRICE_KEYWORDS):
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
+    if contains_keyword(normalized_message, BOOKING_KEYWORDS):
+        return {"intent": "booking_request", "service_id": service_id, "confidence": 0.88}
     if contains_keyword(normalized_message, MEDICAL_KEYWORDS):
         return {"intent": "medical_advice", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, COSMETIC_CONCERN_KEYWORDS):

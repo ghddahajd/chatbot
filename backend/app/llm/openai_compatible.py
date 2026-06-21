@@ -17,6 +17,9 @@ from .parsing import normalize_classification_result, tolerant_json_parse
 from .prompts import (
     DEFAULT_FALLBACK,
     INTENT_CLASSIFICATION_PROMPT,
+    MEDICAL_HANDOFF_FALLBACK,
+    MEDICAL_HANDOFF_PROMPT,
+    MEDICAL_RISK_CLASSIFICATION_PROMPT,
     SERVICE_CONSULTATION_PROMPT,
     SERVICE_CONSULTATION_TONE_VARIANTS,
     SMALL_TALK_PROMPT,
@@ -308,4 +311,69 @@ class OpenAIClient(BaseLLMClient):
         )
         if not validate_consultation_response(answer):
             return service_consultation_template(context, user_message)
+        return answer
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": MEDICAL_RISK_CLASSIFICATION_PROMPT},
+                {"role": "user", "content": f"Сообщение: {user_message}"},
+            ],
+            "temperature": 0,
+            "max_tokens": 4,
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            response = await asyncio.wait_for(
+                self._post_chat_completions(payload, headers),
+                timeout=min(self.timeout, 5.0),
+            )
+        except Exception:
+            return "MEDICAL"
+
+        data = response.json()
+        answer = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+            .upper()
+        )
+        if "COSMETIC" in answer and "MEDICAL" not in answer:
+            return "COSMETIC"
+        if "MEDICAL" in answer:
+            return "MEDICAL"
+        return "MEDICAL"
+
+    async def medical_handoff(self, user_message: str) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": MEDICAL_HANDOFF_PROMPT},
+                {"role": "user", "content": f"Сообщение: {user_message}"},
+            ],
+            "temperature": 0.35,
+            "max_tokens": 70,
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            response = await asyncio.wait_for(
+                self._post_chat_completions(payload, headers),
+                timeout=min(self.timeout, 6.0),
+            )
+        except Exception:
+            return MEDICAL_HANDOFF_FALLBACK
+
+        data = response.json()
+        answer = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        if not validate_consultation_response(answer):
+            return MEDICAL_HANDOFF_FALLBACK
         return answer

@@ -18,11 +18,14 @@ from .chat_utils import (
     MAX_MESSAGE_LENGTH,
     MAX_SESSION_MESSAGES,
     RATE_LIMIT_ANSWER,
+    classify_consultation_medical_risk,
     format_quick_actions,
     resolve_classification,
     safe_complete,
+    safe_medical_handoff,
     safe_small_talk,
     service_classifier_payload,
+    should_use_consultation_llm,
 )
 
 
@@ -165,6 +168,8 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
 
     lead_created = False
     answer = ""
+    response_action = policy_result.action
+    response_quick_actions = policy_result.quick_actions
 
     if policy_result.action == PolicyAction.ASK_CONTACT:
         contact = policy_result.safe_context.get("contact")
@@ -208,6 +213,25 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         )
     elif policy_result.action == PolicyAction.REJECT:
         answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
+    elif should_use_consultation_llm(policy_result.safe_context):
+        medical_risk, _request_id = await classify_consultation_medical_risk(
+            request,
+            message,
+            policy_result.safe_context,
+        )
+        if medical_risk == "MEDICAL":
+            await session_store.set_operator_requested(session.session_id, True)
+            await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+            answer = await safe_medical_handoff(request, message)
+            response_action = PolicyAction.TRANSFER_OPERATOR
+            response_quick_actions = ["Оставить телефон"]
+        else:
+            answer = await safe_complete(
+                request,
+                policy_result.safe_context,
+                message,
+                session.messages[-8:],
+            )
     else:
         answer = await safe_complete(
             request,
@@ -222,8 +246,8 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     return ChatMessageResponse(
         session_id=session.session_id,
         status=session.status,
-        action=policy_result.action,
+        action=response_action,
         answer=answer,
         lead_created=lead_created,
-        quick_actions=format_quick_actions(policy_result.quick_actions, request),
+        quick_actions=format_quick_actions(response_quick_actions, request),
     )

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import time
+from uuid import uuid4
 
 from fastapi import Request
 
@@ -12,6 +15,7 @@ from ..policy import classify_and_extract
 
 
 fallback_llm_client = MockLLMClient()
+logger = logging.getLogger(__name__)
 MAX_SESSION_MESSAGES = 30
 MAX_MESSAGE_LENGTH = 1000
 HAS_LETTER_OR_DIGIT = re.compile(r"[0-9A-Za-zА-Яа-яЁё]")
@@ -127,6 +131,45 @@ def should_use_consultation_llm(context: dict[str, object]) -> bool:
         return False
     service = context.get("service")
     return isinstance(service, dict) and bool(service.get("name"))
+
+
+async def classify_consultation_medical_risk(
+    request: Request,
+    message: str,
+    context: dict[str, object],
+) -> tuple[str, str]:
+    request_id = uuid4().hex[:10]
+    started_at = time.perf_counter()
+    local_result = await fallback_llm_client.classify_medical_risk(message)
+    service = context.get("service")
+    has_service_context = isinstance(service, dict) and bool(service.get("name"))
+    if local_result == "MEDICAL" or has_service_context:
+        result = local_result
+    else:
+        try:
+            result = await request.app.state.llm_client.classify_medical_risk(message)
+        except Exception:
+            result = local_result
+
+    normalized_result = str(result or "").strip().upper()
+    if normalized_result not in {"MEDICAL", "COSMETIC"}:
+        normalized_result = "MEDICAL"
+
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    logger.info(
+        "request_id=%s classification_medical_ms=%.1f result=%s",
+        request_id,
+        elapsed_ms,
+        normalized_result,
+    )
+    return normalized_result, request_id
+
+
+async def safe_medical_handoff(request: Request, message: str) -> str:
+    try:
+        return await request.app.state.llm_client.medical_handoff(message)
+    except Exception:
+        return await fallback_llm_client.medical_handoff(message)
 
 
 async def safe_complete(

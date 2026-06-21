@@ -8,7 +8,12 @@ from typing import Any
 from ..knowledge import normalize_text
 from ..models import Message
 from .base import BaseLLMClient
-from .prompts import DEFAULT_FALLBACK, PRICE_DISCLAIMER, SMALL_TALK_SERVICE_PIVOT
+from .prompts import (
+    DEFAULT_FALLBACK,
+    MEDICAL_HANDOFF_FALLBACK,
+    PRICE_DISCLAIMER,
+    SMALL_TALK_SERVICE_PIVOT,
+)
 
 
 def small_talk_template(user_message: str) -> str:
@@ -60,6 +65,51 @@ def service_consultation_template(context: dict[str, Any], user_message: str) ->
             return random.choice(variants)
 
     return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
+
+
+def medical_risk_template(user_message: str) -> str:
+    normalized_message = normalize_text(user_message)
+    medical_markers = {
+        "болит",
+        "боль",
+        "кровит",
+        "кровь",
+        "кровотечение",
+        "родинка",
+        "опасно",
+        "аллергия",
+        "аллергии",
+        "беременна",
+        "беременность",
+        "лекарства",
+        "препарат",
+        "таблет",
+        "мазь",
+        "осложнение",
+        "осложнения",
+        "покраснение",
+        "отек",
+        "отёк",
+        "температура",
+        "сыпь",
+        "прыщ",
+        "прыщи",
+        "акне",
+        "диагноз",
+        "лечение",
+        "лечить",
+    }
+    advice_markers = {
+        "что посоветуете",
+        "что делать",
+        "это нормально",
+        "нормально ли",
+        "можно ли",
+        "какая процедура от",
+    }
+    if any(marker in normalized_message for marker in medical_markers | advice_markers):
+        return "MEDICAL"
+    return "COSMETIC"
 
 
 class MockLLMClient(BaseLLMClient):
@@ -139,6 +189,13 @@ class MockLLMClient(BaseLLMClient):
         user_message: str,
     ) -> str:
         return service_consultation_template(context, user_message)
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        return medical_risk_template(user_message)
+
+    async def medical_handoff(self, user_message: str) -> str:
+        del user_message
+        return MEDICAL_HANDOFF_FALLBACK
 
     async def classify_and_extract(
         self,

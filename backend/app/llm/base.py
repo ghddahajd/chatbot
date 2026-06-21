@@ -49,3 +49,15 @@ class BaseLLMClient(ABC):
         if isinstance(message_to_user, str) and message_to_user.strip():
             return message_to_user.strip()
         return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        """Classify a consultation-zone message as MEDICAL or COSMETIC."""
+
+        del user_message
+        return "COSMETIC"
+
+    async def medical_handoff(self, user_message: str) -> str:
+        """Return a safe handoff answer for medical-risk consultation-zone messages."""
+
+        del user_message
+        return "Понимаю, лучше уточнить это у специалиста напрямую — подключаю оператора."

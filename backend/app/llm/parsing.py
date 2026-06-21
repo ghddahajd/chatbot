@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..policy.constants import ALLOWED_CLASSIFIER_INTENTS
+
 
 def tolerant_json_parse(raw_text: str) -> dict[str, Any] | None:
     """Parse JSON from local/cloud models that may wrap it in extra text."""
@@ -43,22 +45,10 @@ def normalize_classification_result(
 ) -> dict[str, object]:
     """Validate model JSON so policy only sees supported values."""
 
-    allowed_intents = {
-        "small_talk",
-        "off_topic",
-        "list_services",
-        "price_question",
-        "cosmetic_concern",
-        "medical_advice",
-        "operator_request",
-        "service_mention",
-        "unknown_service",
-        "location_mismatch",
-    }
     known_service_ids = {str(service.get("id")) for service in known_services}
 
     intent = str(raw_result.get("intent") or "service_mention").strip().lower()
-    if intent not in allowed_intents:
+    if intent not in ALLOWED_CLASSIFIER_INTENTS:
         intent = "service_mention"
 
     service_id = raw_result.get("service_id")

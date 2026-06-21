@@ -1,6 +1,7 @@
 """WebSocket routes."""
 
 import json
+import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -8,6 +9,7 @@ from ..models import MessageRole, SessionStatus
 
 
 router = APIRouter(tags=["ws"])
+logger = logging.getLogger(__name__)
 
 
 @router.websocket("/ws/chat/{session_id}")
@@ -56,7 +58,11 @@ async def operator_ws(websocket: WebSocket) -> None:
     try:
         while True:
             raw = await websocket.receive_text()
-            payload = json.loads(raw)
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("invalid operator websocket payload session_id=%s raw=%r", session_id, raw[:200])
+                continue
             text = str(payload.get("text") or "").strip()
             if not text:
                 continue

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 
 from .models import Lead
+
+
+logger = logging.getLogger(__name__)
 
 
 def _lead_to_payload(lead: Lead) -> dict[str, Any]:
@@ -60,7 +64,8 @@ class LeadService:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(url, json=payload)
-        except httpx.HTTPError:
+        except httpx.HTTPError as error:
+            logger.warning("telegram lead notification failed error=%s", type(error).__name__)
             return
 
 

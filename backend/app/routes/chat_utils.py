@@ -145,7 +145,8 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
 
     try:
         model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
-    except Exception:
+    except Exception as error:
+        logger.info("classifier_source=local reason=helper_error error=%s", type(error).__name__)
         return local_result
 
     model_intent = str(model_result.get("intent") or "")
@@ -213,7 +214,8 @@ async def classify_consultation_medical_risk(
     else:
         try:
             result = await request.app.state.llm_client.classify_medical_risk(message)
-        except Exception:
+        except Exception as error:
+            logger.info("medical_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             result = local_result
 
     normalized_result = str(result or "").strip().upper()

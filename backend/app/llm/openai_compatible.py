@@ -376,7 +376,8 @@ class OpenAIClient(BaseLLMClient):
                 self._post_chat_completions(payload, headers),
                 timeout=min(self.timeout, 5.0),
             )
-        except Exception:
+        except Exception as error:
+            logger.warning("medical_classifier_source=fallback reason=request_error error=%s", type(error).__name__)
             return "MEDICAL"
 
         data = response.json()
@@ -410,7 +411,8 @@ class OpenAIClient(BaseLLMClient):
                 self._post_chat_completions(payload, headers),
                 timeout=min(self.timeout, 6.0),
             )
-        except Exception:
+        except Exception as error:
+            logger.warning("medical_handoff_source=fallback reason=request_error error=%s", type(error).__name__)
             return MEDICAL_HANDOFF_FALLBACK
 
         data = response.json()

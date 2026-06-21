@@ -150,7 +150,6 @@ class MockLLMClient(BaseLLMClient):
 
         service = context.get("service") or {}
         price = context.get("price") or {}
-        company = context.get("company") or {}
         question_type = context.get("question_type")
         all_services = context.get("all_services")
         suggested_services = context.get("suggested_services")

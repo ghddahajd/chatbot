@@ -100,14 +100,14 @@ LLM_MODEL=your-model-name
 Ollama локально:
 
 ```bash
-ollama pull qwen3:4b
+ollama pull qwen2.5:3b
 ollama serve
 ```
 
 ```env
 LLM_PROVIDER=openai_compatible
 LLM_BASE_URL=http://host.docker.internal:11434/v1
-LLM_MODEL=qwen3:4b
+LLM_MODEL=qwen2.5:3b
 LLM_API_KEY=local
 LLM_SKIP_CLASSIFIER_FOR_LOCAL=true
 ```

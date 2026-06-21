@@ -205,7 +205,8 @@ def analyze_message(
                 quick_actions=[
                     {"label": service.name, "type": "message", "value": service.name}
                     for service in suggested_services
-                ],
+                ]
+                + ["Позвать оператора"],
             )
 
     if intent == "unknown_service":
@@ -364,6 +365,7 @@ def analyze_message(
             service_id=service.id,
             confidence=0.88,
             safe_context=knowledge_base.get_service_context(service),
+            quick_actions=["Уточнить цену", "Позвать оператора"],
         )
 
     if session.status.value != "AI_ACTIVE":

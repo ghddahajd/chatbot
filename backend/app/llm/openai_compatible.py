@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 from typing import Any
 
 import httpx
 
 from ..models import Message
-from ..validator import fallback_after_invalid_response, validate_response
+from ..validator import fallback_after_invalid_response, validate_consultation_response, validate_response
 from .base import BaseLLMClient
-from .mock import small_talk_template
+from .mock import service_consultation_template, small_talk_template
 from .parsing import normalize_classification_result, tolerant_json_parse
 from .prompts import (
     DEFAULT_FALLBACK,
     INTENT_CLASSIFICATION_PROMPT,
+    SERVICE_CONSULTATION_PROMPT,
+    SERVICE_CONSULTATION_TONE_VARIANTS,
     SMALL_TALK_PROMPT,
 )
 
@@ -118,6 +122,26 @@ class OpenAIClient(BaseLLMClient):
             lines.append(f"Готовый безопасный смысл ответа: {message_to_user.strip()}")
 
         return "\n".join(lines) or "Нет дополнительных данных. Нужно мягко уточнить запрос."
+
+    def _consultation_context_for_model(self, context: dict[str, Any]) -> str:
+        lines: list[str] = []
+        service = context.get("service") if isinstance(context.get("service"), dict) else {}
+        if service.get("name"):
+            lines.append(f"Услуга: {service['name']}")
+        if service.get("short_description"):
+            lines.append(f"Описание: {service['short_description']}")
+
+        suggested_services = context.get("suggested_services")
+        if isinstance(suggested_services, list) and suggested_services:
+            names = [
+                str(service_item.get("name"))
+                for service_item in suggested_services
+                if isinstance(service_item, dict) and service_item.get("name")
+            ]
+            if names:
+                lines.append("Близкие направления: " + ", ".join(names))
+
+        return "\n".join(lines) or "Есть только общий косметологический запрос без точной услуги."
 
     async def complete(
         self,
@@ -236,3 +260,52 @@ class OpenAIClient(BaseLLMClient):
             .strip()
         )
         return enforce_small_talk_pivot(answer, company_name, user_message)
+
+    async def service_consultation(
+        self,
+        context: dict[str, Any],
+        user_message: str,
+    ) -> str:
+        context_for_model = self._consultation_context_for_model(context)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        SERVICE_CONSULTATION_PROMPT
+                        + "\n"
+                        + random.choice(SERVICE_CONSULTATION_TONE_VARIANTS)
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Контекст найденной услуги:\n{context_for_model}\n\n"
+                        f"Сообщение пользователя: {user_message}"
+                    ),
+                },
+            ],
+            "temperature": 0.55,
+            "max_tokens": 90,
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            response = await asyncio.wait_for(
+                self._post_chat_completions(payload, headers),
+                timeout=min(self.timeout, 8.0),
+            )
+        except Exception:
+            return service_consultation_template(context, user_message)
+
+        data = response.json()
+        answer = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        if not validate_consultation_response(answer):
+            return service_consultation_template(context, user_message)
+        return answer

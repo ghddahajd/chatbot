@@ -18,6 +18,16 @@ RAW_CONTEXT_PATTERNS = (
     re.compile(r"\bquestion_type\b", re.IGNORECASE),
     re.compile(r"\{[^{}]*(?:service|price|company|service_id|price_text)[^{}]*\}", re.IGNORECASE | re.DOTALL),
 )
+CONSULTATION_FORBIDDEN_PATTERNS = (
+    *RAW_CONTEXT_PATTERNS,
+    re.compile(r"\d"),
+    re.compile(r"(?:₽|руб|рублей)", re.IGNORECASE),
+    re.compile(
+        r"(?:диагноз|лечени|лечить|препарат|таблет|мазь|антибиотик|назнач|"
+        r"гарант|безопасн|побочн|противопоказ)",
+        re.IGNORECASE,
+    ),
+)
 
 
 def validate_response(answer: str) -> bool:
@@ -26,6 +36,14 @@ def validate_response(answer: str) -> bool:
     if not answer.strip():
         return False
     return not any(pattern.search(answer) for pattern in RAW_CONTEXT_PATTERNS)
+
+
+def validate_consultation_response(answer: str) -> bool:
+    """Softer guard for LLM-only consultation wording."""
+
+    if not answer.strip():
+        return False
+    return not any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS)
 
 
 def validator_intercept_count() -> int:

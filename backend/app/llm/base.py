@@ -36,3 +36,16 @@ class BaseLLMClient(ABC):
 
         del user_message
         return f"Здравствуйте! Я консультант {company_name}. Чем могу помочь по услугам центра?"
+
+    async def service_consultation(
+        self,
+        context: dict[str, Any],
+        user_message: str,
+    ) -> str:
+        """Return a soft consultation answer for a known service or cosmetic concern."""
+
+        del user_message
+        message_to_user = context.get("message_to_user")
+        if isinstance(message_to_user, str) and message_to_user.strip():
+            return message_to_user.strip()
+        return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."

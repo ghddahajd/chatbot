@@ -118,23 +118,38 @@ async def safe_small_talk(request: Request, company_name: str, message: str) -> 
     return await fallback_llm_client.small_talk(company_name, message)
 
 
+def should_use_consultation_llm(context: dict[str, object]) -> bool:
+    if context.get("question_type") == "cosmetic_concern":
+        return True
+    if context.get("question_type"):
+        return False
+    if context.get("message_to_user"):
+        return False
+    service = context.get("service")
+    return isinstance(service, dict) and bool(service.get("name"))
+
+
 async def safe_complete(
     request: Request,
     context: dict[str, object],
     message: str,
     history: list[Message],
 ) -> str:
-    try:
-        return await request.app.state.llm_client.complete(
-            request.app.state.system_prompt,
-            context,
-            message,
-            history,
-        )
-    except Exception:
+    if not should_use_consultation_llm(context):
         return await fallback_llm_client.complete(
             request.app.state.system_prompt,
             context,
             message,
             history,
+        )
+
+    try:
+        return await request.app.state.llm_client.service_consultation(
+            context,
+            message,
+        )
+    except Exception:
+        return await fallback_llm_client.service_consultation(
+            context,
+            message,
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 from ..knowledge import normalize_text
@@ -27,6 +28,38 @@ def small_talk_template(user_message: str) -> str:
         return "Я на связи и могу помочь по теме центра: услуги, цены, запись или специалист."
 
     return f"Я здесь, чтобы помочь по услугам центра. {SMALL_TALK_SERVICE_PIVOT}"
+
+
+def service_consultation_template(context: dict[str, Any], user_message: str) -> str:
+    del user_message
+
+    service = context.get("service") if isinstance(context.get("service"), dict) else {}
+    service_name = str(service.get("name") or "").strip()
+    if service_name:
+        variants = [
+            f"Понял, вы про «{service_name}». Могу подсказать стоимость или позвать специалиста.",
+            f"Да, «{service_name}» есть в базе центра. Могу сориентировать по цене или передать вопрос специалисту.",
+            f"По услуге «{service_name}» могу помочь в рамках информации центра. Если нужно, уточним стоимость или позовём специалиста.",
+        ]
+        return random.choice(variants)
+
+    suggested_services = context.get("suggested_services")
+    if isinstance(suggested_services, list) and suggested_services:
+        names = [
+            str(item.get("name"))
+            for item in suggested_services
+            if isinstance(item, dict) and item.get("name")
+        ]
+        if names:
+            service_text = ", ".join(names)
+            variants = [
+                f"Понимаю, хочется подобрать уход под этот запрос. В центре есть близкие направления: {service_text}; точнее сориентирует специалист.",
+                f"Для такого запроса можно начать с консультации и посмотреть близкие услуги: {service_text}. Если хотите, передам вопрос специалисту.",
+                f"Тут лучше не угадывать заочно. Могу показать близкие услуги ({service_text}) или позвать специалиста.",
+            ]
+            return random.choice(variants)
+
+    return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
 
 
 class MockLLMClient(BaseLLMClient):
@@ -99,6 +132,13 @@ class MockLLMClient(BaseLLMClient):
     async def small_talk(self, company_name: str, user_message: str) -> str:
         del company_name
         return small_talk_template(user_message)
+
+    async def service_consultation(
+        self,
+        context: dict[str, Any],
+        user_message: str,
+    ) -> str:
+        return service_consultation_template(context, user_message)
 
     async def classify_and_extract(
         self,

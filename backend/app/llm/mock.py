@@ -4,9 +4,29 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..knowledge import normalize_text
 from ..models import Message
 from .base import BaseLLMClient
-from .prompts import DEFAULT_FALLBACK, PRICE_DISCLAIMER
+from .prompts import DEFAULT_FALLBACK, PRICE_DISCLAIMER, SMALL_TALK_SERVICE_PIVOT
+
+
+def small_talk_template(user_message: str) -> str:
+    normalized_message = normalize_text(user_message)
+
+    if "спасибо" in normalized_message or "благодарю" in normalized_message:
+        return f"Пожалуйста. Если нужно — {SMALL_TALK_SERVICE_PIVOT.lower()}"
+
+    if any(greeting in normalized_message.split() for greeting in {"привет", "здравствуй", "хай", "ку"}):
+        return f"Здравствуйте! Я на связи. {SMALL_TALK_SERVICE_PIVOT}"
+
+    if (
+        "как дела" in normalized_message
+        or "что делаешь" in normalized_message
+        or "чем занимаешься" in normalized_message
+    ):
+        return "Я на связи и могу помочь по теме центра: услуги, цены, запись или специалист."
+
+    return f"Я здесь, чтобы помочь по услугам центра. {SMALL_TALK_SERVICE_PIVOT}"
 
 
 class MockLLMClient(BaseLLMClient):
@@ -77,8 +97,8 @@ class MockLLMClient(BaseLLMClient):
         return DEFAULT_FALLBACK
 
     async def small_talk(self, company_name: str, user_message: str) -> str:
-        del user_message
-        return f"Здравствуйте! Я консультант {company_name}. Чем могу помочь по услугам центра?"
+        del company_name
+        return small_talk_template(user_message)
 
     async def classify_and_extract(
         self,

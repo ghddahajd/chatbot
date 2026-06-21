@@ -10,6 +10,7 @@ import httpx
 from ..models import Message
 from ..validator import fallback_after_invalid_response, validate_response
 from .base import BaseLLMClient
+from .mock import small_talk_template
 from .parsing import normalize_classification_result, tolerant_json_parse
 from .prompts import (
     DEFAULT_FALLBACK,
@@ -29,15 +30,15 @@ def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
     return clean_answer
 
 
-def enforce_small_talk_pivot(answer: str, company_name: str) -> str:
+def enforce_small_talk_pivot(answer: str, company_name: str, user_message: str = "") -> str:
     """Make lightweight chat useful even if the model replies too briefly."""
 
+    del company_name
     clean_answer = answer.strip()
-    pivot = "Чем могу помочь по услугам центра?"
     if len(clean_answer) < 25:
-        return f"Здравствуйте! Я консультант {company_name}. {pivot}"
+        return small_talk_template(user_message)
     if "услуг" not in clean_answer.lower() and "цент" not in clean_answer.lower():
-        return f"{clean_answer} {pivot}"
+        return f"{clean_answer} Могу подсказать по услугам, ценам или записи."
     return clean_answer
 
 
@@ -234,4 +235,4 @@ class OpenAIClient(BaseLLMClient):
             .get("content", DEFAULT_FALLBACK)
             .strip()
         )
-        return enforce_small_talk_pivot(answer, company_name)
+        return enforce_small_talk_pivot(answer, company_name, user_message)

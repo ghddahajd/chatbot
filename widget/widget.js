@@ -110,7 +110,7 @@
         font-size: 24px;
         font-weight: 500;
         line-height: 1;
-        transform: translateY(-1px);
+        transform: translateY(5px);
       }
       .eyebrow {
         display: none;

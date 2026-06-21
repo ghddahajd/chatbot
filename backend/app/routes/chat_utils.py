@@ -114,10 +114,8 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
 
 
 async def safe_small_talk(request: Request, company_name: str, message: str) -> str:
-    try:
-        return await request.app.state.llm_client.small_talk(company_name, message)
-    except Exception:
-        return await fallback_llm_client.small_talk(company_name, message)
+    del request
+    return await fallback_llm_client.small_talk(company_name, message)
 
 
 async def safe_complete(

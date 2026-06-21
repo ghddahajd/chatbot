@@ -99,6 +99,12 @@ def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -
         "удалённо",
         "дистанционно",
         "далеко",
+        "покажи услуги",
+        "показать услуги",
+        "посмотреть услуги",
+        "список услуг",
+        "прайс",
+        "что у вас есть",
     }
     for history_message in reversed(previous_messages[-8:]):
         if history_message.role != MessageRole.USER:

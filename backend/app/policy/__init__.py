@@ -86,7 +86,7 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
 
-    if has_booking_contact_prompt(session) and not phone:
+    if has_booking_contact_prompt(session) and not phone and not operator_requested:
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.BOOKING_REQUEST,

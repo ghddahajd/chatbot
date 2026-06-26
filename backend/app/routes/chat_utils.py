@@ -184,8 +184,11 @@ async def resolve_classification(message: str, request: Request) -> dict[str, ob
 
 
 async def safe_small_talk(request: Request, company_name: str, message: str) -> str:
-    del request
-    return await fallback_llm_client.small_talk(company_name, message)
+    try:
+        return await request.app.state.llm_client.small_talk(company_name, message)
+    except Exception as error:
+        logger.info("small_talk_source=fallback reason=helper_error error=%s", type(error).__name__)
+        return await fallback_llm_client.small_talk(company_name, message)
 
 
 def should_use_consultation_llm(context: dict[str, object]) -> bool:

@@ -26,19 +26,73 @@ def small_talk_template(user_message: str) -> str:
     normalized_message = normalize_text(user_message)
 
     if "спасибо" in normalized_message or "благодарю" in normalized_message:
-        return f"Пожалуйста. Если нужно — {SMALL_TALK_SERVICE_PIVOT.lower()}"
+        return _choose_stable_variant(
+            normalized_message,
+            [
+                f"Пожалуйста. Если нужно — {SMALL_TALK_SERVICE_PIVOT.lower()}",
+                "Рад помочь. Можете написать услугу или вопрос по записи.",
+                "Не за что. Если захотите, сориентирую по услугам центра.",
+            ],
+        )
 
-    if any(greeting in normalized_message.split() for greeting in {"привет", "здравствуй", "хай", "ку"}):
-        return f"Здравствуйте! Я на связи. {SMALL_TALK_SERVICE_PIVOT}"
+    if "ты кто" in normalized_message or "кто ты" in normalized_message:
+        return _choose_stable_variant(
+            normalized_message,
+            [
+                "Я AI-консультант центра. Помогу с услугами, ценами, записью или передам вопрос специалисту.",
+                "Я помощник на сайте центра: могу сориентировать по услугам, ценам и записи.",
+                "Я консультант в этом чате. Подскажу по базе центра или помогу позвать специалиста.",
+            ],
+        )
 
     if (
         "как дела" in normalized_message
         or "что делаешь" in normalized_message
         or "чем занимаешься" in normalized_message
     ):
-        return "Я на связи и могу помочь по теме центра: услуги, цены, запись или специалист."
+        return _choose_stable_variant(
+            normalized_message,
+            [
+                "Я на связи. Могу помочь по теме центра: услуги, цены, запись или специалист.",
+                "Работаю тут навигатором по услугам центра. Напишите, что хотите узнать.",
+                "Помогаю быстро разобраться с услугами, ценами и записью. С чего начнём?",
+            ],
+        )
 
-    return f"Я здесь, чтобы помочь по услугам центра. {SMALL_TALK_SERVICE_PIVOT}"
+    if "помоги" in normalized_message or "начнем" in normalized_message or "начнём" in normalized_message:
+        return _choose_stable_variant(
+            normalized_message,
+            [
+                "Конечно. Напишите услугу или вопрос, и я сориентирую по информации центра.",
+                "Давайте. Можете спросить про услугу, цену, запись или специалиста.",
+                "Начнём. Что интересует: услуги, стоимость, запись или связь со специалистом?",
+            ],
+        )
+
+    if any(
+        greeting in normalized_message.split()
+        for greeting in {"привет", "здравствуй", "хай", "ку"}
+    ) or any(
+        greeting in normalized_message
+        for greeting in {"добрый день", "добрый вечер", "доброе утро"}
+    ):
+        return _choose_stable_variant(
+            normalized_message,
+            [
+                f"Здравствуйте. Я на связи. {SMALL_TALK_SERVICE_PIVOT}",
+                "Здравствуйте. Можете написать, какая услуга интересует, я подскажу по базе центра.",
+                "Добрый день. Помогу с услугами, ценами, записью или передам вопрос специалисту.",
+            ],
+        )
+
+    return _choose_stable_variant(
+        normalized_message,
+        [
+            f"Я здесь, чтобы помочь по услугам центра. {SMALL_TALK_SERVICE_PIVOT}",
+            "Могу сориентировать по услугам центра, ценам или записи.",
+            "Напишите, что хотите узнать по центру: услугу, цену, запись или специалиста.",
+        ],
+    )
 
 
 def service_consultation_template(

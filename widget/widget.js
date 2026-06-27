@@ -11,6 +11,7 @@
     WAITING_OPERATOR: "WAITING_OPERATOR",
     HUMAN_ACTIVE: "HUMAN_ACTIVE",
     CLOSED: "CLOSED",
+    UNAVAILABLE: "UNAVAILABLE",
   };
   const MIN_TYPING_VISIBLE_MS = 450;
 
@@ -445,7 +446,7 @@
     connectedCallback() {
       this.bindEvents();
       this.pushEmptyMessage();
-      this.restoreSession();
+      this.bootstrap();
     }
 
     bindEvents() {
@@ -475,6 +476,11 @@
           return;
         }
         const payload = await response.json();
+        if (payload.company_id !== COMPANY_ID) {
+          this.resetLocalSession();
+          this.applyState(STATUS.AI_ACTIVE);
+          return;
+        }
         this.renderHistory(payload.messages || []);
         this.applyState(payload.status);
         if (payload.status === STATUS.HUMAN_ACTIVE) {
@@ -482,6 +488,19 @@
         }
       } catch (error) {
         this.applyState(STATUS.AI_ACTIVE);
+      }
+    }
+
+    async bootstrap() {
+      try {
+        const response = await fetch(
+          API_BASE + "/api/widget/bootstrap?company_id=" + encodeURIComponent(COMPANY_ID)
+        );
+        if (!response.ok) throw new Error("Widget bootstrap failed");
+        await response.json();
+        await this.restoreSession();
+      } catch (error) {
+        this.markUnavailable();
       }
     }
 
@@ -613,7 +632,12 @@
 
     addQuickActions(actions) {
       this.clearQuickActions();
-      if (!Array.isArray(actions) || actions.length === 0 || this.state.status === STATUS.CLOSED) {
+      if (
+        !Array.isArray(actions) ||
+        actions.length === 0 ||
+        this.state.status === STATUS.CLOSED ||
+        this.state.status === STATUS.UNAVAILABLE
+      ) {
         return;
       }
 
@@ -653,7 +677,14 @@
     }
 
     async sendText(text) {
-      if (!text || this.state.sending || this.state.status === STATUS.CLOSED) return;
+      if (
+        !text ||
+        this.state.sending ||
+        this.state.status === STATUS.CLOSED ||
+        this.state.status === STATUS.UNAVAILABLE
+      ) {
+        return;
+      }
 
       this.elements.input.value = "";
       this.clearQuickActions();
@@ -714,28 +745,31 @@
         WAITING_OPERATOR: "Ожидаем специалиста",
         HUMAN_ACTIVE: "Специалист в чате",
         CLOSED: "Диалог завершён",
+        UNAVAILABLE: "Виджет недоступен",
       };
       const placeholders = {
         AI_ACTIVE: "Напишите ваш вопрос",
         WAITING_OPERATOR: "Добавьте детали, оператор их увидит...",
         HUMAN_ACTIVE: "Напишите ваш вопрос",
         CLOSED: "Диалог завершён",
+        UNAVAILABLE: "",
       };
       const statusClasses = {
         AI_ACTIVE: "status-ai",
         WAITING_OPERATOR: "status-waiting",
         HUMAN_ACTIVE: "status-human",
         CLOSED: "status-closed",
+        UNAVAILABLE: "status-closed",
       };
 
       this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;
       this.elements.statusbar.classList.remove("status-ai", "status-waiting", "status-human", "status-closed");
       this.elements.statusbar.classList.add(statusClasses[status] || statusClasses.AI_ACTIVE);
-      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED);
+      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED || status === STATUS.UNAVAILABLE);
       this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
       this.elements.input.placeholder = placeholders[status] || placeholders.AI_ACTIVE;
-      this.elements.input.disabled = status === STATUS.CLOSED;
-      this.elements.send.disabled = status === STATUS.CLOSED;
+      this.elements.input.disabled = status === STATUS.CLOSED || status === STATUS.UNAVAILABLE;
+      this.elements.send.disabled = status === STATUS.CLOSED || status === STATUS.UNAVAILABLE;
     }
 
     async handleSubmit() {
@@ -771,6 +805,19 @@
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;
       window.localStorage.removeItem(STORAGE_KEY);
+    }
+
+    markUnavailable() {
+      this.state.sessionId = "";
+      window.localStorage.removeItem(STORAGE_KEY);
+      if (this.state.ws) {
+        this.state.ws.close();
+        this.state.ws = null;
+      }
+      this.clearQuickActions();
+      this.elements.messages.innerHTML = "";
+      this.applyState(STATUS.UNAVAILABLE);
+      this.addMessage("system", "Виджет не запустился. Проверьте код подключения или company_id.");
     }
 
     connectWebSocket() {

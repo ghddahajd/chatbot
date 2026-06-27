@@ -13,7 +13,7 @@ from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
-from .routes import chat, leads, operator, ws
+from .routes import chat, leads, operator, widget, ws
 from .sessions import SessionStore
 from .ws_manager import ConnectionManager
 
@@ -62,6 +62,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(leads.router)
 app.include_router(operator.router)
+app.include_router(widget.router)
 app.include_router(ws.router)
 
 app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), name="static")

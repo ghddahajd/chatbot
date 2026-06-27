@@ -143,6 +143,14 @@ class ChatMessageResponse(BaseModel):
     quick_actions: list[QuickAction] = Field(default_factory=list)
 
 
+class WidgetBootstrapResponse(BaseModel):
+    company_id: str
+    company_name: str
+    city: str
+    website_url: Optional[str] = None
+    telegram_url: Optional[str] = None
+
+
 class SessionPublicResponse(BaseModel):
     session_id: str
     company_id: str

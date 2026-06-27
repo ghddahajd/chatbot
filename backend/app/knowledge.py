@@ -200,6 +200,17 @@ class KnowledgeBaseResolver:
     def _client_dir(self, company_id: str) -> Path:
         return self.clients_data_dir / company_id
 
+    def _legacy_data_exists(self) -> bool:
+        return all(
+            (self.data_dir / file_name).exists()
+            for file_name in ("company.yaml", "services.json", "prices.json", "faq.md")
+        )
+
+    def _load_legacy(self) -> KnowledgeBase:
+        if self._legacy_cache is None:
+            self._legacy_cache = KnowledgeBase.load(self.data_dir)
+        return self._legacy_cache
+
     def client_exists(self, company_id: str) -> bool:
         company_id = company_id.strip()
         if not company_id:
@@ -219,6 +230,9 @@ class KnowledgeBaseResolver:
                 self._cache[target_company_id] = KnowledgeBase.load(self._client_dir(target_company_id))
             return self._cache[target_company_id]
 
+        if target_company_id == self.default_company_id and self._legacy_data_exists():
+            return self._load_legacy()
+
         if not fallback:
             raise KeyError(target_company_id)
 
@@ -232,6 +246,4 @@ class KnowledgeBaseResolver:
                 self._cache[self.default_company_id] = KnowledgeBase.load(self._client_dir(self.default_company_id))
             return self._cache[self.default_company_id]
 
-        if self._legacy_cache is None:
-            self._legacy_cache = KnowledgeBase.load(self.data_dir)
-        return self._legacy_cache
+        return self._load_legacy()

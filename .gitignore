@@ -13,7 +13,13 @@ venv/
 
 # Build / runtime
 backend/logs/*.jsonl
-
-# AI / local workflow files
+AGENTS.md
+CLAUDE.md
 CODEX.md
+.agents/
+.claude/
+.codex/
+.cursor/
+.cursorrules
 docs/
+tasks/

@@ -68,6 +68,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Unknown company") from error
     lead_service = request.app.state.lead_service
+    analytics_service = request.app.state.analytics_service
 
     session = await session_store.get_or_create(payload.session_id, payload.company_id)
     raw_message = payload.message or ""
@@ -177,6 +178,13 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             classification,
         )
 
+    await analytics_service.track_policy_result(
+        company_id=session.company_id,
+        session_id=session.session_id,
+        message=message,
+        policy_result=policy_result,
+    )
+
     lead_created = False
     answer = ""
     response_action = policy_result.action
@@ -252,6 +260,20 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
             policy_result.safe_context,
         )
         if medical_risk == "MEDICAL":
+            await analytics_service.track_event(
+                company_id=session.company_id,
+                session_id=session.session_id,
+                event_type="medical_handoff",
+                message=message,
+                metadata={"source": "medical_risk_classifier"},
+            )
+            await analytics_service.track_event(
+                company_id=session.company_id,
+                session_id=session.session_id,
+                event_type="operator_requested",
+                message=message,
+                metadata={"source": "medical_risk_classifier"},
+            )
             await session_store.set_operator_requested(session.session_id, True)
             await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
             answer = await safe_medical_handoff(request, message)

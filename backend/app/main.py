@@ -8,12 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analytics import AnalyticsService
 from .config import get_settings
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
-from .routes import chat, leads, operator, widget, ws
+from .routes import analytics, chat, leads, operator, widget, ws
 from .sessions import SessionStore
 from .ws_manager import ConnectionManager
 
@@ -36,6 +37,10 @@ async def lifespan(app: FastAPI):
         leads_file=settings.leads_file,
         telegram_bot_token=settings.telegram_bot_token,
         telegram_chat_id=settings.telegram_chat_id,
+    )
+    app.state.analytics_service = AnalyticsService(
+        analytics_file=settings.analytics_file,
+        leads_file=settings.leads_file,
     )
     app.state.llm_client = build_llm_client(
         provider=settings.llm_provider,
@@ -62,6 +67,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(leads.router)
+app.include_router(analytics.router)
 app.include_router(operator.router)
 app.include_router(widget.router)
 app.include_router(ws.router)

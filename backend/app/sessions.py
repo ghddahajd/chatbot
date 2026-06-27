@@ -45,6 +45,10 @@ class SessionStore:
         async with self._lock:
             return self._sessions.get(session_id)
 
+    async def list_all(self) -> list[Session]:
+        async with self._lock:
+            return list(self._sessions.values())
+
     async def append_message(self, session_id: str, role: MessageRole, text: str) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)

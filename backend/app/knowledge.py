@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -11,6 +12,9 @@ from typing import Optional
 import yaml
 
 from .models import CompanyConfig, PriceEntry, Service
+
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_text(value: str) -> str:
@@ -176,3 +180,58 @@ class KnowledgeBase:
             "faq": self.faq_markdown,
             "disclaimer": self.company.medical_disclaimer,
         }
+
+
+class KnowledgeBaseResolver:
+    """выбирает базу знаний по company_id с fallback для старого demo-flow."""
+
+    def __init__(
+        self,
+        data_dir: Path,
+        clients_data_dir: Path,
+        default_company_id: str = "rosh_demo",
+    ) -> None:
+        self.data_dir = data_dir
+        self.clients_data_dir = clients_data_dir
+        self.default_company_id = default_company_id
+        self._cache: dict[str, KnowledgeBase] = {}
+        self._legacy_cache: Optional[KnowledgeBase] = None
+
+    def _client_dir(self, company_id: str) -> Path:
+        return self.clients_data_dir / company_id
+
+    def client_exists(self, company_id: str) -> bool:
+        company_id = company_id.strip()
+        if not company_id:
+            return False
+        client_dir = self._client_dir(company_id)
+        return all(
+            (client_dir / file_name).exists()
+            for file_name in ("company.yaml", "services.json", "prices.json", "faq.md")
+        )
+
+    def get(self, company_id: str | None, *, fallback: bool = True) -> KnowledgeBase:
+        requested_company_id = (company_id or "").strip()
+        target_company_id = requested_company_id or self.default_company_id
+
+        if self.client_exists(target_company_id):
+            if target_company_id not in self._cache:
+                self._cache[target_company_id] = KnowledgeBase.load(self._client_dir(target_company_id))
+            return self._cache[target_company_id]
+
+        if not fallback:
+            raise KeyError(target_company_id)
+
+        logger.warning(
+            "unknown company_id=%r, falling back to default_company_id=%s",
+            requested_company_id,
+            self.default_company_id,
+        )
+        if self.client_exists(self.default_company_id):
+            if self.default_company_id not in self._cache:
+                self._cache[self.default_company_id] = KnowledgeBase.load(self._client_dir(self.default_company_id))
+            return self._cache[self.default_company_id]
+
+        if self._legacy_cache is None:
+            self._legacy_cache = KnowledgeBase.load(self.data_dir)
+        return self._legacy_cache

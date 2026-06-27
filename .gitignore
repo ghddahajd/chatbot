@@ -13,6 +13,10 @@ venv/
 
 # Build / runtime
 backend/logs/*.jsonl
+
+# Local client knowledge bases
+backend/data/clients/*
+!backend/data/clients/.gitkeep
 AGENTS.md
 CLAUDE.md
 CODEX.md

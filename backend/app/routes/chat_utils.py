@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import Request
 
+from ..knowledge import KnowledgeBase
 from ..llm import MockLLMClient
 from ..knowledge import normalize_text
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, PolicyResult, QuickAction, Session
@@ -27,8 +28,12 @@ RATE_LIMIT_ANSWER = (
 )
 
 
-def format_quick_actions(labels: list[object], request: Request) -> list[QuickAction]:
-    company = request.app.state.knowledge_base.company
+def format_quick_actions(
+    labels: list[object],
+    request: Request,
+    knowledge_base: KnowledgeBase | None = None,
+) -> list[QuickAction]:
+    company = (knowledge_base or request.app.state.knowledge_base).company
     values_by_label = {
         "Позвать оператора": ("message", "Хочу поговорить с оператором"),
         "Посмотреть услуги": ("message", "Покажи список услуг"),
@@ -57,14 +62,18 @@ def format_quick_actions(labels: list[object], request: Request) -> list[QuickAc
     return actions
 
 
-def service_classifier_payload(request: Request) -> list[dict[str, object]]:
+def service_classifier_payload(
+    request: Request,
+    knowledge_base: KnowledgeBase | None = None,
+) -> list[dict[str, object]]:
+    selected_knowledge_base = knowledge_base or request.app.state.knowledge_base
     return [
         {
             "id": service.id,
             "name": service.name,
             "synonyms": service.synonyms,
         }
-        for service in request.app.state.knowledge_base.services
+        for service in selected_knowledge_base.services
     ]
 
 
@@ -129,12 +138,17 @@ def contextual_affirmative_response(
     return None
 
 
-async def resolve_classification(message: str, request: Request) -> dict[str, object]:
-    known_services = service_classifier_payload(request)
+async def resolve_classification(
+    message: str,
+    request: Request,
+    knowledge_base: KnowledgeBase | None = None,
+) -> dict[str, object]:
+    selected_knowledge_base = knowledge_base or request.app.state.knowledge_base
+    known_services = service_classifier_payload(request, selected_knowledge_base)
     local_result = classify_and_extract(
         message,
         known_services,
-        request.app.state.knowledge_base.company.city,
+        selected_knowledge_base.company.city,
     )
     settings = request.app.state.settings
     skip_local_classifier = settings.llm_skip_classifier_for_local

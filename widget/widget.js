@@ -17,7 +17,7 @@
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
 
-  const STORAGE_KEY = "ai-chat-widget-session-id";
+  const STORAGE_KEY = "ai-chat-widget-session-id:" + COMPANY_ID;
 
   const template = document.createElement("template");
   template.innerHTML = `

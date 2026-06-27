@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 
 from .models import Message, MessageRole, OperatorSessionSummary, Session, SessionStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 class SessionStore:
@@ -19,7 +23,16 @@ class SessionStore:
     async def get_or_create(self, session_id: Optional[str], company_id: str) -> Session:
         async with self._lock:
             if session_id and session_id in self._sessions:
-                return self._sessions[session_id]
+                session = self._sessions[session_id]
+                if session.company_id == company_id:
+                    return session
+                logger.warning(
+                    "session company mismatch session_id=%s stored_company_id=%s requested_company_id=%s",
+                    session_id,
+                    session.company_id,
+                    company_id,
+                )
+                session_id = None
 
             session_data = {"company_id": company_id}
             if session_id:

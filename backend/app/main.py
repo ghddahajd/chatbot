@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .knowledge import KnowledgeBase
+from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
@@ -24,7 +24,12 @@ async def lifespan(app: FastAPI):
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
 
     app.state.settings = settings
-    app.state.knowledge_base = KnowledgeBase.load(settings.data_dir)
+    app.state.knowledge_base_resolver = KnowledgeBaseResolver(
+        data_dir=settings.data_dir,
+        clients_data_dir=settings.clients_data_dir,
+        default_company_id=settings.default_company_id,
+    )
+    app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
     app.state.session_store = SessionStore()
     app.state.lead_service = LeadService(
         leads_file=settings.leads_file,

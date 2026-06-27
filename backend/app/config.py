@@ -48,8 +48,10 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     operator_token: str = "demo-operator-token"
     allowed_origins: str = "http://localhost:8000"
+    default_company_id: str = "rosh_demo"
 
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
+    clients_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "clients")
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")

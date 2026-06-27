@@ -63,7 +63,7 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
 @router.post("/message", response_model=ChatMessageResponse)
 async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMessageResponse:
     session_store = request.app.state.session_store
-    knowledge_base = request.app.state.knowledge_base
+    knowledge_base = request.app.state.knowledge_base_resolver.get(payload.company_id)
     lead_service = request.app.state.lead_service
 
     session = await session_store.get_or_create(payload.session_id, payload.company_id)
@@ -108,7 +108,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     if session.status == SessionStatus.WAITING_OPERATOR:
         local_classification = classify_and_extract(
             message,
-            service_classifier_payload(request),
+            service_classifier_payload(request, knowledge_base),
             knowledge_base.company.city,
         )
         waiting_policy_result = request.app.state.policy_analyzer(
@@ -165,7 +165,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     if policy_result is None:
         classification = maybe_contextual_classification(message, session)
         if classification is None:
-            classification = await resolve_classification(message, request)
+            classification = await resolve_classification(message, request, knowledge_base)
         policy_result = request.app.state.policy_analyzer(
             message,
             session,
@@ -276,5 +276,5 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         action=response_action,
         answer=answer,
         lead_created=lead_created,
-        quick_actions=format_quick_actions(response_quick_actions, request),
+        quick_actions=format_quick_actions(response_quick_actions, request, knowledge_base),
     )

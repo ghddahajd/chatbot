@@ -125,7 +125,39 @@ LLM_SKIP_CLASSIFIER_FOR_LOCAL=true
 
 ## Где менять данные
 
-- `backend/data/company.yaml`
-- `backend/data/services.json`
-- `backend/data/prices.json`
-- `backend/data/faq.md`
+Для managed-service клиента база лежит локально и не коммитится:
+
+```text
+backend/data/clients/<company_id>/
+├── company.yaml
+├── services.json
+├── prices.json
+└── faq.md
+```
+
+Шаблон:
+
+```bash
+cp -R backend/data/client_template/sample_client backend/data/clients/new_client
+```
+
+После копирования поменяй `company_id` в `company.yaml` на название папки, например `new_client`.
+
+Проверка KB без Docker:
+
+```bash
+python3 backend/scripts/validate_kb.py backend/data/clients/new_client
+```
+
+В embed-коде укажи тот же `company_id`:
+
+```html
+<script
+  src="https://api.example.com/static/widget.js"
+  data-company-id="new_client"
+  data-api-base="https://api.example.com"
+  defer
+></script>
+```
+
+Старые файлы `backend/data/company.yaml`, `services.json`, `prices.json`, `faq.md` остаются fallback для demo.

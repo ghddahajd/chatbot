@@ -1,0 +1,24 @@
+[
+  {
+    "id": "primary_consultation",
+    "name": "Первичная консультация",
+    "category": "Консультации",
+    "synonyms": ["консультация", "первичный прием", "прием специалиста"],
+    "short_description": "Первичная консультация специалиста по услугам центра.",
+    "price_from": 2500,
+    "duration": null,
+    "requires_specialist": true,
+    "source_note": "sample template"
+  },
+  {
+    "id": "sample_procedure",
+    "name": "Пример процедуры",
+    "category": "Процедуры",
+    "synonyms": ["пример процедуры", "процедура"],
+    "short_description": "Короткое описание процедуры из базы знаний клиента.",
+    "price_from": 5000,
+    "duration": "45-60 минут",
+    "requires_specialist": true,
+    "source_note": "sample template"
+  }
+]

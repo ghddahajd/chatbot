@@ -1,0 +1,23 @@
+company_id: sample_client
+company_name: "Sample Clinic"
+city: "Москва"
+working_hours: "Пн-Пт 9:00-20:00, Сб 10:00-18:00"
+phone: "+7 000 000-00-00"
+address: "Адрес уточняется"
+website_url: "https://example.com"
+telegram_url: "https://t.me/example"
+allowed_topics:
+  - "услуги"
+  - "цены"
+  - "запись"
+  - "режим работы"
+  - "адрес"
+operator_triggers:
+  - "оператор"
+  - "специалист"
+  - "человек"
+forbidden_claims:
+  - "гарантия результата"
+  - "медицинский диагноз"
+  - "назначение лечения"
+medical_disclaimer: "Я не врач и не ставлю диагнозы. По медицинским вопросам лучше уточнить у специалиста."

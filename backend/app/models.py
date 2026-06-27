@@ -73,6 +73,7 @@ class Session(BaseModel):
 
 class Lead(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    company_id: str
     session_id: str
     name: str
     phone: str

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 def _lead_to_payload(lead: Lead) -> dict[str, Any]:
     return {
         "timestamp": lead.timestamp.isoformat(),
+        "company_id": lead.company_id,
         "session_id": lead.session_id,
         "name": lead.name,
         "phone": lead.phone,
@@ -50,6 +51,7 @@ class LeadService:
     async def _send_telegram(self, lead: Lead) -> None:
         message = (
             "Новый лид\n"
+            f"Клиент: {lead.company_id}\n"
             f"Имя: {lead.name}\n"
             f"Телефон: {lead.phone}\n"
             f"Сессия: {lead.session_id}\n"
@@ -70,6 +72,7 @@ class LeadService:
 
 
 def build_lead_from_contact(
+    company_id: str,
     session_id: str,
     contact: dict[str, Any],
     summary: str,
@@ -78,6 +81,7 @@ def build_lead_from_contact(
     """создаёт объект лида из распарсенных контактных данных."""
 
     return Lead(
+        company_id=company_id,
         session_id=session_id,
         name=str(contact.get("name") or "Не указано"),
         phone=str(contact.get("phone") or ""),

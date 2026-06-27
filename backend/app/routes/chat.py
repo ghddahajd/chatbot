@@ -120,6 +120,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         contact = waiting_policy_result.safe_context.get("contact")
         if waiting_policy_result.action == PolicyAction.ASK_CONTACT and contact:
             lead = build_lead_from_contact(
+                company_id=session.company_id,
                 session_id=session.session_id,
                 contact=contact,
                 summary=message,
@@ -183,6 +184,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         if contact:
             is_booking_request = bool(policy_result.safe_context.get("booking_request"))
             lead = build_lead_from_contact(
+                company_id=session.company_id,
                 session_id=session.session_id,
                 contact=contact,
                 summary=("Заявка на запись: " + message) if is_booking_request else message,

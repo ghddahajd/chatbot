@@ -19,6 +19,20 @@ def _verify_token(request: Request, header_token: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Invalid operator token")
 
 
+def _company_name(request: Request, company_id: str) -> str:
+    try:
+        knowledge_base = request.app.state.knowledge_base_resolver.get(company_id, fallback=False)
+    except KeyError:
+        return company_id
+    return knowledge_base.company.company_name
+
+
+def _session_payload(request: Request, session) -> dict:
+    payload = session.model_dump(mode="json")
+    payload["company_name"] = _company_name(request, session.company_id)
+    return payload
+
+
 @router.get("/operator", response_class=HTMLResponse)
 async def operator_page(request: Request) -> str:
     _verify_token(request, None)
@@ -31,7 +45,12 @@ async def list_sessions(
 ) -> list[dict]:
     _verify_token(request, x_operator_token)
     items = await request.app.state.session_store.list_operator_sessions()
-    return [item.model_dump(mode="json") for item in items]
+    payloads = []
+    for item in items:
+        payload = item.model_dump(mode="json")
+        payload["company_name"] = _company_name(request, item.company_id)
+        payloads.append(payload)
+    return payloads
 
 
 @router.get("/api/operator/sessions/{session_id}")
@@ -44,7 +63,7 @@ async def get_session(
     session = await request.app.state.session_store.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session.model_dump(mode="json")
+    return _session_payload(request, session)
 
 
 @router.post("/api/operator/sessions/{session_id}/take")

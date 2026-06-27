@@ -164,6 +164,7 @@ class SessionPublicResponse(BaseModel):
 
 class OperatorSessionSummary(BaseModel):
     session_id: str
+    company_id: str
     status: SessionStatus
     last_message: Optional[str] = None
     updated_at: datetime

@@ -89,6 +89,7 @@ class SessionStore:
             sessions = [
                 OperatorSessionSummary(
                     session_id=session.session_id,
+                    company_id=session.company_id,
                     status=session.status,
                     last_message=session.messages[-1].text if session.messages else None,
                     updated_at=session.updated_at,

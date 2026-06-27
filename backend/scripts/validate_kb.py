@@ -72,6 +72,17 @@ def load_simple_yaml(path: Path) -> dict[str, object]:
     return payload
 
 
+def default_defaults_dir(kb_dir: Path) -> Path | None:
+    candidates = [
+        Path("backend/data/defaults"),
+        kb_dir.parent.parent / "defaults",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return None
+
+
 def load_json_list(path: Path, label: str) -> list[dict[str, object]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
@@ -81,7 +92,7 @@ def load_json_list(path: Path, label: str) -> list[dict[str, object]]:
     return payload
 
 
-def validate_kb(kb_dir: Path) -> list[str]:
+def validate_kb(kb_dir: Path, defaults_dir: Path | None = None) -> list[str]:
     errors: list[str] = []
 
     if not kb_dir.exists():
@@ -100,7 +111,13 @@ def validate_kb(kb_dir: Path) -> list[str]:
         return errors
 
     try:
-        company = load_simple_yaml(kb_dir / "company.yaml")
+        company: dict[str, object] = {}
+        resolved_defaults_dir = defaults_dir or default_defaults_dir(kb_dir)
+        if resolved_defaults_dir is not None:
+            defaults_company = resolved_defaults_dir / "company.yaml"
+            if defaults_company.exists():
+                company.update(load_simple_yaml(defaults_company))
+        company.update(load_simple_yaml(kb_dir / "company.yaml"))
         services = load_json_list(kb_dir / "services.json", "services.json")
         prices = load_json_list(kb_dir / "prices.json", "prices.json")
     except Exception as error:
@@ -153,9 +170,15 @@ def validate_kb(kb_dir: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Проверить клиентскую базу знаний.")
     parser.add_argument("kb_dir", type=Path, help="Папка KB, например backend/data/clients/rosh_demo")
+    parser.add_argument(
+        "--defaults-dir",
+        type=Path,
+        default=None,
+        help="Папка defaults, если нужно переопределить автоопределение",
+    )
     args = parser.parse_args()
 
-    errors = validate_kb(args.kb_dir)
+    errors = validate_kb(args.kb_dir, args.defaults_dir)
     if errors:
         print("KB validation failed:")
         for error in errors:

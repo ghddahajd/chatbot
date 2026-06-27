@@ -1,0 +1,10 @@
+{
+  "theme": {
+    "accent": "#1F7A5C",
+    "position": "bottom-right"
+  },
+  "features": {
+    "lead_capture": true,
+    "operator_handoff": true
+  }
+}

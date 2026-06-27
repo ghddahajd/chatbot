@@ -1,0 +1,19 @@
+{
+  "fields": [
+    {
+      "name": "name",
+      "required": true,
+      "label": "Имя"
+    },
+    {
+      "name": "phone",
+      "required": true,
+      "label": "Телефон"
+    },
+    {
+      "name": "preferred_time",
+      "required": false,
+      "label": "Удобное время"
+    }
+  ]
+}

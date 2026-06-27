@@ -149,6 +149,9 @@ cp -R backend/data/client_template/sample_client backend/data/clients/new_client
 python3 backend/scripts/validate_kb.py backend/data/clients/new_client
 ```
 
+Общие дефолты лежат в `backend/data/defaults/`. Если в клиентском `company.yaml`
+нет общего поля вроде `medical_disclaimer`, backend и валидатор возьмут его оттуда.
+
 В embed-коде укажи тот же `company_id`:
 
 ```html

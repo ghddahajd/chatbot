@@ -63,7 +63,10 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
 @router.post("/message", response_model=ChatMessageResponse)
 async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMessageResponse:
     session_store = request.app.state.session_store
-    knowledge_base = request.app.state.knowledge_base_resolver.get(payload.company_id)
+    try:
+        knowledge_base = request.app.state.knowledge_base_resolver.get(payload.company_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown company") from error
     lead_service = request.app.state.lead_service
 
     session = await session_store.get_or_create(payload.session_id, payload.company_id)

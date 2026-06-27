@@ -15,6 +15,8 @@ from .models import CompanyConfig, PriceEntry, Service
 
 
 logger = logging.getLogger(__name__)
+CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+KB_REQUIRED_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
 
 
 def normalize_text(value: str) -> str:
@@ -56,12 +58,16 @@ class KnowledgeBase:
         self._search_index = self._build_search_index(services)
 
     @classmethod
-    def load(cls, data_dir: Path) -> "KnowledgeBase":
+    def load(cls, data_dir: Path, defaults_dir: Optional[Path] = None) -> "KnowledgeBase":
         """загружает базу знаний из локальных json/yaml-файлов."""
 
-        company = CompanyConfig.model_validate(
-            yaml.safe_load((data_dir / "company.yaml").read_text(encoding="utf-8"))
-        )
+        company_payload: dict[str, object] = {}
+        if defaults_dir is not None:
+            defaults_company_path = defaults_dir / "company.yaml"
+            if defaults_company_path.exists():
+                company_payload.update(yaml.safe_load(defaults_company_path.read_text(encoding="utf-8")) or {})
+        company_payload.update(yaml.safe_load((data_dir / "company.yaml").read_text(encoding="utf-8")) or {})
+        company = CompanyConfig.model_validate(company_payload)
         services = [
             Service.model_validate(item)
             for item in json.loads((data_dir / "services.json").read_text(encoding="utf-8"))
@@ -189,46 +195,61 @@ class KnowledgeBaseResolver:
         self,
         data_dir: Path,
         clients_data_dir: Path,
+        defaults_data_dir: Optional[Path] = None,
         default_company_id: str = "rosh_demo",
     ) -> None:
         self.data_dir = data_dir
         self.clients_data_dir = clients_data_dir
+        self.defaults_data_dir = defaults_data_dir
         self.default_company_id = default_company_id
         self._cache: dict[str, KnowledgeBase] = {}
         self._legacy_cache: Optional[KnowledgeBase] = None
 
     def _client_dir(self, company_id: str) -> Path:
-        return self.clients_data_dir / company_id
+        clean_company_id = company_id.strip()
+        if not CLIENT_ID_PATTERN.fullmatch(clean_company_id):
+            raise PermissionError(f"invalid company_id: {company_id!r}")
+
+        clients_root = self.clients_data_dir.resolve()
+        client_dir = (clients_root / clean_company_id).resolve()
+        if not client_dir.is_relative_to(clients_root):
+            raise PermissionError(f"company_id escapes clients root: {company_id!r}")
+        return client_dir
 
     def _legacy_data_exists(self) -> bool:
-        return all(
-            (self.data_dir / file_name).exists()
-            for file_name in ("company.yaml", "services.json", "prices.json", "faq.md")
-        )
+        return all((self.data_dir / file_name).exists() for file_name in KB_REQUIRED_FILES)
 
     def _load_legacy(self) -> KnowledgeBase:
         if self._legacy_cache is None:
-            self._legacy_cache = KnowledgeBase.load(self.data_dir)
+            self._legacy_cache = KnowledgeBase.load(self.data_dir, self.defaults_data_dir)
         return self._legacy_cache
 
     def client_exists(self, company_id: str) -> bool:
         company_id = company_id.strip()
         if not company_id:
             return False
-        client_dir = self._client_dir(company_id)
-        return all(
-            (client_dir / file_name).exists()
-            for file_name in ("company.yaml", "services.json", "prices.json", "faq.md")
-        )
+        try:
+            client_dir = self._client_dir(company_id)
+        except PermissionError:
+            return False
+        return all((client_dir / file_name).exists() for file_name in KB_REQUIRED_FILES)
 
     def get(self, company_id: str | None, *, fallback: bool = True) -> KnowledgeBase:
         requested_company_id = (company_id or "").strip()
+        if company_id is not None and not requested_company_id and not fallback:
+            raise KeyError("")
         target_company_id = requested_company_id or self.default_company_id
 
         if self.client_exists(target_company_id):
             if target_company_id not in self._cache:
-                self._cache[target_company_id] = KnowledgeBase.load(self._client_dir(target_company_id))
+                self._cache[target_company_id] = KnowledgeBase.load(
+                    self._client_dir(target_company_id),
+                    self.defaults_data_dir,
+                )
             return self._cache[target_company_id]
+
+        if requested_company_id and not CLIENT_ID_PATTERN.fullmatch(requested_company_id):
+            raise KeyError(target_company_id)
 
         if target_company_id == self.default_company_id and self._legacy_data_exists():
             return self._load_legacy()

@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
     clients_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "clients")
+    defaults_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "defaults")
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")

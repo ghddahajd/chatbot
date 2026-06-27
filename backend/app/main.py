@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     app.state.knowledge_base_resolver = KnowledgeBaseResolver(
         data_dir=settings.data_dir,
         clients_data_dir=settings.clients_data_dir,
+        defaults_data_dir=settings.defaults_data_dir,
         default_company_id=settings.default_company_id,
     )
     app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)

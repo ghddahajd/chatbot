@@ -30,6 +30,12 @@ docker compose up --build
 - operator panel: `http://localhost:8000/operator?token=demo-operator-token`
 - healthcheck: `http://localhost:8000/health`
 
+Остановить:
+
+```bash
+docker compose down
+```
+
 ## Локально без Docker
 
 ```bash
@@ -58,6 +64,9 @@ python3 -m uvicorn app.main:app --reload --port 8000
   defer
 ></script>
 ```
+
+Для клиента меняется только `data-company-id` и домен backend-а. Если `company_id`
+указан с ошибкой, bootstrap вернёт `404`, а виджет не запустится на чужой базе.
 
 ## Основной flow
 
@@ -164,3 +173,139 @@ python3 backend/scripts/validate_kb.py backend/data/clients/new_client
 ```
 
 Старые файлы `backend/data/company.yaml`, `services.json`, `prices.json`, `faq.md` остаются fallback для demo.
+
+## Как добавить клиента
+
+1. Скопировать шаблон:
+
+```bash
+cp -R backend/data/client_template/sample_client backend/data/clients/client_id
+```
+
+2. В `backend/data/clients/client_id/company.yaml` поменять:
+
+```yaml
+company_id: client_id
+company_name: Название клиента
+city: Город
+website_url: https://client-site.example
+telegram_url: https://t.me/client
+lead_webhook_url:
+```
+
+3. Заполнить `services.json`, `prices.json`, `faq.md`.
+
+4. Проверить базу:
+
+```bash
+python3 backend/scripts/validate_kb.py backend/data/clients/client_id
+```
+
+5. Перезапустить backend, если он уже был запущен:
+
+```bash
+docker compose down
+docker compose up --build
+```
+
+Сейчас KB грузится при старте backend-а. Файлы лежат volume-ом, поэтому пересобирать
+образ из-за данных не обязательно, но процесс нужно перезапустить.
+
+## Лиды и доставка
+
+Лиды пишутся локально:
+
+```text
+backend/logs/leads.jsonl
+```
+
+Доставка в Telegram/webhook идёт через outbox:
+
+```text
+backend/logs/delivery_outbox.jsonl
+```
+
+Проверить outbox:
+
+```bash
+curl -s "http://localhost:8000/api/delivery/outbox?token=demo-operator-token"
+```
+
+Повторить due-доставки:
+
+```bash
+curl -s -X POST "http://localhost:8000/api/delivery/retry?token=demo-operator-token"
+```
+
+Webhook клиента указывается в `lead_webhook_url`. При отправке backend добавляет
+headers `X-Delivery-ID` и `X-Company-ID`, чтобы принимающая сторона могла
+дедуплицировать повторы.
+
+## Аналитика
+
+Простая сводка:
+
+```bash
+curl -s "http://localhost:8000/api/analytics/summary?token=demo-operator-token"
+```
+
+По одному клиенту:
+
+```bash
+curl -s "http://localhost:8000/api/analytics/summary?company_id=client_id&token=demo-operator-token"
+```
+
+Сейчас это lightweight-аналитика по in-memory sessions и jsonl-логам: лиды,
+operator requests, unknown questions, medical handoffs. Это не BI и не dashboard.
+
+## Production notes
+
+Минимальная схема:
+
+```text
+client site -> widget.js -> https://api.your-domain.example -> FastAPI container
+```
+
+Что поменять перед реальным клиентом:
+
+- заменить `OPERATOR_TOKEN`;
+- настроить `ALLOWED_ORIGINS`;
+- поставить реальные `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` или `lead_webhook_url`;
+- подключить домен и HTTPS через nginx/reverse proxy;
+- не коммитить `.env`, `backend/logs/*.jsonl`, `backend/data/clients/*`.
+
+Пример nginx-конфига лежит в `deploy/nginx.chat-widget.example.conf`.
+
+## Быстрая диагностика
+
+Backend жив:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Bootstrap клиента:
+
+```bash
+curl "http://localhost:8000/api/widget/bootstrap?company_id=rosh_demo"
+```
+
+Логи контейнера:
+
+```bash
+docker compose logs -f backend
+```
+
+Если виджет не появляется:
+
+- проверить `data-company-id`;
+- проверить, что bootstrap не возвращает `404`;
+- проверить `ALLOWED_ORIGINS`;
+- открыть browser console на сайте клиента.
+
+Если лид не дошёл:
+
+- проверить `backend/logs/leads.jsonl`;
+- проверить `/api/delivery/outbox`;
+- если статус `failed`, посмотреть `last_error`;
+- после исправления webhook/Telegram запустить `/api/delivery/retry`.

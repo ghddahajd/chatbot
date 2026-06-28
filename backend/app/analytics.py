@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .models import PolicyAction, PolicyReason, PolicyResult, Session
+from .utils.jsonl import read_jsonl
 
 
 UNKNOWN_REASONS = {
@@ -16,23 +17,6 @@ UNKNOWN_REASONS = {
     PolicyReason.PRICE_QUESTION_NO_SERVICE,
     PolicyReason.SIMILAR_SERVICES_FOUND,
 }
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-
-    items: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            items.append(payload)
-    return items
 
 
 class AnalyticsService:
@@ -115,12 +99,12 @@ class AnalyticsService:
         ]
         leads = [
             lead
-            for lead in _read_jsonl(self.leads_file)
+            for lead in read_jsonl(self.leads_file)
             if company_id is None or lead.get("company_id") == company_id
         ]
         events = [
             event
-            for event in _read_jsonl(self.analytics_file)
+            for event in read_jsonl(self.analytics_file)
             if company_id is None or event.get("company_id") == company_id
         ]
 

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -18,6 +17,8 @@ REQUIRED_KB_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
 
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(REPO_ROOT))
+
+from app.utils.jsonl import read_jsonl  # noqa: E402
 
 
 class SmokeRunner:
@@ -111,16 +112,6 @@ def _configure_env(temp_dir: Path, clients_dir: Path) -> None:
             "OPERATOR_TOKEN": "demo-operator-token",
         }
     )
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    items = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            items.append(json.loads(line))
-    return items
 
 
 def main() -> int:
@@ -225,7 +216,7 @@ def main() -> int:
                         },
                     ).status_code
                     == 200
-                    and _read_jsonl(temp_dir / "leads.jsonl")[-1].get("company_id") == "rosh_demo"
+                    and read_jsonl(temp_dir / "leads.jsonl")[-1].get("company_id") == "rosh_demo"
                 ),
             )
             runner.check(

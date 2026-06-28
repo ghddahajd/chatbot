@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from .delivery import DeliveryService
 from .models import Lead
+from .utils.jsonl import append_jsonl
+
+if TYPE_CHECKING:
+    from .delivery import DeliveryService
 
 
-def _lead_to_payload(lead: Lead) -> dict[str, Any]:
+def lead_to_payload(lead: Lead) -> dict[str, Any]:
     return {
         "timestamp": lead.timestamp.isoformat(),
         "company_id": lead.company_id,
@@ -34,9 +36,7 @@ class LeadService:
         self.delivery_service = delivery_service
 
     async def save(self, lead: Lead) -> None:
-        self.leads_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.leads_file.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(_lead_to_payload(lead), ensure_ascii=False) + "\n")
+        append_jsonl(self.leads_file, lead_to_payload(lead))
 
         if self.delivery_service is not None:
             await self.delivery_service.enqueue_lead(lead)

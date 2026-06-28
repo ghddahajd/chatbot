@@ -14,7 +14,9 @@ from uuid import uuid4
 import httpx
 
 from .knowledge import KnowledgeBaseResolver
+from .leads import lead_to_payload
 from .models import Lead
+from .utils.jsonl import read_jsonl
 
 
 logger = logging.getLogger(__name__)
@@ -40,18 +42,6 @@ def _parse_datetime(value: Any) -> Optional[datetime]:
         return None
 
 
-def _lead_payload(lead: Lead) -> dict[str, Any]:
-    return {
-        "timestamp": lead.timestamp.isoformat(),
-        "company_id": lead.company_id,
-        "session_id": lead.session_id,
-        "name": lead.name,
-        "phone": lead.phone,
-        "summary": lead.summary,
-        "service_id": lead.service_id,
-    }
-
-
 def _telegram_text(payload: dict[str, Any]) -> str:
     message = (
         "Новый лид\n"
@@ -64,23 +54,6 @@ def _telegram_text(payload: dict[str, Any]) -> str:
     if payload.get("service_id"):
         message += f"\nУслуга: {payload.get('service_id')}"
     return message
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-
-    items: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            items.append(payload)
-    return items
 
 
 class DeliveryService:
@@ -115,7 +88,7 @@ class DeliveryService:
                 "attempts": 0,
                 "next_attempt_at": _iso(_utcnow()),
                 "target": destination.get("target"),
-                "payload": _lead_payload(lead),
+                "payload": lead_to_payload(lead),
                 "last_error": None,
                 "response_status": None,
             }
@@ -284,7 +257,7 @@ class DeliveryService:
 
     def _latest_records(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
-        for record in _read_jsonl(self.outbox_file):
+        for record in read_jsonl(self.outbox_file):
             delivery_id = str(record.get("delivery_id") or "")
             if delivery_id:
                 latest[delivery_id] = record

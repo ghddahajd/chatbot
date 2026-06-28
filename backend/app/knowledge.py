@@ -8,6 +8,7 @@ import re
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import yaml
 
@@ -29,6 +30,34 @@ def normalize_text(value: str) -> str:
 
 def _tokens(value: str) -> list[str]:
     return [token for token in normalize_text(value).split() if token]
+
+
+def hostname_from_origin(value: str | None) -> str | None:
+    """достаёт hostname из origin/referer/domain строки."""
+
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    if parsed.hostname:
+        return parsed.hostname.lower().rstrip(".")
+
+    parsed = urlparse(f"//{value}")
+    if parsed.hostname:
+        return parsed.hostname.lower().rstrip(".")
+
+    return value.split("/", 1)[0].split(":", 1)[0].lower().rstrip(".") or None
+
+
+def normalize_domain(value: str) -> str:
+    return (hostname_from_origin(value) or value).strip().lower().rstrip(".")
+
+
+def domain_matches(hostname: str, allowed_domain: str) -> bool:
+    normalized_domain = normalize_domain(allowed_domain)
+    if not normalized_domain:
+        return False
+    return hostname == normalized_domain or hostname.endswith(f".{normalized_domain}")
 
 
 def _token_prefix_match(left: str, right: str) -> bool:
@@ -188,6 +217,15 @@ class KnowledgeBase:
         }
 
 
+class DuplicateDomainError(Exception):
+    """домен совпал с несколькими клиентами."""
+
+    def __init__(self, domain: str, company_ids: list[str]) -> None:
+        super().__init__(f"duplicate domain: {domain} matched {company_ids}")
+        self.domain = domain
+        self.company_ids = company_ids
+
+
 class KnowledgeBaseResolver:
     """выбирает базу знаний по company_id с fallback для старого demo-flow."""
 
@@ -204,6 +242,8 @@ class KnowledgeBaseResolver:
         self.default_company_id = default_company_id
         self._cache: dict[str, KnowledgeBase] = {}
         self._legacy_cache: Optional[KnowledgeBase] = None
+        self._domain_index: dict[str, list[str]] = {}
+        self._domain_index_built = False
 
     def _client_dir(self, company_id: str) -> Path:
         clean_company_id = company_id.strip()
@@ -223,6 +263,55 @@ class KnowledgeBaseResolver:
         if self._legacy_cache is None:
             self._legacy_cache = KnowledgeBase.load(self.data_dir, self.defaults_data_dir)
         return self._legacy_cache
+
+    def build_domain_index(self) -> dict[str, list[str]]:
+        """строит индекс allowed_domains -> company_id для автодетекта."""
+
+        index: dict[str, list[str]] = {}
+        clients_root = self.clients_data_dir
+        if not clients_root.exists() or not clients_root.is_dir():
+            self._domain_index = index
+            self._domain_index_built = True
+            return index
+
+        for client_dir in clients_root.iterdir():
+            if not client_dir.is_dir() or not self.client_exists(client_dir.name):
+                continue
+            try:
+                knowledge_base = self.get(client_dir.name, fallback=False)
+            except KeyError:
+                continue
+            for domain in knowledge_base.company.allowed_domains:
+                normalized_domain = normalize_domain(domain)
+                if normalized_domain:
+                    index.setdefault(normalized_domain, []).append(knowledge_base.company.company_id)
+
+        self._domain_index = {
+            domain: sorted(set(company_ids))
+            for domain, company_ids in index.items()
+        }
+        self._domain_index_built = True
+        return self._domain_index
+
+    def find_tenant_by_domain(self, origin: str | None) -> str | None:
+        """находит company_id по Origin/Referer через allowed_domains клиентов."""
+
+        hostname = hostname_from_origin(origin)
+        if not hostname:
+            return None
+        if not self._domain_index_built:
+            self.build_domain_index()
+
+        matched_ids: set[str] = set()
+        for domain, company_ids in self._domain_index.items():
+            if domain_matches(hostname, domain):
+                matched_ids.update(company_ids)
+
+        if len(matched_ids) > 1:
+            raise DuplicateDomainError(hostname, sorted(matched_ids))
+        if not matched_ids:
+            return None
+        return next(iter(matched_ids))
 
     def client_exists(self, company_id: str) -> bool:
         company_id = company_id.strip()

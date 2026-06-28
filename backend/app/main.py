@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
         defaults_data_dir=settings.defaults_data_dir,
         default_company_id=settings.default_company_id,
     )
+    app.state.knowledge_base_resolver.build_domain_index()
     app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
     app.state.session_store = SessionStore()
     app.state.delivery_service = DeliveryService(

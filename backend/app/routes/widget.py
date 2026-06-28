@@ -1,69 +1,58 @@
 """роуты публичной настройки виджета."""
 
-from urllib.parse import urlparse
+import logging
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 
-from ..models import CompanyConfig, WidgetBootstrapResponse
+from ..knowledge import DuplicateDomainError, domain_matches, hostname_from_origin
+from ..models import WidgetBootstrapResponse
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/widget", tags=["widget"])
 
 
-def _hostname_from_origin(value: str | None) -> str | None:
-    if not value:
-        return None
-
-    parsed = urlparse(value)
-    if parsed.hostname:
-        return parsed.hostname.lower()
-
-    parsed = urlparse(f"//{value}")
-    if parsed.hostname:
-        return parsed.hostname.lower()
-
-    return value.split("/", 1)[0].split(":", 1)[0].lower() or None
-
-
-def _normalize_domain(value: str) -> str:
-    return (_hostname_from_origin(value) or value).strip().lower().rstrip(".")
-
-
-def _is_domain_allowed(hostname: str, allowed_domain: str) -> bool:
-    normalized_domain = _normalize_domain(allowed_domain)
-    if not normalized_domain:
-        return False
-    return hostname == normalized_domain or hostname.endswith(f".{normalized_domain}")
-
-
-def check_origin(origin: str | None, company: CompanyConfig, dev_mode: bool) -> bool:
+def check_origin(origin: str | None, company_domains: list[str], dev_mode: bool) -> bool:
     if not origin:
         return dev_mode
 
-    hostname = _hostname_from_origin(origin)
+    hostname = hostname_from_origin(origin)
     if not hostname:
         return False
 
     if dev_mode and hostname in {"localhost", "127.0.0.1", "0.0.0.0"}:
         return True
 
-    return any(_is_domain_allowed(hostname, domain) for domain in company.allowed_domains)
+    return any(domain_matches(hostname, domain) for domain in company_domains)
 
 
 @router.get("/bootstrap", response_model=WidgetBootstrapResponse)
 async def bootstrap_widget(
     request: Request,
-    company_id: str = Query(..., min_length=1),
+    company_id: Optional[str] = Query(default=None, min_length=1),
+    x_company_id: Optional[str] = Header(default=None),
 ) -> WidgetBootstrapResponse:
     resolver = request.app.state.knowledge_base_resolver
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    resolved_company_id = company_id or x_company_id
+
+    if not resolved_company_id:
+        try:
+            resolved_company_id = resolver.find_tenant_by_domain(origin)
+        except DuplicateDomainError as error:
+            logger.warning("duplicate domain: %s matched %s", error.domain, error.company_ids)
+            raise HTTPException(status_code=409, detail="Duplicate domain configuration") from error
+        if not resolved_company_id:
+            raise HTTPException(status_code=404, detail="Unknown company")
+
     try:
-        knowledge_base = resolver.get(company_id, fallback=False)
+        knowledge_base = resolver.get(resolved_company_id, fallback=False)
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Unknown company") from error
 
     company = knowledge_base.company
-    origin = request.headers.get("origin") or request.headers.get("referer")
-    if not check_origin(origin, company, request.app.state.settings.dev_mode):
+    if not check_origin(origin, company.allowed_domains, request.app.state.settings.dev_mode):
         raise HTTPException(status_code=403, detail="Domain not allowed")
 
     return WidgetBootstrapResponse(

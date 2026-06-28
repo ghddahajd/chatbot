@@ -1,6 +1,6 @@
 (function () {
   const SCRIPT = document.currentScript;
-  const COMPANY_ID = (SCRIPT && SCRIPT.dataset.companyId) || "rosh_demo";
+  const EMBED_COMPANY_ID = (SCRIPT && SCRIPT.dataset.companyId) || "";
   const API_BASE =
     (SCRIPT && SCRIPT.dataset.apiBase) ||
     (SCRIPT && new URL(SCRIPT.src, window.location.href).origin) ||
@@ -17,8 +17,6 @@
 
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
-
-  const STORAGE_KEY = "ai-chat-widget-session-id:" + COMPANY_ID;
 
   const template = document.createElement("template");
   template.innerHTML = `
@@ -421,7 +419,8 @@
         open: false,
         sending: false,
         status: STATUS.AI_ACTIVE,
-        sessionId: window.localStorage.getItem(STORAGE_KEY) || "",
+        companyId: "",
+        sessionId: "",
         ws: null,
         typingNode: null,
         typingStartedAt: 0,
@@ -441,6 +440,10 @@
         composer: this.shadow.querySelector(".composer"),
         closedNote: this.shadow.querySelector(".closed-note"),
       };
+    }
+
+    storageKey() {
+      return "ai-chat-widget-session-id:" + this.state.companyId;
     }
 
     connectedCallback() {
@@ -463,6 +466,12 @@
     }
 
     async restoreSession() {
+      if (!this.state.companyId) {
+        this.applyState(STATUS.UNAVAILABLE);
+        return;
+      }
+
+      this.state.sessionId = window.localStorage.getItem(this.storageKey()) || "";
       if (!this.state.sessionId) {
         this.applyState(STATUS.AI_ACTIVE);
         return;
@@ -476,7 +485,7 @@
           return;
         }
         const payload = await response.json();
-        if (payload.company_id !== COMPANY_ID) {
+        if (payload.company_id !== this.state.companyId) {
           this.resetLocalSession();
           this.applyState(STATUS.AI_ACTIVE);
           return;
@@ -493,11 +502,15 @@
 
     async bootstrap() {
       try {
-        const response = await fetch(
-          API_BASE + "/api/widget/bootstrap?company_id=" + encodeURIComponent(COMPANY_ID)
-        );
+        const bootstrapUrl = new URL(API_BASE + "/api/widget/bootstrap");
+        if (EMBED_COMPANY_ID) {
+          bootstrapUrl.searchParams.set("company_id", EMBED_COMPANY_ID);
+        }
+        const response = await fetch(bootstrapUrl.toString());
         if (!response.ok) throw new Error("Widget bootstrap failed");
-        await response.json();
+        const payload = await response.json();
+        this.state.companyId = payload.company_id || EMBED_COMPANY_ID;
+        if (!this.state.companyId) throw new Error("Widget company is not resolved");
         await this.restoreSession();
       } catch (error) {
         this.markUnavailable();
@@ -680,6 +693,7 @@
       if (
         !text ||
         this.state.sending ||
+        !this.state.companyId ||
         this.state.status === STATUS.CLOSED ||
         this.state.status === STATUS.UNAVAILABLE
       ) {
@@ -706,7 +720,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             session_id: this.state.sessionId || null,
-            company_id: COMPANY_ID,
+            company_id: this.state.companyId,
             message: text,
           }),
         });
@@ -716,7 +730,7 @@
         await this.hideTyping();
         if (payload.session_id) {
           this.state.sessionId = payload.session_id;
-          window.localStorage.setItem(STORAGE_KEY, payload.session_id);
+          window.localStorage.setItem(this.storageKey(), payload.session_id);
         }
         this.applyState(payload.status);
         if (payload.answer) {
@@ -802,14 +816,18 @@
     }
 
     resetLocalSession() {
+      if (this.state.companyId) {
+        window.localStorage.removeItem(this.storageKey());
+      }
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;
-      window.localStorage.removeItem(STORAGE_KEY);
     }
 
     markUnavailable() {
+      if (this.state.companyId) {
+        window.localStorage.removeItem(this.storageKey());
+      }
       this.state.sessionId = "";
-      window.localStorage.removeItem(STORAGE_KEY);
       if (this.state.ws) {
         this.state.ws.close();
         this.state.ws = null;

@@ -46,6 +46,8 @@ python3 -m uvicorn app.main:app --reload --port 8000
 
 ## Как встроить виджет
 
+Явный вариант:
+
 ```html
 <script
   src="http://localhost:8000/static/widget.js"
@@ -53,6 +55,18 @@ python3 -m uvicorn app.main:app --reload --port 8000
   defer
 ></script>
 ```
+
+Автодетект по домену:
+
+```html
+<script
+  src="http://localhost:8000/static/widget.js"
+  defer
+></script>
+```
+
+Во втором варианте backend сам найдёт клиента по `Origin` / `Referer` и
+`allowed_domains` в `company.yaml`.
 
 Если backend живёт на другом домене, можно передать base URL:
 
@@ -65,8 +79,9 @@ python3 -m uvicorn app.main:app --reload --port 8000
 ></script>
 ```
 
-Для клиента меняется только `data-company-id` и домен backend-а. Если `company_id`
-указан с ошибкой, bootstrap вернёт `404`, а виджет не запустится на чужой базе.
+Если `company_id` указан с ошибкой, bootstrap вернёт `404`, а виджет не
+запустится на чужой базе. Если `data-company-id` не указан и домен не найден
+в `allowed_domains`, bootstrap тоже вернёт `404`.
 
 ## Домены клиента
 
@@ -87,6 +102,8 @@ Bootstrap проверяет `Origin`, а если его нет — `Referer`.
 - `DEV_MODE=false`: запросы без `Origin` запрещены;
 - домен должен совпасть с `allowed_domains` или быть его поддоменом;
 - если домен не разрешён, `/api/widget/bootstrap` вернёт `403 Domain not allowed`.
+- если один домен прописан у двух клиентов, `/api/widget/bootstrap` без
+  `company_id` вернёт `409 Duplicate domain configuration`.
 
 Для тестового сайта на `localhost:5500` достаточно держать `localhost` в
 `allowed_domains`. Для продакшена поставить:
@@ -95,6 +112,13 @@ Bootstrap проверяет `Origin`, а если его нет — `Referer`.
 DEV_MODE=false
 ALLOWED_ORIGINS=https://clinic.example,https://www.clinic.example
 ```
+
+`allowed_domains` и `ALLOWED_ORIGINS` — разные уровни:
+
+- `allowed_domains` в `company.yaml` говорит, какой клиент привязан к сайту;
+- `ALLOWED_ORIGINS` в `.env` разрешает браузеру делать CORS-запросы к backend.
+
+Для автодетекта нужны оба.
 
 ## Основной flow
 

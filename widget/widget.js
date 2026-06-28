@@ -840,10 +840,13 @@
 
     connectWebSocket() {
       if (!this.state.sessionId) return;
+      if (!this.state.companyId) return;
       if (this.state.ws && this.state.ws.readyState <= 1) return;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      this.state.ws = new WebSocket(protocol + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
+      const wsUrl = new URL(protocol + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
+      wsUrl.searchParams.set("company_id", this.state.companyId);
+      this.state.ws = new WebSocket(wsUrl.toString());
 
       this.state.ws.addEventListener("message", (event) => {
         try {

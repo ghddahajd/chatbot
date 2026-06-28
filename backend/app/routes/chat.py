@@ -1,6 +1,7 @@
 """api-роуты чата."""
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from ..leads import build_lead_from_contact
 from ..policy import classify_and_extract
@@ -61,12 +62,15 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/message", response_model=ChatMessageResponse)
-async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMessageResponse:
+async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMessageResponse | JSONResponse:
     session_store = request.app.state.session_store
     try:
-        knowledge_base = request.app.state.knowledge_base_resolver.get(payload.company_id)
-    except KeyError as error:
-        raise HTTPException(status_code=404, detail="Unknown company") from error
+        knowledge_base = request.app.state.knowledge_base_resolver.get(payload.company_id, fallback=False)
+    except KeyError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "unknown_company", "detail": "Use widget bootstrap first"},
+        )
     lead_service = request.app.state.lead_service
     analytics_service = request.app.state.analytics_service
 

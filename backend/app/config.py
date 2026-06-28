@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
     analytics_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "analytics.jsonl")
+    delivery_outbox_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "delivery_outbox.jsonl")
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")
     demo_dir: Path = Field(default_factory=lambda: PROJECT_DIR / "demo")
 

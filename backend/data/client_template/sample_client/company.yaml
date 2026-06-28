@@ -6,6 +6,7 @@ phone: "+7 000 000-00-00"
 address: "Адрес уточняется"
 website_url: "https://example.com"
 telegram_url: "https://t.me/example"
+lead_webhook_url:
 allowed_topics:
   - "услуги"
   - "цены"

@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
-
+from .delivery import DeliveryService
 from .models import Lead
-
-
-logger = logging.getLogger(__name__)
 
 
 def _lead_to_payload(lead: Lead) -> dict[str, Any]:
@@ -28,47 +23,23 @@ def _lead_to_payload(lead: Lead) -> dict[str, Any]:
 
 
 class LeadService:
-    """сохраняет лиды локально и опционально отправляет их в telegram."""
+    """сохраняет лиды локально и ставит доставку в outbox."""
 
     def __init__(
         self,
         leads_file: Path,
-        telegram_bot_token: str = "",
-        telegram_chat_id: str = "",
+        delivery_service: Optional[DeliveryService] = None,
     ) -> None:
         self.leads_file = leads_file
-        self.telegram_bot_token = telegram_bot_token
-        self.telegram_chat_id = telegram_chat_id
+        self.delivery_service = delivery_service
 
     async def save(self, lead: Lead) -> None:
         self.leads_file.parent.mkdir(parents=True, exist_ok=True)
         with self.leads_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(_lead_to_payload(lead), ensure_ascii=False) + "\n")
 
-        if self.telegram_bot_token and self.telegram_chat_id:
-            await self._send_telegram(lead)
-
-    async def _send_telegram(self, lead: Lead) -> None:
-        message = (
-            "Новый лид\n"
-            f"Клиент: {lead.company_id}\n"
-            f"Имя: {lead.name}\n"
-            f"Телефон: {lead.phone}\n"
-            f"Сессия: {lead.session_id}\n"
-            f"Запрос: {lead.summary}"
-        )
-        if lead.service_id:
-            message += f"\nУслуга: {lead.service_id}"
-
-        url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-        payload = {"chat_id": self.telegram_chat_id, "text": message}
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                await client.post(url, json=payload)
-        except httpx.HTTPError as error:
-            logger.warning("telegram lead notification failed error=%s", type(error).__name__)
-            return
+        if self.delivery_service is not None:
+            await self.delivery_service.enqueue_lead(lead)
 
 
 def build_lead_from_contact(

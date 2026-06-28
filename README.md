@@ -211,6 +211,66 @@ docker compose up --build
 Сейчас KB грузится при старте backend-а. Файлы лежат volume-ом, поэтому пересобирать
 образ из-за данных не обязательно, но процесс нужно перезапустить.
 
+## Черновик KB из материалов клиента
+
+Если клиент прислал сайт/тексты, сначала делаем draft в ignored-папке `new/`,
+а не сразу в боевые `backend/data/clients/`:
+
+```bash
+python3 backend/scripts/create_kb_draft.py \
+  --company-id client_id \
+  --company-name "Название клиента" \
+  --city "Москва" \
+  --phone "+7 000 000-00-00" \
+  --website-url "https://client-site.example" \
+  --source "https://client-site.example/services" \
+  --source "./materials/client-faq.md"
+```
+
+Результат:
+
+```text
+new/kb_drafts/client_id/
+├── company.yaml
+├── services.json
+├── prices.json
+├── faq.md
+└── REVIEW.md
+```
+
+Важно: draft не публикуется автоматически. Его нужно вручную проверить, убрать
+лишнее из `faq.md`, заполнить реальные `services.json` / `prices.json`, затем
+прогнать проверки.
+
+Проверить структуру:
+
+```bash
+python3 backend/scripts/validate_kb.py new/kb_drafts/client_id
+```
+
+Прогнать типовые вопросы без Docker:
+
+```bash
+cd backend && pip install -r requirements.txt
+cd ..
+python3 backend/scripts/simulate_kb.py new/kb_drafts/client_id
+```
+
+Свои вопросы:
+
+```bash
+python3 backend/scripts/simulate_kb.py new/kb_drafts/client_id \
+  --question "покажи услуги" \
+  --question "сколько стоит консультация" \
+  --question "есть ботокс?"
+```
+
+Только после review draft можно копировать:
+
+```bash
+cp -R new/kb_drafts/client_id backend/data/clients/client_id
+```
+
 ## Лиды и доставка
 
 Лиды пишутся локально:

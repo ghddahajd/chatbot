@@ -7,6 +7,9 @@ address: "Адрес уточняется"
 website_url: "https://example.com"
 telegram_url: "https://t.me/example"
 lead_webhook_url:
+allowed_domains:
+  - localhost
+  - example.com
 allowed_topics:
   - "услуги"
   - "цены"

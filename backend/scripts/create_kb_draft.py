@@ -9,6 +9,7 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 
@@ -58,6 +59,12 @@ def _yaml_value(value: str | None) -> str:
     return f'"{escaped}"'
 
 
+def _domain_from_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    return urlparse(value).hostname
+
+
 def _read_source(source: str) -> tuple[str, str]:
     if source.startswith(("http://", "https://")):
         request = Request(source, headers={"User-Agent": "chat-widget-kb-onboarding/1.0"})
@@ -97,6 +104,13 @@ def _update_company_yaml(
     telegram_url: str | None,
     lead_webhook_url: str | None,
 ) -> None:
+    allowed_domains = ['  - "localhost"']
+    website_domain = _domain_from_url(website_url)
+    if website_domain:
+        allowed_domains.append(f'  - "{website_domain}"')
+        if not website_domain.startswith("www."):
+            allowed_domains.append(f'  - "www.{website_domain}"')
+
     lines = [
         f"company_id: {company_id}",
         f"company_name: {_yaml_value(company_name)}",
@@ -107,6 +121,8 @@ def _update_company_yaml(
         f"website_url: {_yaml_value(website_url)}",
         f"telegram_url: {_yaml_value(telegram_url)}",
         f"lead_webhook_url: {_yaml_value(lead_webhook_url)}",
+        "allowed_domains:",
+        *allowed_domains,
         "allowed_topics:",
         '  - "услуги"',
         '  - "цены"',
@@ -165,7 +181,7 @@ def _write_review(path: Path, company_id: str) -> None:
             [
                 f"# Review checklist: {company_id}",
                 "",
-                "- [ ] `company.yaml`: город, контакты, ссылки, webhook проверены.",
+                "- [ ] `company.yaml`: город, контакты, ссылки, webhook и allowed_domains проверены.",
                 "- [ ] `services.json`: нет услуг, которых клиент реально не оказывает.",
                 "- [ ] `prices.json`: цены предварительные и привязаны к service_id.",
                 "- [ ] `faq.md`: нет медицинских обещаний, диагнозов и гарантий.",

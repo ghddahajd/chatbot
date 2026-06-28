@@ -68,6 +68,34 @@ python3 -m uvicorn app.main:app --reload --port 8000
 Для клиента меняется только `data-company-id` и домен backend-а. Если `company_id`
 указан с ошибкой, bootstrap вернёт `404`, а виджет не запустится на чужой базе.
 
+## Домены клиента
+
+В `company.yaml` клиента нужно указать сайты, где разрешён embed:
+
+```yaml
+allowed_domains:
+  - clinic.example
+  - www.clinic.example
+  - localhost
+```
+
+Bootstrap проверяет `Origin`, а если его нет — `Referer`.
+
+Правила:
+
+- `DEV_MODE=true`: запросы без `Origin` разрешены, `localhost` разрешён для тестов;
+- `DEV_MODE=false`: запросы без `Origin` запрещены;
+- домен должен совпасть с `allowed_domains` или быть его поддоменом;
+- если домен не разрешён, `/api/widget/bootstrap` вернёт `403 Domain not allowed`.
+
+Для тестового сайта на `localhost:5500` достаточно держать `localhost` в
+`allowed_domains`. Для продакшена поставить:
+
+```env
+DEV_MODE=false
+ALLOWED_ORIGINS=https://clinic.example,https://www.clinic.example
+```
+
 ## Основной flow
 
 ```text
@@ -191,6 +219,10 @@ city: Город
 website_url: https://client-site.example
 telegram_url: https://t.me/client
 lead_webhook_url:
+allowed_domains:
+  - client-site.example
+  - www.client-site.example
+  - localhost
 ```
 
 3. Заполнить `services.json`, `prices.json`, `faq.md`.

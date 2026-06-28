@@ -7,6 +7,10 @@ address: "Москва, адрес уточняется оператором"
 website_url: "https://www.medcenterrosh.ru/"
 telegram_url: "https://t.me/rosh_demo"
 lead_webhook_url:
+allowed_domains:
+  - localhost
+  - medcenterrosh.ru
+  - www.medcenterrosh.ru
 allowed_topics:
   - услуги центра
   - запись на прием

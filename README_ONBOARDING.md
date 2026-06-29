@@ -130,3 +130,47 @@ docker compose restart backend
 - Бот говорит “не вижу в базе” → проверить `services.json` и синонимы услуги.
 - Кнопка Telegram не работает → проверить `telegram_url` в `company.yaml`.
 - Автодетект не работает → домен должен быть уникальным среди всех клиентов.
+
+## Как подключаем клиента за 15 минут
+
+1. Создать KB, примерно 5 минут:
+
+```bash
+cp -r backend/data/clients/_template backend/data/clients/{id}
+```
+
+Заполнить `company.yaml`, `config.yaml`, `services.json`, `prices.json`, `faq.md`.
+
+2. Проверить, примерно 2 минуты:
+
+```bash
+python3 backend/scripts/onboard_client.py {id} --dry-run
+python3 backend/scripts/client_launch_check.py --company={id}
+```
+
+3. Опубликовать и перезапустить, примерно 1 минута:
+
+```bash
+python3 backend/scripts/onboard_client.py {id} --publish
+docker compose restart backend
+```
+
+4. Добавить домен клиента в `.env` → `ALLOWED_ORIGINS`, примерно 1 минута:
+
+```bash
+docker compose restart backend
+```
+
+5. Вставить на сайт, примерно 1 минута:
+
+```html
+<script
+  src="https://your-domain/static/widget.js"
+  data-company-id="{id}"
+  defer
+></script>
+```
+
+6. Финально пройти [CLIENT_LAUNCH_CHECKLIST.md](CLIENT_LAUNCH_CHECKLIST.md), примерно 5 минут.
+
+Итого: клиент работает через 15 минут после получения материалов.

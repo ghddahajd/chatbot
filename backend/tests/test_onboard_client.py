@@ -59,3 +59,54 @@ def test_onboard_client_refuses_existing_without_force(tmp_path: Path) -> None:
     assert first.returncode == 0, first.stderr
     assert second.returncode == 1
     assert "уже существует" in second.stderr
+
+
+def test_onboard_client_dry_run_does_not_publish(tmp_path: Path) -> None:
+    source_dir = tmp_path / "sample_client"
+    clients_dir = tmp_path / "clients"
+    shutil.copytree(BACKEND_DIR / "data" / "client_template" / "sample_client", source_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(BACKEND_DIR / "scripts" / "onboard_client.py"),
+            str(source_dir),
+            "--clients-dir",
+            str(clients_dir),
+            "--api-base",
+            "http://localhost:8000",
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (clients_dir / "sample_client").exists()
+    assert "Dry run: KB валидна" in result.stdout
+    assert "✅ услуг:" in result.stdout
+    assert 'data-company-id="sample_client"' in result.stdout
+    assert "Для публикации запустите без --dry-run" in result.stdout
+
+
+def test_onboard_client_dry_run_reports_invalid_kb(tmp_path: Path) -> None:
+    source_dir = tmp_path / "broken_client"
+    source_dir.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(BACKEND_DIR / "scripts" / "onboard_client.py"),
+            str(source_dir),
+            "--clients-dir",
+            str(tmp_path / "clients"),
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "KB validation failed" in result.stderr

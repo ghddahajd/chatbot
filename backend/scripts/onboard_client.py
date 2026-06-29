@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -75,12 +76,56 @@ def _embed_blocks(api_base: str, company_id: str) -> tuple[str, str]:
     return explicit, autodetect
 
 
+def _json_list_count(path: Path) -> int:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return len(payload) if isinstance(payload, list) else 0
+
+
+def _faq_entry_count(path: Path) -> int:
+    count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            count += 1
+    return count
+
+
+def _print_preview(
+    source_dir: Path,
+    *,
+    company: dict[str, Any],
+    company_id: str,
+    api_base: str,
+) -> None:
+    explicit_embed, autodetect_embed = _embed_blocks(api_base, company_id)
+    allowed_domains = company.get("allowed_domains") or []
+
+    print("Dry run: KB валидна, файлы не копировались.")
+    print(f"✅ company_name: {company.get('company_name')}")
+    print(f"✅ услуг: {_json_list_count(source_dir / 'services.json')}")
+    print(f"✅ цен: {_json_list_count(source_dir / 'prices.json')}")
+    print(f"✅ FAQ записей: {_faq_entry_count(source_dir / 'faq.md')}")
+    if isinstance(allowed_domains, list) and allowed_domains:
+        print("✅ allowed_domains: " + ", ".join(str(domain) for domain in allowed_domains))
+    else:
+        print("✅ allowed_domains: none")
+    print("")
+    print("📋 Explicit embed:")
+    print(explicit_embed)
+    print("")
+    print("📋 Autodetect embed:")
+    print(autodetect_embed)
+    print("")
+    print("Для публикации запустите без --dry-run")
+
+
 def onboard_client(
     source_dir: Path,
     *,
     clients_dir: Path = DEFAULT_CLIENTS_DIR,
     api_base: str = DEFAULT_API_BASE,
     force: bool = False,
+    dry_run: bool = False,
 ) -> Path:
     source_dir = source_dir.resolve()
     errors = validate_kb(source_dir)
@@ -90,6 +135,10 @@ def onboard_client(
     company = _company_payload(source_dir)
     company_id = str(company["company_id"]).strip()
     target_dir = _resolve_target(clients_dir, company_id)
+    if dry_run:
+        _print_preview(source_dir, company=company, company_id=company_id, api_base=api_base)
+        return target_dir
+
     _copy_required_files(source_dir, target_dir, force=force)
 
     target_errors = validate_kb(target_dir)
@@ -133,6 +182,7 @@ def main() -> int:
     )
     parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="Публичный URL backend API")
     parser.add_argument("--force", action="store_true", help="Перезаписать существующего клиента")
+    parser.add_argument("--dry-run", action="store_true", help="Показать preview без публикации файлов")
     args = parser.parse_args()
 
     try:
@@ -141,6 +191,7 @@ def main() -> int:
             clients_dir=args.clients_dir,
             api_base=args.api_base,
             force=args.force,
+            dry_run=args.dry_run,
         )
     except Exception as error:
         print(f"Client onboarding failed: {type(error).__name__}: {error}", file=sys.stderr)

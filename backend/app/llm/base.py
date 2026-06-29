@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 from ..models import Message
+from .classification import IntentClassification
 
 
 class BaseLLMClient(ABC):
@@ -28,6 +29,17 @@ class BaseLLMClient(ABC):
 
         del user_message, known_services
         return {"intent": "service_mention", "service_id": None, "confidence": 0.0}
+
+    async def classify_structured(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+        domain_profile: dict[str, Any] | None = None,
+    ) -> IntentClassification | None:
+        """возвращает новый structured-контракт или none для fallback."""
+
+        del user_message, known_services, domain_profile
+        return None
 
     async def small_talk(self, company_name: str, user_message: str) -> str:
         """возвращает лёгкий разговорный ответ без данных базы знаний."""

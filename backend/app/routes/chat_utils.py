@@ -14,6 +14,7 @@ from ..llm import MockLLMClient
 from ..knowledge import normalize_text
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, PolicyResult, QuickAction, Session
 from ..policy import classify_and_extract
+from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import AFFIRMATIVE_MESSAGES
 
 
@@ -167,41 +168,25 @@ async def resolve_classification(
         return local_result
 
     try:
-        model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
+        structured_result = await request.app.state.llm_client.classify_structured(
+            message,
+            known_services,
+            selected_knowledge_base.domain_profile,
+        )
     except Exception as error:
-        logger.info("classifier_source=local reason=helper_error error=%s", type(error).__name__)
+        logger.info("structured_classifier_source=local reason=helper_error error=%s", type(error).__name__)
         return local_result
 
-    model_intent = str(model_result.get("intent") or "")
-    model_service_id = model_result.get("service_id")
-    local_service_id = local_result.get("service_id")
-    model_confidence = float(model_result.get("confidence") or 0.0)
+    if structured_result is None:
+        try:
+            model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
+        except Exception as error:
+            logger.info("classifier_source=local reason=helper_error error=%s", type(error).__name__)
+            return local_result
+    else:
+        model_result = structured_to_policy_classification(structured_result)
 
-    if local_intent in {"unknown_service", "clarify"}:
-        return local_result
-    if model_intent == "unknown_service":
-        return model_result
-    if local_service_id and not model_service_id:
-        return local_result
-    if (
-        local_intent
-        in {
-            "list_services",
-            "price_question",
-            "medical_advice",
-            "operator_request",
-            "contact_link",
-            "off_topic",
-            "cosmetic_concern",
-            "location_mismatch",
-        }
-        and model_intent in {"small_talk", "service_mention"}
-        and not model_service_id
-    ):
-        return local_result
-    if model_confidence < 0.5 and local_confidence > model_confidence:
-        return local_result
-    return model_result
+    return merge_policy_classifications(local_result, model_result)
 
 
 async def safe_small_talk(request: Request, company_name: str, message: str) -> str:

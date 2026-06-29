@@ -1,6 +1,12 @@
 """абстракция llm-провайдера."""
 
 from .base import BaseLLMClient
+from .classification import (
+    IntentClassification,
+    classification_to_legacy_result,
+    normalize_intent_classification,
+    safe_normalize_intent_classification,
+)
 from .mock import MockLLMClient
 from .openai_compatible import (
     OpenAIClient,

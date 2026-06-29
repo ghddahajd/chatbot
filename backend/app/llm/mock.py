@@ -8,6 +8,7 @@ from typing import Any, Optional
 from ..knowledge import normalize_text
 from ..models import Message
 from .base import BaseLLMClient
+from .classification import IntentClassification, normalize_intent_classification
 from .prompts import (
     DEFAULT_FALLBACK,
     MEDICAL_HANDOFF_FALLBACK,
@@ -279,3 +280,40 @@ class MockLLMClient(BaseLLMClient):
         from ..policy import classify_and_extract
 
         return classify_and_extract(user_message, known_services)
+
+    async def classify_structured(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+        domain_profile: dict[str, Any] | None = None,
+    ) -> IntentClassification | None:
+        del domain_profile
+        from ..policy import classify_and_extract
+
+        legacy_result = classify_and_extract(user_message, known_services)
+        intent = str(legacy_result.get("intent") or "service_mention")
+        service_id = legacy_result.get("service_id")
+        confidence = float(legacy_result.get("confidence") or 0.0)
+        if intent == "medical_advice":
+            raw_result = {
+                "intent": "regulated_advice",
+                "risk": "regulated_advice",
+                "service_match_type": "none",
+                "confidence": confidence,
+                "reason_code": "legacy_medical_advice",
+            }
+        else:
+            raw_result = {
+                "intent": intent,
+                "risk": "off_topic" if intent == "off_topic" else "safe",
+                "service_id": service_id,
+                "service_match_type": "exact" if service_id else "none",
+                "confidence": confidence,
+                "reason_code": f"legacy_{intent}",
+            }
+        known_service_ids = {
+            str(service.get("id"))
+            for service in known_services
+            if service.get("id")
+        }
+        return normalize_intent_classification(raw_result, known_service_ids)

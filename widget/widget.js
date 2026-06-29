@@ -541,15 +541,50 @@
           bootstrapUrl.searchParams.set("company_id", EMBED_COMPANY_ID);
         }
         const response = await fetch(bootstrapUrl.toString());
-        if (!response.ok) throw new Error("Widget bootstrap failed");
+        if (!response.ok) {
+          throw await this.buildBootstrapError(response);
+        }
         const payload = await response.json();
         this.state.companyId = payload.company_id || EMBED_COMPANY_ID;
-        if (!this.state.companyId) throw new Error("Widget company is not resolved");
+        if (!this.state.companyId) {
+          throw new Error("Widget company is not resolved");
+        }
         this.applyWidgetConfig(payload.widget_config || {});
         await this.restoreSession();
       } catch (error) {
-        this.markUnavailable();
+        this.markUnavailable(error);
       }
+    }
+
+    async buildBootstrapError(response) {
+      let detail = "";
+      try {
+        const payload = await response.json();
+        detail = String(payload.detail || payload.error || "");
+      } catch (error) {
+        detail = "";
+      }
+      const error = new Error(detail || "Widget bootstrap failed");
+      error.status = response.status;
+      error.detail = detail;
+      return error;
+    }
+
+    bootstrapErrorMessage(error) {
+      const status = Number(error?.status || 0);
+      if (status === 403) {
+        return "Виджет недоступен: домен не разрешён для этого клиента.";
+      }
+      if (status === 404) {
+        return "Виджет недоступен: клиент не найден. Проверьте company_id.";
+      }
+      if (status === 409) {
+        return "Виджет недоступен: домен привязан к нескольким клиентам.";
+      }
+      if (status >= 500) {
+        return "Сервис чата временно недоступен. Попробуйте позже.";
+      }
+      return "Виджет не запустился. Проверьте код подключения или доступность backend.";
     }
 
     applyWidgetConfig(config) {
@@ -881,7 +916,7 @@
       this.state.status = STATUS.AI_ACTIVE;
     }
 
-    markUnavailable() {
+    markUnavailable(error) {
       if (this.state.companyId) {
         window.localStorage.removeItem(this.storageKey());
       }
@@ -893,7 +928,15 @@
       this.clearQuickActions();
       this.elements.messages.innerHTML = "";
       this.applyState(STATUS.UNAVAILABLE);
-      this.addMessage("system", "Виджет не запустился. Проверьте код подключения или company_id.");
+      this.addMessage("system", this.bootstrapErrorMessage(error));
+      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+        console.warn("[ai-chat-widget] bootstrap failed", {
+          status: error?.status || null,
+          detail: error?.detail || error?.message || null,
+          companyId: EMBED_COMPANY_ID || null,
+          apiBase: API_BASE,
+        });
+      }
     }
 
     connectWebSocket() {

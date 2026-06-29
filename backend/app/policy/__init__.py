@@ -42,6 +42,11 @@ from .rules import (
 )
 
 
+def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
+    value = getattr(knowledge_base, "phrasebook", {}).get(key)
+    return str(value).strip() if value else ""
+
+
 def analyze_message(
     message: str,
     session: Session,
@@ -81,7 +86,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request_cancelled": True,
-                "message_to_user": "Ок, заявку на запись не оформляем. Могу подсказать по услугам, ценам или позвать специалиста.",
+                "message_to_user": "Ок, заявку не оформляем. Могу подсказать по услугам, ценам или позвать менеджера.",
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
@@ -94,7 +99,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": BOOKING_CONTACT_PROMPT,
+                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt") or BOOKING_CONTACT_PROMPT,
             },
             quick_actions=["Оставить телефон", "Позвать оператора"],
         )
@@ -134,7 +139,10 @@ def analyze_message(
             action=PolicyAction.SMALL_TALK,
             reason=PolicyReason.SMALL_TALK,
             confidence=classifier_confidence or 0.9,
-            safe_context={"company_name": knowledge_base.company.company_name},
+            safe_context={
+                "company_name": knowledge_base.company.company_name,
+                "phrasebook": getattr(knowledge_base, "phrasebook", {}),
+            },
         )
 
     if intent == "off_topic":
@@ -143,8 +151,9 @@ def analyze_message(
             reason=PolicyReason.OFF_TOPIC,
             confidence=classifier_confidence or 0.9,
             safe_context={
-                "message_to_user": (
-                    "Это не по моей части — я консультирую по услугам центра. "
+                "message_to_user": _phrase(knowledge_base, "off_topic")
+                or (
+                    "Это не по моей части — я консультирую по услугам компании. "
                     f"{knowledge_base.company.company_name}. Могу подсказать по услугам или ценам."
                 )
             },
@@ -158,7 +167,8 @@ def analyze_message(
             confidence=classifier_confidence or 0.7,
             safe_context={
                 "force_direct_answer": True,
-                "message_to_user": "Не совсем понял. Уточните, пожалуйста, услугу, цену или вопрос для специалиста.",
+                "message_to_user": _phrase(knowledge_base, "clarify")
+                or "Не совсем понял. Уточните, пожалуйста, услугу, цену или вопрос для менеджера.",
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
@@ -226,7 +236,7 @@ def analyze_message(
             confidence=0.98,
             safe_context={
                 "message_to_user": knowledge_base.company.medical_disclaimer,
-                "handoff_message": HANDOFF_MESSAGE,
+                "handoff_message": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE,
             },
             quick_actions=["Позвать оператора", "Оставить телефон"],
         )
@@ -265,7 +275,8 @@ def analyze_message(
             confidence=classifier_confidence or 0.8,
             safe_context={
                 "message_to_user": (
-                    "В базе такой услуги не вижу. Могу показать список услуг или передать вопрос специалисту."
+                    _phrase(knowledge_base, "unknown_service")
+                    or "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
                 )
             },
             quick_actions=["Позвать оператора", "Посмотреть услуги"],
@@ -292,7 +303,10 @@ def analyze_message(
                 reason=PolicyReason.OPERATOR_REQUESTED,
                 service_id=service.id if service else None,
                 confidence=0.9,
-                safe_context={"message_to_user": OPERATOR_SOFT_OFFER_MESSAGE},
+                safe_context={
+                    "message_to_user": _phrase(knowledge_base, "operator_soft_offer")
+                    or OPERATOR_SOFT_OFFER_MESSAGE
+                },
                 quick_actions=[
                     {
                         "label": "Сразу к специалисту",
@@ -311,7 +325,7 @@ def analyze_message(
             reason=PolicyReason.OPERATOR_REQUESTED,
             service_id=service.id if service else None,
             confidence=0.95,
-            safe_context={"message_to_user": HANDOFF_MESSAGE},
+            safe_context={"message_to_user": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE},
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
@@ -326,7 +340,7 @@ def analyze_message(
                 safe_context={
                     "force_direct_answer": True,
                     "booking_request": True,
-                    "message_to_user": "На какую услугу хотите оставить заявку на запись?",
+                    "message_to_user": "На какую услугу хотите оставить заявку?",
                 },
                 quick_actions=service_name_quick_actions(knowledge_base),
             )
@@ -353,7 +367,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": BOOKING_CONTACT_PROMPT,
+                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt") or BOOKING_CONTACT_PROMPT,
             },
             quick_actions=["Оставить телефон", "Позвать оператора"],
         )
@@ -415,7 +429,8 @@ def analyze_message(
                 confidence=0.8,
                 safe_context={
                     "message_to_user": (
-                        "В базе такой услуги не вижу. Могу показать список услуг или передать вопрос специалисту."
+                        _phrase(knowledge_base, "unknown_service")
+                        or "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
                     )
                 },
                 quick_actions=["Позвать оператора", "Посмотреть услуги"],
@@ -430,7 +445,7 @@ def analyze_message(
                 confidence=0.92,
                 safe_context={
                     **context,
-                    "message_to_user": CONTACT_PROMPT,
+                    "message_to_user": _phrase(knowledge_base, "contact_prompt") or CONTACT_PROMPT,
                 },
             )
 
@@ -522,9 +537,10 @@ def analyze_message(
         reason=PolicyReason.OK,
         confidence=classifier_confidence or 0.65,
         safe_context={
-            "message_to_user": (
+            "message_to_user": _phrase(knowledge_base, "clarify")
+            or (
                 "Уточните, пожалуйста, что вас интересует? "
-                "Могу рассказать про услуги, цены или записать к специалисту."
+                "Могу рассказать про услуги, цены или оформить заявку."
             )
         },
         quick_actions=["Посмотреть услуги", "Позвать оператора"],

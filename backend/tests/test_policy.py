@@ -102,3 +102,23 @@ def test_location_inside_company_city_is_not_mismatch(policy_session, knowledge_
     result = _analyze("я из района динамо в москве норм?", policy_session, knowledge_base)
 
     assert result.reason != PolicyReason.LOCATION_MISMATCH
+
+
+def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_base) -> None:
+    result = _analyze("что входит в компьютерная диагностика", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.MEDICAL_ADVICE
+
+
+def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, knowledge_base) -> None:
+    policy_session.messages.append(
+        Message(
+            role=MessageRole.ASSISTANT,
+            text="Чтобы оставить заявку, напишите имя, телефон, автомобиль и удобное время.",
+        )
+    )
+
+    result = _analyze("Иван +7 999 123-45-67", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ASK_CONTACT
+    assert result.reason == PolicyReason.BOOKING_REQUEST

@@ -74,3 +74,34 @@ def test_domain_profile_from_client_config(resolver, managed_env) -> None:
     assert profile["restricted_advice"] == ["medical_treatment", "diagnosis"]
     assert profile["hard_block_topics"] == ["prompt_injection"]
     assert profile["escalation_policy"]["unknown_service"] == "operator"
+
+
+def test_phrasebook_defaults(resolver) -> None:
+    phrasebook = resolver.phrasebook("rosh_demo")
+
+    assert phrasebook["operator_label"] == "менеджер"
+    assert "менеджер" in phrasebook["unknown_service"]
+
+
+def test_phrasebook_from_client_config(resolver, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "phrasebook:",
+                '  operator_label: "мастер"',
+                '  price_disclaimer: "Предварительно, точнее скажет мастер."',
+                '  unknown_service: "Такой работы нет в базе."',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    phrasebook = resolver.phrasebook("rosh_demo")
+    knowledge_base = resolver.get("rosh_demo", fallback=False)
+
+    assert phrasebook["operator_label"] == "мастер"
+    assert phrasebook["price_disclaimer"] == "Предварительно, точнее скажет мастер."
+    assert phrasebook["unknown_service"] == "Такой работы нет в базе."
+    assert knowledge_base.phrasebook["operator_label"] == "мастер"

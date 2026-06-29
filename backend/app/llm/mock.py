@@ -205,6 +205,8 @@ class MockLLMClient(BaseLLMClient):
 
         service = context.get("service") or {}
         price = context.get("price") or {}
+        phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+        price_disclaimer = str(phrasebook.get("price_disclaimer") or PRICE_DISCLAIMER)
         question_type = context.get("question_type")
         all_services = context.get("all_services")
         suggested_services = context.get("suggested_services")
@@ -240,11 +242,11 @@ class MockLLMClient(BaseLLMClient):
             parts.append(f"{service_name} — {short_description}")
         if question_type == "duration":
             if duration:
-                parts.append(f"Длительность: {duration}. {PRICE_DISCLAIMER}")
+                parts.append(f"Длительность: {duration}. {price_disclaimer}")
             else:
                 parts.append("Точную длительность уточнит специалист.")
         elif price.get("price_text"):
-            parts.append(f"Стоимость: {price['price_text']}. {PRICE_DISCLAIMER}")
+            parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
         elif service_name:
             parts.append("Точные детали по стоимости и длительности уточнит специалист.")
 

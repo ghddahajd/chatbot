@@ -58,6 +58,11 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
     question_type = context.get("question_type")
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
     price = context.get("price") if isinstance(context.get("price"), dict) else {}
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    price_disclaimer = str(
+        phrasebook.get("price_disclaimer")
+        or "Предварительно так, точнее сообщит специалист."
+    )
 
     if question_type == "price":
         price_text = str(price.get("price_text") or "")
@@ -151,7 +156,7 @@ def clean_template_answer(context: dict[str, Any]) -> str:
         else:
             parts.append(str(service["name"]))
     if price.get("price_text"):
-        parts.append(f"Стоимость: {price['price_text']}. Предварительно так, точнее сообщит специалист.")
+        parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
     if parts:
         return " ".join(parts)
     return "Уточните, пожалуйста, что вас интересует? Могу рассказать про услуги, цены или записать к специалисту."

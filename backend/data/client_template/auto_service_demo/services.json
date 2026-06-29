@@ -1,0 +1,57 @@
+[
+  {
+    "id": "oil_change",
+    "name": "Замена масла",
+    "category": "Техническое обслуживание",
+    "synonyms": ["масло", "поменять масло", "замена масла в двигателе", "то масло"],
+    "short_description": "Замена моторного масла и масляного фильтра по регламенту автомобиля.",
+    "price_from": 1800,
+    "duration": "от 40 минут",
+    "requires_specialist": true,
+    "source_note": "demo"
+  },
+  {
+    "id": "computer_diagnostics",
+    "name": "Компьютерная диагностика",
+    "category": "Диагностика",
+    "synonyms": ["диагностика", "ошибки", "чек", "check engine", "сканер"],
+    "short_description": "Считывание ошибок электронных блоков и первичная проверка систем автомобиля.",
+    "price_from": 2500,
+    "duration": "30-60 минут",
+    "requires_specialist": true,
+    "source_note": "demo"
+  },
+  {
+    "id": "brake_pads",
+    "name": "Замена тормозных колодок",
+    "category": "Тормозная система",
+    "synonyms": ["колодки", "тормоза", "скрипят тормоза", "замена колодок"],
+    "short_description": "Замена передних или задних тормозных колодок после проверки состояния системы.",
+    "price_from": 2200,
+    "duration": "от 1 часа",
+    "requires_specialist": true,
+    "source_note": "demo"
+  },
+  {
+    "id": "tire_service",
+    "name": "Шиномонтаж",
+    "category": "Колёса",
+    "synonyms": ["шины", "колеса", "колёса", "переобуть", "переобувка", "резина"],
+    "short_description": "Сезонная замена шин, балансировка и базовая проверка колёс.",
+    "price_from": 3200,
+    "duration": "от 45 минут",
+    "requires_specialist": true,
+    "source_note": "demo"
+  },
+  {
+    "id": "suspension_diagnostics",
+    "name": "Диагностика подвески",
+    "category": "Ходовая часть",
+    "synonyms": ["подвеска", "ходовая", "стук", "стучит", "гремит"],
+    "short_description": "Проверка элементов подвески, рулевого управления и ходовой части.",
+    "price_from": 2000,
+    "duration": "от 40 минут",
+    "requires_specialist": true,
+    "source_note": "demo"
+  }
+]

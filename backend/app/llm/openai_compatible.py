@@ -38,9 +38,11 @@ def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
 
     from .prompts import PRICE_DISCLAIMER
 
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    price_disclaimer = str(phrasebook.get("price_disclaimer") or PRICE_DISCLAIMER)
     clean_answer = answer.strip() or DEFAULT_FALLBACK
-    if context.get("question_type") in {"price", "duration"} and PRICE_DISCLAIMER not in clean_answer:
-        return f"{clean_answer} {PRICE_DISCLAIMER}"
+    if context.get("question_type") in {"price", "duration"} and price_disclaimer not in clean_answer:
+        return f"{clean_answer} {price_disclaimer}"
     return clean_answer
 
 
@@ -215,6 +217,8 @@ class OpenAIClient(BaseLLMClient):
         history: list[Message],
     ) -> str:
         context_for_model = self._context_for_model(context)
+        phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+        price_disclaimer = str(phrasebook.get("price_disclaimer") or "")
         history_payload = json.dumps(
             [
                 {
@@ -233,6 +237,7 @@ class OpenAIClient(BaseLLMClient):
                     "role": "system",
                     "content": (
                         f"{system_prompt}\n\n"
+                        f"Клиентская оговорка цены/сроков: {price_disclaimer}\n\n"
                         f"Контекст для ответа:\n{context_for_model}\n\n"
                         f"recent_history JSON:\n{history_payload}"
                     ),

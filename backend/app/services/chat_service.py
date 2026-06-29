@@ -37,6 +37,11 @@ class ChatService:
     def __init__(self, request: Request) -> None:
         self.request = request
 
+    def _phrase(self, key: str, fallback: str) -> str:
+        phrasebook = getattr(self, "_phrasebook", {})
+        value = phrasebook.get(key) if isinstance(phrasebook, dict) else None
+        return str(value).strip() if value else fallback
+
     async def handle_message(
         self,
         *,
@@ -53,6 +58,7 @@ class ChatService:
                 status_code=404,
                 content={"error": "unknown_company", "detail": "Use widget bootstrap first"},
             )
+        self._phrasebook = getattr(knowledge_base, "phrasebook", {})
         lead_service = request.app.state.lead_service
         analytics_service = request.app.state.analytics_service
 
@@ -118,9 +124,9 @@ class ChatService:
                 )
                 await lead_service.save(lead)
                 await session_store.set_lead_requested(session.session_id, True)
-                answer = (
-                    "Спасибо. Передали ваши контакты специалисту. "
-                    "С вами свяжутся для уточнения деталей."
+                answer = self._phrase(
+                    "lead_success",
+                    "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
                 )
                 await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
                 session = await session_store.get(session.session_id)
@@ -191,14 +197,14 @@ class ChatService:
                 lead_created = True
                 await session_store.set_lead_requested(session.session_id, True)
                 if is_booking_request:
-                    answer = (
-                        "Спасибо. Заявку на запись передали. "
-                        "С вами свяжутся, чтобы подтвердить время и детали."
+                    answer = self._phrase(
+                        "booking_success",
+                        "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
                     )
                 else:
-                    answer = (
-                        "Спасибо. Передали ваши контакты специалисту. "
-                        "С вами свяжутся для уточнения деталей."
+                    answer = self._phrase(
+                        "lead_success",
+                        "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
                     )
                 if not is_booking_request and (session.operator_requested or policy_result.service_id is None):
                     await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
@@ -216,7 +222,10 @@ class ChatService:
             answer = str(
                 policy_result.safe_context.get("handoff_message")
                 or policy_result.safe_context.get("message_to_user")
-                or "Передаю диалог специалисту. Оператор увидит историю переписки."
+                or self._phrase(
+                    "handoff_message",
+                    "Передаю диалог менеджеру. Оператор увидит историю переписки.",
+                )
             )
         elif policy_result.action == PolicyAction.CLARIFY:
             direct_clarify_reasons = {

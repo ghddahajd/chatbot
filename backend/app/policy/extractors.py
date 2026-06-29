@@ -159,4 +159,11 @@ def has_booking_contact_prompt(session: Session) -> bool:
             return False
         if message.role == MessageRole.ASSISTANT and BOOKING_CONTACT_PROMPT in message.text:
             return True
+        if (
+            message.role == MessageRole.ASSISTANT
+            and "заявк" in normalized_message
+            and "имя" in normalized_message
+            and "телефон" in normalized_message
+        ):
+            return True
     return False

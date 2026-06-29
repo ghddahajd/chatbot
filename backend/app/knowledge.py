@@ -51,6 +51,24 @@ DEFAULT_DOMAIN_PROFILE = {
         "booking": "lead_then_operator",
     },
 }
+DEFAULT_PHRASEBOOK = {
+    "company_noun": "компания",
+    "service_word": "услуга",
+    "operator_label": "менеджер",
+    "booking_word": "заявка",
+    "price_disclaimer": "Предварительно так, точнее подскажет менеджер после уточнения деталей.",
+    "unknown_service": "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру.",
+    "off_topic": "Это не по моей части — я консультирую по услугам компании. Могу подсказать по услугам или ценам.",
+    "contact_prompt": "Оставьте имя и телефон, и менеджер сможет связаться с вами позже.",
+    "booking_contact_prompt": "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
+    "handoff_message": "Передаю диалог менеджеру. Можете дописать детали, он увидит историю.",
+    "operator_soft_offer": "Могу попробовать помочь здесь — опишите, что вас интересует. Или сразу соединю с менеджером.",
+    "clarify": "Уточните, пожалуйста, что вас интересует? Могу рассказать про услуги, цены или оформить заявку.",
+    "empty_message": "Похоже, сообщение пустое. Напишите вопрос, и я подскажу.",
+    "rate_limit": "Похоже, разговор затянулся. Если остались вопросы — оставьте телефон, мы свяжемся, или попробуйте начать новый диалог.",
+    "lead_success": "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
+    "booking_success": "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
+}
 
 
 def normalize_text(value: str) -> str:
@@ -109,11 +127,13 @@ class KnowledgeBase:
         services: list[Service],
         prices: list[PriceEntry],
         faq_markdown: str,
+        phrasebook: Optional[dict[str, str]] = None,
     ) -> None:
         self.company = company
         self.services = services
         self.prices = prices
         self.faq_markdown = faq_markdown
+        self.phrasebook = phrasebook or dict(DEFAULT_PHRASEBOOK)
 
         self._services_by_id = {service.id: service for service in services}
         self._prices_by_service_id = {price.service_id: price for price in prices}
@@ -247,6 +267,7 @@ class KnowledgeBase:
             "price": price.model_dump() if price else None,
             "faq": self.faq_markdown,
             "disclaimer": self.company.medical_disclaimer,
+            "phrasebook": self.phrasebook,
         }
 
 
@@ -364,10 +385,12 @@ class KnowledgeBaseResolver:
 
         if self.client_exists(target_company_id):
             if target_company_id not in self._cache:
-                self._cache[target_company_id] = KnowledgeBase.load(
+                knowledge_base = KnowledgeBase.load(
                     self._client_dir(target_company_id),
                     self.defaults_data_dir,
                 )
+                knowledge_base.phrasebook = self.phrasebook(target_company_id)
+                self._cache[target_company_id] = knowledge_base
             return self._cache[target_company_id]
 
         if requested_company_id and not CLIENT_ID_PATTERN.fullmatch(requested_company_id):
@@ -386,7 +409,9 @@ class KnowledgeBaseResolver:
         )
         if self.client_exists(self.default_company_id):
             if self.default_company_id not in self._cache:
-                self._cache[self.default_company_id] = KnowledgeBase.load(self._client_dir(self.default_company_id))
+                knowledge_base = KnowledgeBase.load(self._client_dir(self.default_company_id))
+                knowledge_base.phrasebook = self.phrasebook(self.default_company_id)
+                self._cache[self.default_company_id] = knowledge_base
             return self._cache[self.default_company_id]
 
         return self._load_legacy()
@@ -458,6 +483,21 @@ class KnowledgeBaseResolver:
             )
 
         return profile
+
+    def phrasebook(self, company_id: str) -> dict[str, str]:
+        """возвращает user-facing фразы клиента с нейтральными fallback-значениями."""
+
+        phrasebook = dict(DEFAULT_PHRASEBOOK)
+        payload = self._client_config(company_id)
+        raw_phrasebook = payload.get("phrasebook") if isinstance(payload, dict) else None
+        if not isinstance(raw_phrasebook, dict):
+            return phrasebook
+
+        for key in phrasebook:
+            value = raw_phrasebook.get(key)
+            if isinstance(value, str) and value.strip():
+                phrasebook[key] = value.strip()
+        return phrasebook
 
     def _client_config(self, company_id: str) -> dict[str, object]:
         if not self.client_exists(company_id):

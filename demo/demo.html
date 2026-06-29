@@ -8,10 +8,10 @@
       :root {
         color-scheme: light;
         --ink: #1f1f23;
-        --muted: #665e56;
-        --paper: #fffaf2;
-        --line: rgba(107, 68, 42, 0.16);
-        --accent: #c65f32;
+        --muted: #5f6673;
+        --paper: #f8fafc;
+        --line: rgba(15, 23, 42, 0.14);
+        --accent: #d97706;
       }
       * {
         box-sizing: border-box;
@@ -19,11 +19,11 @@
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: Georgia, "Times New Roman", serif;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(circle at top left, rgba(255, 234, 206, 0.9) 0%, rgba(255, 234, 206, 0) 36%),
-          linear-gradient(135deg, #f5efe7 0%, #e9dccd 100%);
+          radial-gradient(circle at top left, rgba(251, 191, 36, 0.22) 0%, rgba(251, 191, 36, 0) 34%),
+          linear-gradient(135deg, #f8fafc 0%, #e2e8f0 48%, #cbd5e1 100%);
       }
       .hero {
         max-width: 1120px;
@@ -37,22 +37,22 @@
         padding: 28px;
         border-radius: 28px;
         border: 1px solid var(--line);
-        background: rgba(255, 250, 242, 0.82);
+        background: rgba(248, 250, 252, 0.88);
         backdrop-filter: blur(10px);
-        box-shadow: 0 25px 70px rgba(85, 52, 27, 0.12);
+        box-shadow: 0 25px 70px rgba(15, 23, 42, 0.14);
       }
       .eyebrow {
         margin: 0 0 10px;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
         font-size: 12px;
         text-transform: uppercase;
         letter-spacing: 0.18em;
-        color: #8d5a3a;
+        color: #b45309;
       }
       h1 {
         margin: 0;
         font-size: clamp(40px, 7vw, 74px);
         line-height: 0.94;
+        letter-spacing: -0.05em;
       }
       .lead {
         max-width: 60ch;
@@ -84,8 +84,8 @@
       .chip {
         padding: 10px 14px;
         border-radius: 999px;
-        background: rgba(198, 95, 50, 0.09);
-        border: 1px solid rgba(198, 95, 50, 0.14);
+        background: rgba(217, 119, 6, 0.1);
+        border: 1px solid rgba(217, 119, 6, 0.18);
         font-family: "Trebuchet MS", "Segoe UI", sans-serif;
         font-size: 14px;
       }
@@ -94,7 +94,7 @@
         padding: 18px;
         border-left: 4px solid var(--accent);
         background: rgba(255, 255, 255, 0.58);
-        color: #554c42;
+        color: #334155;
       }
       @media (max-width: 900px) {
         .card {
@@ -108,16 +108,16 @@
       <section class="card">
         <div>
           <p class="eyebrow">Embeddable MVP</p>
-          <h1>AI chat-widget для медицинского центра</h1>
+          <h1>AI chat-widget для автосервиса</h1>
           <p class="lead">
-            Демо показывает встраиваемый виджет, который отвечает только по knowledge base,
-            не даёт медсоветы, умеет собирать лид и передавать диалог оператору.
+            Демо показывает тот же managed widget в другом домене: СТО, услуги ремонта,
+            цены по базе знаний, запись на сервис и передача мастеру.
           </p>
           <div class="chipset">
             <span class="chip">Vanilla JS + Shadow DOM</span>
             <span class="chip">FastAPI backend</span>
             <span class="chip">WebSocket handoff</span>
-            <span class="chip">MockLLM / Gemini-ready</span>
+            <span class="chip">Domain profile</span>
           </div>
           <div class="note">
             Виджет появится в правом нижнем углу сразу после загрузки страницы.
@@ -126,26 +126,26 @@
         <div class="grid">
           <article class="tile">
             <strong>Сценарии для проверки</strong>
-            Сколько стоит лазерная эпиляция?
+            Сколько стоит замена масла?
           </article>
           <article class="tile">
             <strong>Проверка guard</strong>
-            Что мне пить от акне?
+            Можно ехать, если горит check engine?
           </article>
           <article class="tile">
             <strong>Передача оператору</strong>
-            Позовите оператора
+            Позовите мастера
           </article>
           <article class="tile">
             <strong>Сбор лида</strong>
-            Иван, +7 999 123-45-67, хочу биоревитализацию
+            Иван, +7 999 123-45-67, хочу записаться на диагностику
           </article>
         </div>
       </section>
     </main>
     <script
       src="http://localhost:8000/static/widget.js"
-      data-company-id="test_clinic"
+      data-company-id="auto_service_demo"
       data-api-base="http://localhost:8000"
       defer
     ></script>

@@ -17,6 +17,12 @@ LEGACY_INTENT_BY_RISK = {
     "off_topic": "off_topic",
     "prompt_injection": "off_topic",
 }
+PROTECTED_LOCAL_INTENTS = {
+    "operator_request",
+    "booking_request",
+    "contact_link",
+    "location_mismatch",
+}
 
 
 def structured_to_policy_classification(
@@ -52,11 +58,15 @@ def merge_policy_classifications(
 
     if local_intent == "medical_advice":
         return local_result
-    if model_intent in {"medical_advice", "off_topic", "unknown_service", "location_mismatch"}:
+    if model_intent == "medical_advice":
         return model_result
-    if local_intent in {"unknown_service", "clarify", "location_mismatch"}:
+    if local_intent in PROTECTED_LOCAL_INTENTS and local_confidence >= 0.75:
         return local_result
     if local_service_id and not model_service_id:
+        return local_result
+    if model_intent in {"off_topic", "unknown_service", "location_mismatch"}:
+        return model_result
+    if local_intent in {"unknown_service", "clarify", "location_mismatch"}:
         return local_result
     if (
         local_intent

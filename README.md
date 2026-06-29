@@ -156,6 +156,7 @@ LLM_PROVIDER=openai_compatible
 LLM_API_KEY=your_key
 LLM_BASE_URL=https://your-endpoint.example/v1
 LLM_MODEL=your-model-name
+LLM_USE_STRUCTURED_CLASSIFIER=true
 ```
 
 Ollama локально:
@@ -170,6 +171,7 @@ LLM_PROVIDER=openai_compatible
 LLM_BASE_URL=http://host.docker.internal:11434/v1
 LLM_MODEL=qwen2.5:3b
 LLM_API_KEY=local
+LLM_USE_STRUCTURED_CLASSIFIER=true
 LLM_SKIP_CLASSIFIER_FOR_LOCAL=true
 ```
 

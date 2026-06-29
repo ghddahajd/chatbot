@@ -69,8 +69,30 @@ def find_unsupported_city(normalized_message: str, company_city: str) -> Optiona
     return None
 
 
+def mentions_company_city(normalized_message: str, company_city: str) -> bool:
+    normalized_company_city = normalize_text(company_city)
+    company_city_forms = {
+        city_form
+        for city_form, city_name in KNOWN_CITY_FORMS.items()
+        if normalize_text(city_name) == normalized_company_city
+    }
+    company_city_forms.add(normalized_company_city)
+
+    if contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
+        return False
+
+    for city_form in company_city_forms:
+        if f"не из {city_form}" in normalized_message or f"не в {city_form}" in normalized_message:
+            return False
+        if city_form in normalized_message:
+            return True
+    return False
+
+
 def is_location_mismatch(message: str, normalized_message: str, company_city: str) -> bool:
     normalized_company_city = normalize_text(company_city)
+    if mentions_company_city(normalized_message, company_city):
+        return False
     if contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
         return True
     if find_unsupported_city(normalized_message, company_city):

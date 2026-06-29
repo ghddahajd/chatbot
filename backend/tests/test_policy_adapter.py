@@ -65,6 +65,15 @@ def test_merge_accepts_model_unknown_service_as_safer_result() -> None:
     assert result["intent"] == "unknown_service"
 
 
+def test_merge_accepts_model_unknown_for_price_without_local_service() -> None:
+    result = merge_policy_classifications(
+        {"intent": "price_question", "service_id": None, "confidence": 0.86},
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.91},
+    )
+
+    assert result["intent"] == "unknown_service"
+
+
 def test_merge_keeps_local_service_when_model_loses_it() -> None:
     result = merge_policy_classifications(
         {"intent": "price_question", "service_id": "laser_epilation", "confidence": 0.86},
@@ -72,3 +81,12 @@ def test_merge_keeps_local_service_when_model_loses_it() -> None:
     )
 
     assert result["service_id"] == "laser_epilation"
+
+
+def test_merge_keeps_protected_operator_flow() -> None:
+    result = merge_policy_classifications(
+        {"intent": "operator_request", "service_id": None, "confidence": 0.88},
+        {"intent": "small_talk", "service_id": None, "confidence": 0.92},
+    )
+
+    assert result["intent"] == "operator_request"

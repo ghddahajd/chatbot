@@ -16,6 +16,7 @@ from ..models import Message, MessageRole, PolicyAction, PolicyReason, PolicyRes
 from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import AFFIRMATIVE_MESSAGES
+from ..policy.extractors import mentions_company_city
 
 
 fallback_llm_client = MockLLMClient()
@@ -139,6 +140,21 @@ def contextual_affirmative_response(
     return None
 
 
+def should_ignore_model_location_mismatch(
+    message: str,
+    company_city: str,
+    local_result: dict[str, object],
+    model_result: dict[str, object],
+) -> bool:
+    """не даёт модели считать mismatch фразы вроде 'я в Москве'."""
+
+    if str(model_result.get("intent") or "") != "location_mismatch":
+        return False
+    if str(local_result.get("intent") or "") == "location_mismatch":
+        return False
+    return mentions_company_city(normalize_text(message), company_city)
+
+
 async def resolve_classification(
     message: str,
     request: Request,
@@ -161,21 +177,24 @@ async def resolve_classification(
     if skip_local_classifier is None:
         skip_local_classifier = settings.llm_provider.lower().strip() == "openai_compatible"
     if (
-        settings.llm_provider.lower().strip() == "openai_compatible"
+        not settings.llm_use_structured_classifier
+        and settings.llm_provider.lower().strip() == "openai_compatible"
         and skip_local_classifier
         and local_confidence > 0
     ):
         return local_result
 
-    try:
-        structured_result = await request.app.state.llm_client.classify_structured(
-            message,
-            known_services,
-            selected_knowledge_base.domain_profile,
-        )
-    except Exception as error:
-        logger.info("structured_classifier_source=local reason=helper_error error=%s", type(error).__name__)
-        return local_result
+    structured_result = None
+    if settings.llm_use_structured_classifier:
+        try:
+            structured_result = await request.app.state.llm_client.classify_structured(
+                message,
+                known_services,
+                selected_knowledge_base.domain_profile,
+            )
+        except Exception as error:
+            logger.info("structured_classifier_source=local reason=helper_error error=%s", type(error).__name__)
+            return local_result
 
     if structured_result is None:
         try:
@@ -185,6 +204,14 @@ async def resolve_classification(
             return local_result
     else:
         model_result = structured_to_policy_classification(structured_result)
+
+    if should_ignore_model_location_mismatch(
+        message,
+        selected_knowledge_base.company.city,
+        local_result,
+        model_result,
+    ):
+        return local_result
 
     return merge_policy_classifications(local_result, model_result)
 

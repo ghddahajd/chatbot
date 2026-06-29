@@ -89,3 +89,16 @@ def test_off_topic_bicycle(policy_session, knowledge_base) -> None:
 
     assert result.action == PolicyAction.OFF_TOPIC
     assert result.reason == PolicyReason.OFF_TOPIC
+
+
+def test_off_topic_everyday_topics(policy_session, knowledge_base) -> None:
+    result = _analyze("что круче ps5 или xbox", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.OFF_TOPIC
+    assert result.reason == PolicyReason.OFF_TOPIC
+
+
+def test_location_inside_company_city_is_not_mismatch(policy_session, knowledge_base) -> None:
+    result = _analyze("я из района динамо в москве норм?", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.LOCATION_MISMATCH

@@ -58,20 +58,22 @@
         height: 58px;
         border: 0;
         border-radius: 20px;
-        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
-        color: var(--accent);
+        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
+        color: #FFFDF8;
         font: inherit;
         font-size: 26px;
         font-weight: 600;
         cursor: pointer;
         box-shadow: var(--shadow-panel);
+        display: grid;
+        place-items: center;
       }
       .launcher.hidden {
         display: none;
       }
       .panel {
         width: min(500px, calc(100vw - 32px));
-        height: min(650px, calc(100vh - 110px));
+        height: min(590px, calc(100vh - 96px));
         display: none;
         grid-template-rows: auto auto 1fr auto;
         overflow: hidden;
@@ -218,7 +220,7 @@
       }
       .message {
         max-width: 82%;
-        padding: 13px 15px;
+        padding: 14px 15px;
         border-radius: var(--radius-message);
         line-height: 1.5;
         font-size: 15px;
@@ -229,7 +231,7 @@
       }
       .message.user {
         align-self: flex-end;
-        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        background: var(--accent);
         color: #FFFDF8;
         border: 1px solid rgba(45, 95, 79, 0.24);
         border-bottom-right-radius: 8px;
@@ -278,15 +280,19 @@
         40% { opacity: 1; transform: translateY(-2px); }
       }
       .badge {
-        display: inline-block;
-        margin-bottom: 5px;
-        padding: 2px 7px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-bottom: 6px;
+        padding: 3px 7px;
         border-radius: 999px;
         background: var(--accent-soft);
         color: var(--accent);
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1;
+        text-transform: none;
+        letter-spacing: 0.02em;
       }
       .message.system .badge {
         background: var(--bg-primary);
@@ -397,7 +403,7 @@
       @media (max-width: 640px) {
         .shell { right: 12px; bottom: 12px; }
         .shell.position-left { left: 12px; right: auto; }
-        .panel { width: calc(100vw - 24px); height: min(78vh, 680px); }
+        .panel { width: calc(100vw - 24px); height: min(76vh, 620px); }
         .composer {
           align-items: stretch;
           flex-direction: column;

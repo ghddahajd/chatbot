@@ -150,11 +150,20 @@ async def resolve_classification(
         known_services,
         selected_knowledge_base.company.city,
     )
+    local_intent = str(local_result.get("intent") or "")
+    local_confidence = float(local_result.get("confidence") or 0.0)
+    if local_intent == "medical_advice":
+        return local_result
+
     settings = request.app.state.settings
     skip_local_classifier = settings.llm_skip_classifier_for_local
     if skip_local_classifier is None:
         skip_local_classifier = settings.llm_provider.lower().strip() == "openai_compatible"
-    if settings.llm_provider.lower().strip() == "openai_compatible" and skip_local_classifier:
+    if (
+        settings.llm_provider.lower().strip() == "openai_compatible"
+        and skip_local_classifier
+        and local_confidence > 0
+    ):
         return local_result
 
     try:
@@ -164,11 +173,9 @@ async def resolve_classification(
         return local_result
 
     model_intent = str(model_result.get("intent") or "")
-    local_intent = str(local_result.get("intent") or "")
     model_service_id = model_result.get("service_id")
     local_service_id = local_result.get("service_id")
     model_confidence = float(model_result.get("confidence") or 0.0)
-    local_confidence = float(local_result.get("confidence") or 0.0)
 
     if local_intent in {"unknown_service", "clarify"}:
         return local_result

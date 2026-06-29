@@ -34,3 +34,43 @@ def test_domain_autodetect_unknown_returns_none(resolver) -> None:
 def test_duplicate_domain_raises_409(resolver) -> None:
     with pytest.raises(DuplicateDomainError):
         resolver.find_tenant_by_domain("https://duplicate.example")
+
+
+def test_domain_profile_defaults(resolver) -> None:
+    profile = resolver.domain_profile("rosh_demo")
+
+    assert profile["type"] == "generic_service"
+    assert profile["safety_level"] == "normal"
+    assert "medical_treatment" in profile["restricted_advice"]
+    assert profile["escalation_policy"]["booking"] == "lead_then_operator"
+
+
+def test_domain_profile_from_client_config(resolver, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "domain_profile:",
+                '  type: "medical"',
+                '  safety_level: "strict"',
+                "  restricted_advice:",
+                '    - "medical_treatment"',
+                '    - "diagnosis"',
+                "  hard_block_topics:",
+                '    - "prompt_injection"',
+                "  escalation_policy:",
+                '    unknown_service: "operator"',
+                '    booking: "lead_then_operator"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = resolver.domain_profile("rosh_demo")
+
+    assert profile["type"] == "medical"
+    assert profile["safety_level"] == "strict"
+    assert profile["restricted_advice"] == ["medical_treatment", "diagnosis"]
+    assert profile["hard_block_topics"] == ["prompt_injection"]
+    assert profile["escalation_policy"]["unknown_service"] == "operator"

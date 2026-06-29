@@ -4,6 +4,26 @@
     "lead_capture": true,
     "analytics": false
   },
+  "domain_profile": {
+    "type": "generic_service",
+    "safety_level": "normal",
+    "restricted_advice": [
+      "legal_guarantee",
+      "financial_promise",
+      "medical_treatment"
+    ],
+    "hard_block_topics": [
+      "self_harm",
+      "illegal_requests",
+      "prompt_injection"
+    ],
+    "escalation_policy": {
+      "unknown_service": "clarify_or_operator",
+      "complaint": "operator",
+      "custom_price": "operator",
+      "booking": "lead_then_operator"
+    }
+  },
   "widget": {
     "primary_color": "#1F7A5C",
     "button_color": "#1F7A5C",

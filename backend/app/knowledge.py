@@ -31,6 +31,26 @@ DEFAULT_WIDGET_CONFIG = {
     "position": "bottom-right",
     "avatar_emoji": "💬",
 }
+DEFAULT_DOMAIN_PROFILE = {
+    "type": "generic_service",
+    "safety_level": "normal",
+    "restricted_advice": [
+        "legal_guarantee",
+        "financial_promise",
+        "medical_treatment",
+    ],
+    "hard_block_topics": [
+        "self_harm",
+        "illegal_requests",
+        "prompt_injection",
+    ],
+    "escalation_policy": {
+        "unknown_service": "clarify_or_operator",
+        "complaint": "operator",
+        "custom_price": "operator",
+        "booking": "lead_then_operator",
+    },
+}
 
 
 def normalize_text(value: str) -> str:
@@ -402,6 +422,42 @@ class KnowledgeBaseResolver:
         if config["position"] not in {"bottom-right", "bottom-left"}:
             config["position"] = DEFAULT_WIDGET_CONFIG["position"]
         return config
+
+    def domain_profile(self, company_id: str) -> dict[str, object]:
+        """возвращает профиль домена для будущей structured intent classification."""
+
+        profile = {
+            **DEFAULT_DOMAIN_PROFILE,
+            "restricted_advice": list(DEFAULT_DOMAIN_PROFILE["restricted_advice"]),
+            "hard_block_topics": list(DEFAULT_DOMAIN_PROFILE["hard_block_topics"]),
+            "escalation_policy": dict(DEFAULT_DOMAIN_PROFILE["escalation_policy"]),
+        }
+        payload = self._client_config(company_id)
+        raw_profile = payload.get("domain_profile") if isinstance(payload, dict) else None
+        if not isinstance(raw_profile, dict):
+            return profile
+
+        for key in ("type", "safety_level"):
+            value = raw_profile.get(key)
+            if isinstance(value, str) and value.strip():
+                profile[key] = value.strip()
+
+        for key in ("restricted_advice", "hard_block_topics"):
+            value = raw_profile.get(key)
+            if isinstance(value, list):
+                profile[key] = [str(item).strip() for item in value if str(item).strip()]
+
+        escalation_policy = raw_profile.get("escalation_policy")
+        if isinstance(escalation_policy, dict):
+            profile["escalation_policy"].update(
+                {
+                    str(key).strip(): str(value).strip()
+                    for key, value in escalation_policy.items()
+                    if str(key).strip() and str(value).strip()
+                }
+            )
+
+        return profile
 
     def _client_config(self, company_id: str) -> dict[str, object]:
         if not self.client_exists(company_id):

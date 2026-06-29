@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
@@ -15,6 +16,7 @@ from validate_kb import REQUIRED_FILES, load_simple_yaml, validate_kb
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CLIENTS_DIR = REPO_ROOT / "backend" / "data" / "clients"
+DEFAULT_DRAFTS_DIR = REPO_ROOT / "new" / "kb_drafts"
 DEFAULT_API_BASE = "https://api.example.com"
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -36,6 +38,24 @@ def _company_payload(kb_dir: Path) -> dict[str, Any]:
     if not company_id:
         raise ValueError("company.yaml: пустой company_id")
     return company
+
+
+def _resolve_source_dir(source: Path) -> Path:
+    if source.exists():
+        return source
+
+    company_id = str(source).strip()
+    if not CLIENT_ID_PATTERN.fullmatch(company_id):
+        return source
+
+    candidates = [
+        DEFAULT_DRAFTS_DIR / company_id,
+        DEFAULT_CLIENTS_DIR / company_id,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return source
 
 
 def _copy_required_files(source_dir: Path, target_dir: Path, *, force: bool) -> None:
@@ -81,6 +101,13 @@ def _json_list_count(path: Path) -> int:
     return len(payload) if isinstance(payload, list) else 0
 
 
+def _json_list(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
 def _faq_entry_count(path: Path) -> int:
     count = 0
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -88,6 +115,113 @@ def _faq_entry_count(path: Path) -> int:
         if stripped.startswith("## "):
             count += 1
     return count
+
+
+def _readiness_report(source_dir: Path, company: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    services = _json_list(source_dir / "services.json")
+    prices = _json_list(source_dir / "prices.json")
+    faq_count = _faq_entry_count(source_dir / "faq.md")
+    allowed_domains = company.get("allowed_domains") if isinstance(company.get("allowed_domains"), list) else []
+
+    ok: list[str] = []
+    warnings: list[str] = []
+    blockers: list[str] = []
+
+    if str(company.get("company_name") or "").strip():
+        ok.append("company_name заполнен")
+    else:
+        blockers.append("company_name пустой")
+
+    if str(company.get("city") or "").strip():
+        ok.append("city заполнен")
+    else:
+        warnings.append("city пустой — география и очный приём будут работать хуже")
+
+    if allowed_domains:
+        ok.append("allowed_domains: " + ", ".join(str(domain) for domain in allowed_domains))
+        non_local_domains = [
+            str(domain)
+            for domain in allowed_domains
+            if str(domain).strip().lower() not in {"localhost", "127.0.0.1", "0.0.0.0"}
+        ]
+        if not non_local_domains:
+            warnings.append("allowed_domains содержит только localhost — добавьте продовый домен перед запуском")
+    else:
+        blockers.append("allowed_domains пустой — bootstrap не разрешит клиентский домен")
+
+    if str(company.get("website_url") or "").strip():
+        ok.append("website_url заполнен")
+    else:
+        warnings.append("website_url пустой — клиент не сможет перейти на сайт из чата")
+
+    if str(company.get("telegram_url") or "").strip():
+        ok.append("telegram_url заполнен")
+    else:
+        warnings.append('telegram_url пустой — кнопка "Написать в Telegram" не будет работать')
+
+    if os.environ.get("OPERATOR_TOKEN"):
+        ok.append("operator_token задан в env")
+    else:
+        warnings.append("operator_token не задан в env — операторская панель будет на дефолтном токене")
+
+    if services:
+        ok.append(f"услуг: {len(services)}")
+    else:
+        blockers.append("services.json пустой — бот не сможет консультировать по услугам")
+
+    if prices:
+        ok.append(f"цен: {len(prices)}")
+    else:
+        warnings.append("prices.json пустой — бот не сможет отвечать на вопросы о стоимости")
+
+    price_service_ids = {str(price.get("service_id") or "").strip() for price in prices}
+    services_without_price = [
+        str(service.get("name") or service.get("id") or "без названия")
+        for service in services
+        if str(service.get("id") or "").strip() not in price_service_ids
+    ]
+    if services and not services_without_price:
+        ok.append("цены есть для всех услуг")
+    elif services_without_price:
+        warnings.append(f"{len(services_without_price)} услуг без цены — бот попросит оставить контакт")
+
+    services_without_synonyms = [
+        str(service.get("name") or service.get("id") or "без названия")
+        for service in services
+        if not isinstance(service.get("synonyms"), list) or not service.get("synonyms")
+    ]
+    if services and not services_without_synonyms:
+        ok.append("синонимы заполнены у всех услуг")
+    elif services_without_synonyms:
+        warnings.append(f"{len(services_without_synonyms)} услуг без синонимов — поиск по формулировкам будет хуже")
+
+    if faq_count >= 3:
+        ok.append(f"FAQ записей: {faq_count}")
+    else:
+        warnings.append(f"FAQ слишком короткий ({faq_count} записей) — частые вопросы не закрыты")
+
+    return ok, warnings, blockers
+
+
+def _print_readiness(source_dir: Path, company: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    ok, warnings, blockers = _readiness_report(source_dir, company)
+    print("🔍 Проверка готовности к продаже:")
+    for item in ok:
+        print(f"  ✅ {item}")
+    for item in warnings:
+        print(f"  ⚠️  {item}")
+    for item in blockers:
+        print(f"  ❌ БЛОКЕР: {item}")
+    print("")
+    print("🔍 Итог:")
+    if blockers:
+        print(f"  ❌ {len(blockers)} блокеров — публикация запрещена")
+    elif warnings:
+        print(f"  ⚠️  {len(warnings)} предупреждений — клиент может запускаться, но качество будет ниже")
+        print("  Для полной готовности заполните отмеченные поля.")
+    else:
+        print("  ✅ блокеров и предупреждений нет")
+    return ok, warnings, blockers
 
 
 def _print_preview(
@@ -110,6 +244,8 @@ def _print_preview(
     else:
         print("✅ allowed_domains: none")
     print("")
+    _print_readiness(source_dir, company)
+    print("")
     print("📋 Explicit embed:")
     print(explicit_embed)
     print("")
@@ -127,7 +263,7 @@ def onboard_client(
     force: bool = False,
     dry_run: bool = False,
 ) -> Path:
-    source_dir = source_dir.resolve()
+    source_dir = _resolve_source_dir(source_dir).resolve()
     errors = validate_kb(source_dir)
     if errors:
         raise ValueError("KB validation failed:\n" + "\n".join(f"- {error}" for error in errors))
@@ -138,6 +274,15 @@ def onboard_client(
     if dry_run:
         _print_preview(source_dir, company=company, company_id=company_id, api_base=api_base)
         return target_dir
+
+    _, warnings, blockers = _readiness_report(source_dir, company)
+    if blockers:
+        raise ValueError("БЛОКЕРЫ готовности:\n" + "\n".join(f"- {blocker}" for blocker in blockers))
+    if warnings:
+        print("Предупреждения перед публикацией:")
+        for warning in warnings:
+            print(f"- {warning}")
+        print("")
 
     _copy_required_files(source_dir, target_dir, force=force)
 
@@ -173,7 +318,11 @@ def onboard_client(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Опубликовать KB клиента и получить embed-код.")
-    parser.add_argument("source_dir", type=Path, help="Проверенная KB или draft, например new/kb_drafts/client_id")
+    parser.add_argument(
+        "source_dir",
+        type=Path,
+        help="Проверенная KB, draft или company_id. Например: new/kb_drafts/client_id или client_id",
+    )
     parser.add_argument(
         "--clients-dir",
         type=Path,
@@ -183,6 +332,7 @@ def main() -> int:
     parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="Публичный URL backend API")
     parser.add_argument("--force", action="store_true", help="Перезаписать существующего клиента")
     parser.add_argument("--dry-run", action="store_true", help="Показать preview без публикации файлов")
+    parser.add_argument("--publish", action="store_true", help="Явно подтвердить публикацию. Без --dry-run публикация и так включена.")
     args = parser.parse_args()
 
     try:

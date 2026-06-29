@@ -139,6 +139,16 @@ def main() -> int:
                 == 200,
             )
             runner.check(
+                "bootstrap features",
+                "defaults",
+                lambda: client.get(
+                    "/api/widget/bootstrap?company_id=rosh_demo",
+                    headers={"origin": "http://localhost:5500"},
+                ).json()
+                .get("features")
+                == {"operator": True, "lead_capture": True, "analytics": False},
+            )
+            runner.check(
                 "bootstrap autodetect",
                 "200",
                 lambda: client.get(
@@ -219,6 +229,8 @@ def main() -> int:
                     and read_jsonl(temp_dir / "leads.jsonl")[-1].get("company_id") == "rosh_demo"
                 ),
             )
+            # per-client leads: глобальный logs/leads.jsonl с company_id достаточен
+            # для managed MVP. Per-client файлы — V2/PostgreSQL.
             runner.check(
                 "analytics summary",
                 "200",

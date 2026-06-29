@@ -9,6 +9,11 @@ def test_explicit_company_id_200(test_client) -> None:
 
     assert response.status_code == 200
     assert response.json()["company_id"] == "rosh_demo"
+    assert response.json()["features"] == {
+        "operator": True,
+        "lead_capture": True,
+        "analytics": False,
+    }
 
 
 def test_autodetect_by_origin_200(test_client) -> None:

@@ -46,6 +46,9 @@ def _copy_required_files(source_dir: Path, target_dir: Path, *, force: bool) -> 
     target_dir.mkdir(parents=True)
     for file_name in REQUIRED_FILES:
         shutil.copy2(source_dir / file_name, target_dir / file_name)
+    optional_config = source_dir / "config.yaml"
+    if optional_config.exists() and optional_config.is_file():
+        shutil.copy2(optional_config, target_dir / "config.yaml")
 
 
 def _embed_blocks(api_base: str, company_id: str) -> tuple[str, str]:

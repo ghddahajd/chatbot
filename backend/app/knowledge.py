@@ -18,6 +18,11 @@ from .models import CompanyConfig, PriceEntry, Service
 logger = logging.getLogger(__name__)
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 KB_REQUIRED_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
+DEFAULT_WIDGET_FEATURES = {
+    "operator": True,
+    "lead_capture": True,
+    "analytics": False,
+}
 
 
 def normalize_text(value: str) -> str:
@@ -357,3 +362,24 @@ class KnowledgeBaseResolver:
             return self._cache[self.default_company_id]
 
         return self._load_legacy()
+
+    def widget_features(self, company_id: str) -> dict[str, bool]:
+        """возвращает feature-флаги клиента из optional config.yaml."""
+
+        features = dict(DEFAULT_WIDGET_FEATURES)
+        if not self.client_exists(company_id):
+            return features
+
+        config_path = self._client_dir(company_id) / "config.yaml"
+        if not config_path.exists() or not config_path.is_file():
+            return features
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        raw_features = payload.get("features") if isinstance(payload, dict) else None
+        if not isinstance(raw_features, dict):
+            return features
+
+        for key in features:
+            if key in raw_features:
+                features[key] = bool(raw_features[key])
+        return features

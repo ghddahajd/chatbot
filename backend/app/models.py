@@ -152,6 +152,7 @@ class WidgetBootstrapResponse(BaseModel):
     city: str
     website_url: Optional[str] = None
     telegram_url: Optional[str] = None
+    features: dict[str, bool] = Field(default_factory=dict)
 
 
 class SessionPublicResponse(BaseModel):

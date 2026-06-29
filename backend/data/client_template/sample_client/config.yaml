@@ -1,0 +1,4 @@
+features:
+  operator: true
+  lead_capture: true
+  analytics: false

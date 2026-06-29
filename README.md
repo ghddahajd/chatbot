@@ -328,6 +328,12 @@ python3 backend/scripts/simulate_kb.py new/kb_drafts/client_id \
   --question "есть ботокс?"
 ```
 
+Полная smoke-проверка onboarding flow без Docker и без записи в реальные clients:
+
+```bash
+python3 backend/scripts/smoke_onboarding.py
+```
+
 Только после review draft можно публиковать:
 
 ```bash

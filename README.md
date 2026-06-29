@@ -228,36 +228,43 @@ python3 backend/scripts/validate_kb.py backend/data/clients/new_client
 
 ## Как добавить клиента
 
-1. Скопировать шаблон:
+Быстрый рабочий путь:
 
 ```bash
-cp -R backend/data/client_template/sample_client backend/data/clients/client_id
+python3 backend/scripts/create_kb_draft.py \
+  --company-id client_id \
+  --company-name "Название клиента" \
+  --city "Москва" \
+  --phone "+7 000 000-00-00" \
+  --website-url "https://client-site.example" \
+  --source "https://client-site.example/services"
 ```
 
-2. В `backend/data/clients/client_id/company.yaml` поменять:
-
-```yaml
-company_id: client_id
-company_name: Название клиента
-city: Город
-website_url: https://client-site.example
-telegram_url: https://t.me/client
-lead_webhook_url:
-allowed_domains:
-  - client-site.example
-  - www.client-site.example
-  - localhost
-```
-
-3. Заполнить `services.json`, `prices.json`, `faq.md`.
-
-4. Проверить базу:
+После ручной проверки draft:
 
 ```bash
-python3 backend/scripts/validate_kb.py backend/data/clients/client_id
+python3 backend/scripts/validate_kb.py new/kb_drafts/client_id
+python3 backend/scripts/simulate_kb.py new/kb_drafts/client_id
+python3 backend/scripts/onboard_client.py new/kb_drafts/client_id \
+  --api-base "https://api.example.com"
 ```
 
-5. Перезапустить backend, если он уже был запущен:
+`onboard_client.py`:
+
+- проверит KB;
+- скопирует только runtime-файлы в `backend/data/clients/<company_id>/`;
+- напечатает явный embed с `data-company-id`;
+- напечатает autodetect embed без `data-company-id`.
+
+Ручной fallback, если draft не нужен:
+
+```bash
+cp -R backend/data/client_template/sample_client new/kb_drafts/client_id
+# заполнить company.yaml, services.json, prices.json, faq.md
+python3 backend/scripts/onboard_client.py new/kb_drafts/client_id
+```
+
+После публикации перезапустить backend, если он уже был запущен:
 
 ```bash
 docker compose down
@@ -321,10 +328,11 @@ python3 backend/scripts/simulate_kb.py new/kb_drafts/client_id \
   --question "есть ботокс?"
 ```
 
-Только после review draft можно копировать:
+Только после review draft можно публиковать:
 
 ```bash
-cp -R new/kb_drafts/client_id backend/data/clients/client_id
+python3 backend/scripts/onboard_client.py new/kb_drafts/client_id \
+  --api-base "https://api.example.com"
 ```
 
 ## Лиды и доставка

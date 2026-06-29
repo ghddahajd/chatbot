@@ -23,6 +23,14 @@ DEFAULT_WIDGET_FEATURES = {
     "lead_capture": True,
     "analytics": False,
 }
+DEFAULT_WIDGET_CONFIG = {
+    "primary_color": "#1F7A5C",
+    "button_color": "#1F7A5C",
+    "header_title": "Чат с поддержкой",
+    "header_subtitle": "Подскажем по услугам и ценам",
+    "position": "bottom-right",
+    "avatar_emoji": "💬",
+}
 
 
 def normalize_text(value: str) -> str:
@@ -367,14 +375,7 @@ class KnowledgeBaseResolver:
         """возвращает feature-флаги клиента из optional config.yaml."""
 
         features = dict(DEFAULT_WIDGET_FEATURES)
-        if not self.client_exists(company_id):
-            return features
-
-        config_path = self._client_dir(company_id) / "config.yaml"
-        if not config_path.exists() or not config_path.is_file():
-            return features
-
-        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        payload = self._client_config(company_id)
         raw_features = payload.get("features") if isinstance(payload, dict) else None
         if not isinstance(raw_features, dict):
             return features
@@ -383,3 +384,32 @@ class KnowledgeBaseResolver:
             if key in raw_features:
                 features[key] = bool(raw_features[key])
         return features
+
+    def widget_config(self, company_id: str) -> dict[str, object]:
+        """возвращает настройки внешнего вида виджета из optional config.yaml."""
+
+        config = dict(DEFAULT_WIDGET_CONFIG)
+        payload = self._client_config(company_id)
+        raw_widget = payload.get("widget") if isinstance(payload, dict) else None
+        if not isinstance(raw_widget, dict):
+            return config
+
+        for key in config:
+            value = raw_widget.get(key)
+            if isinstance(value, str) and value.strip():
+                config[key] = value.strip()
+
+        if config["position"] not in {"bottom-right", "bottom-left"}:
+            config["position"] = DEFAULT_WIDGET_CONFIG["position"]
+        return config
+
+    def _client_config(self, company_id: str) -> dict[str, object]:
+        if not self.client_exists(company_id):
+            return {}
+
+        config_path = self._client_dir(company_id) / "config.yaml"
+        if not config_path.exists() or not config_path.is_file():
+            return {}
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        return payload if isinstance(payload, dict) else {}

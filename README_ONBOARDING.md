@@ -17,10 +17,26 @@ python3 backend/scripts/create_kb_draft.py \
 
 ```text
 new/kb_drafts/client_id/company.yaml   # контакты, allowed_domains, ссылки
-new/kb_drafts/client_id/config.yaml    # features виджета, если нужен override
+new/kb_drafts/client_id/config.yaml    # features и внешний вид виджета
 new/kb_drafts/client_id/services.json  # услуги, описания, синонимы
 new/kb_drafts/client_id/prices.json    # цены с оговорками
 new/kb_drafts/client_id/faq.md         # частые вопросы
+```
+
+Пример `config.yaml`:
+
+```yaml
+features:
+  operator: true
+  lead_capture: true
+  analytics: false
+widget:
+  primary_color: "#1F7A5C"
+  button_color: "#1F7A5C"
+  header_title: "Чат с поддержкой"
+  header_subtitle: "Подскажем по услугам и ценам"
+  position: "bottom-right" # bottom-right / bottom-left
+  avatar_emoji: "💬"
 ```
 
 3. Проверить без публикации:

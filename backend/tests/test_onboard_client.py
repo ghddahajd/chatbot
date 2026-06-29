@@ -51,6 +51,7 @@ def test_onboard_client_publishes_required_files(tmp_path: Path) -> None:
     target_dir = clients_dir / "sample_client"
     assert all((target_dir / file_name).exists() for file_name in REQUIRED_FILES)
     assert (target_dir / "config.yaml").exists()
+    assert "widget:" in (target_dir / "config.yaml").read_text(encoding="utf-8")
     assert 'data-company-id="sample_client"' in result.stdout
     assert "Autodetect embed:" in result.stdout
 

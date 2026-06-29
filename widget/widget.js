@@ -31,6 +31,8 @@
         --accent: #1F7A5C;
         --accent-strong: #234C3F;
         --accent-soft: #E8F0EC;
+        --btn-color: #1F7A5C;
+        --btn-color-strong: #234C3F;
         --text-primary: #1F2922;
         --text-secondary: #6B7670;
         --border-subtle: #E5DFD5;
@@ -46,6 +48,10 @@
         z-index: 2147483647;
         font-family: "Plus Jakarta Sans", "Work Sans", "Avenir Next", sans-serif;
         color: var(--text-primary);
+      }
+      .shell.position-left {
+        right: auto;
+        left: 24px;
       }
       .launcher {
         width: 58px;
@@ -121,6 +127,15 @@
         letter-spacing: -0.02em;
         text-align: center;
         color: var(--text-primary);
+      }
+      .subtitle {
+        margin: 7px auto 0;
+        max-width: 330px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.45;
+        text-align: center;
       }
       .statusbar {
         display: flex;
@@ -325,7 +340,7 @@
         min-height: 54px;
         border: 0;
         border-radius: var(--radius-control);
-        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
         color: #FFFDF8;
         cursor: pointer;
         font: inherit;
@@ -361,7 +376,7 @@
         align-self: stretch;
         border: 0;
         border-radius: var(--radius-control);
-        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
         color: #FFFDF8;
         font: inherit;
         font-size: 14px;
@@ -381,6 +396,7 @@
       }
       @media (max-width: 640px) {
         .shell { right: 12px; bottom: 12px; }
+        .shell.position-left { left: 12px; right: auto; }
         .panel { width: calc(100vw - 24px); height: min(78vh, 680px); }
         .composer {
           align-items: stretch;
@@ -398,6 +414,7 @@
           <p class="eyebrow">Medical concierge</p>
           <button class="close" type="button" aria-label="Закрыть чат">×</button>
           <h2 class="title">Чат с поддержкой</h2>
+          <p class="subtitle">Подскажем по услугам и ценам</p>
         </header>
         <div class="statusbar status-ai"><span class="dot"></span><span class="status-text">AI-консультант на связи</span></div>
         <div class="messages"></div>
@@ -424,12 +441,23 @@
         ws: null,
         typingNode: null,
         typingStartedAt: 0,
+        widgetConfig: {
+          primary_color: "#1F7A5C",
+          button_color: "#1F7A5C",
+          header_title: "Чат с поддержкой",
+          header_subtitle: "Подскажем по услугам и ценам",
+          position: "bottom-right",
+          avatar_emoji: "💬",
+        },
       };
       this.shadow = this.attachShadow({ mode: "closed" });
       this.shadow.appendChild(template.content.cloneNode(true));
       this.elements = {
         launcher: this.shadow.querySelector(".launcher"),
+        shell: this.shadow.querySelector(".shell"),
         panel: this.shadow.querySelector(".panel"),
+        title: this.shadow.querySelector(".title"),
+        subtitle: this.shadow.querySelector(".subtitle"),
         messages: this.shadow.querySelector(".messages"),
         input: this.shadow.querySelector(".input"),
         send: this.shadow.querySelector(".send"),
@@ -511,10 +539,29 @@
         const payload = await response.json();
         this.state.companyId = payload.company_id || EMBED_COMPANY_ID;
         if (!this.state.companyId) throw new Error("Widget company is not resolved");
+        this.applyWidgetConfig(payload.widget_config || {});
         await this.restoreSession();
       } catch (error) {
         this.markUnavailable();
       }
+    }
+
+    applyWidgetConfig(config) {
+      const nextConfig = { ...this.state.widgetConfig };
+      for (const key of Object.keys(nextConfig)) {
+        const value = String(config[key] || "").trim();
+        if (value) nextConfig[key] = value;
+      }
+      if (!["bottom-right", "bottom-left"].includes(nextConfig.position)) {
+        nextConfig.position = "bottom-right";
+      }
+      this.state.widgetConfig = nextConfig;
+      this.style.setProperty("--accent", nextConfig.primary_color);
+      this.style.setProperty("--btn-color", nextConfig.button_color);
+      this.style.setProperty("--btn-color-strong", nextConfig.button_color);
+      this.elements.title.textContent = nextConfig.header_title;
+      this.elements.subtitle.textContent = nextConfig.header_subtitle;
+      this.elements.shell.classList.toggle("position-left", nextConfig.position === "bottom-left");
     }
 
     toggle() {
@@ -581,7 +628,12 @@
       const node = document.createElement("article");
       node.className = "message " + role;
 
-      if (role === "operator") {
+      if (role === "assistant") {
+        const badge = document.createElement("div");
+        badge.className = "badge";
+        badge.textContent = `${this.state.widgetConfig.avatar_emoji} AI`;
+        node.appendChild(badge);
+      } else if (role === "operator") {
         const badge = document.createElement("div");
         badge.className = "badge";
         badge.textContent = "Специалист";

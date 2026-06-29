@@ -62,4 +62,5 @@ async def bootstrap_widget(
         website_url=company.website_url,
         telegram_url=company.telegram_url,
         features=resolver.widget_features(company.company_id),
+        widget_config=resolver.widget_config(company.company_id),
     )

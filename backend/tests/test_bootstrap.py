@@ -14,6 +14,8 @@ def test_explicit_company_id_200(test_client) -> None:
         "lead_capture": True,
         "analytics": False,
     }
+    assert response.json()["widget_config"]["primary_color"] == "#1F7A5C"
+    assert response.json()["widget_config"]["position"] == "bottom-right"
 
 
 def test_autodetect_by_origin_200(test_client) -> None:
@@ -51,3 +53,41 @@ def test_duplicate_domain_409(test_client) -> None:
     )
 
     assert response.status_code == 409
+
+
+def test_widget_config_from_client_config(test_client, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "features:",
+                "  operator: true",
+                "  lead_capture: true",
+                "  analytics: false",
+                "widget:",
+                '  primary_color: "#B85C38"',
+                '  button_color: "#7A1F1F"',
+                '  header_title: "Клиника РОШ"',
+                '  header_subtitle: "Запись и цены"',
+                '  position: "bottom-left"',
+                '  avatar_emoji: "👩‍⚕️"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    response = test_client.get(
+        "/api/widget/bootstrap?company_id=rosh_demo",
+        headers={"origin": "http://localhost:5500"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["widget_config"] == {
+        "primary_color": "#B85C38",
+        "button_color": "#7A1F1F",
+        "header_title": "Клиника РОШ",
+        "header_subtitle": "Запись и цены",
+        "position": "bottom-left",
+        "avatar_emoji": "👩‍⚕️",
+    }

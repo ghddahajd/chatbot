@@ -1,10 +1,15 @@
 {
-  "theme": {
-    "accent": "#1F7A5C",
-    "position": "bottom-right"
-  },
   "features": {
+    "operator": true,
     "lead_capture": true,
-    "operator_handoff": true
+    "analytics": false
+  },
+  "widget": {
+    "primary_color": "#1F7A5C",
+    "button_color": "#1F7A5C",
+    "header_title": "Чат с поддержкой",
+    "header_subtitle": "Подскажем по услугам и ценам",
+    "position": "bottom-right",
+    "avatar_emoji": "💬"
   }
 }

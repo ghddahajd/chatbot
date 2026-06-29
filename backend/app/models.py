@@ -153,6 +153,7 @@ class WidgetBootstrapResponse(BaseModel):
     website_url: Optional[str] = None
     telegram_url: Optional[str] = None
     features: dict[str, bool] = Field(default_factory=dict)
+    widget_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionPublicResponse(BaseModel):

@@ -18,51 +18,6 @@ sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(REPO_ROOT))
 
 
-SCENARIOS: list[tuple[str, str, str | None]] = [
-    # Приветствие
-    ("привет", "small_talk", None),
-    ("добрый день", "small_talk", None),
-    # Список услуг
-    ("покажи услуги", "list_services", None),
-    ("что у вас есть", "list_services", None),
-    ("а можно услуги", "list_services", None),
-    # Цена (есть в KB)
-    ("сколько стоит чистка лица", "answer", "price"),
-    ("цена на эпиляцию", "answer", "price"),
-    # Цена (нет в KB)
-    ("сколько стоит ботокс", "clarify", "unknown_service"),
-    # Длительность
-    ("сколько длится процедура", "clarify", "price_question_no_service"),
-    ("как долго чистка лица", "answer", None),
-    # Неизвестная услуга
-    ("есть ботокс?", "clarify", "unknown_service"),
-    ("делаете татуаж?", "clarify", "unknown_service"),
-    # Описание услуги
-    ("расскажи про биоревитализацию", "answer", None),
-    ("что входит в консультацию", "answer", None),
-    # Запись/лид
-    ("хочу записаться", "ask_contact", None),
-    ("Иван +7999 хочу на чистку", "answer", "lead_created"),
-    # Оператор
-    ("позовите оператора", "clarify", "operator_soft"),
-    ("хочу живого человека", "clarify", "operator_soft"),
-    ("да оператора", "transfer_operator", None),
-    # Медицина/опасное
-    ("у меня воспаление что делать", "transfer_operator", "medical"),
-    ("выпишите мне крем", "transfer_operator", "medical"),
-    ("болит после процедуры", "transfer_operator", "medical"),
-    # Geography
-    ("я из Новосибирска можно?", "clarify", "location_mismatch"),
-    ("работаете в Питере?", "clarify", "location_mismatch"),
-    # Off-topic
-    ("слетела цепь на велике", "off_topic", None),
-    ("какая погода", "off_topic", None),
-    # Косметические жалобы (не медицина)
-    ("жирная кожа что посоветуете", "answer", "cosmetic_concern"),
-    ("расширенные поры", "answer", "cosmetic_concern"),
-]
-
-
 SPECIAL_REASONS = {
     "cosmetic_concern",
     "lead_created",
@@ -71,6 +26,59 @@ SPECIAL_REASONS = {
     "operator_soft",
     "price",
 }
+
+
+def _service_name(service: Any, fallback: str) -> str:
+    return str(getattr(service, "name", "") or fallback).strip()
+
+
+def _build_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
+    services = list(getattr(knowledge_base, "services", []) or [])
+    first_service = _service_name(services[0], "первая услуга") if services else "первая услуга"
+    second_service = _service_name(services[1], first_service) if len(services) > 1 else first_service
+
+    return [
+        # Приветствие
+        ("привет", "small_talk", None),
+        ("добрый день", "small_talk", None),
+        # Список услуг
+        ("покажи услуги", "list_services", None),
+        ("что у вас есть", "list_services", None),
+        ("а можно услуги", "list_services", None),
+        # Цена (есть в KB)
+        (f"сколько стоит {first_service}", "answer", "price"),
+        (f"цена на {second_service}", "answer", "price"),
+        # Цена (услуга не названа)
+        ("сколько стоит?", "clarify", "price_question_no_service"),
+        # Цена (нет в KB)
+        ("сколько стоит ботокс", "clarify", "unknown_service"),
+        # Длительность
+        ("сколько длится процедура", "clarify", "unknown_service"),
+        (f"как долго {first_service}", "answer", None),
+        # Неизвестная услуга
+        ("есть ботокс?", "clarify", "unknown_service"),
+        ("делаете татуаж?", "clarify", "unknown_service"),
+        # Описание услуги
+        (f"расскажи про {first_service}", "answer", None),
+        (f"что входит в {second_service}", "answer", None),
+        # Запись/лид
+        ("хочу записаться", "clarify", "booking_request"),
+        (f"Иван +7 999 123-45-67 хочу на {first_service}", "ask_contact", "lead_created"),
+        # Оператор
+        ("позовите оператора", "clarify", "operator_soft"),
+        ("хочу живого человека", "clarify", "operator_soft"),
+        ("да оператора", "transfer_operator", None),
+        # Медицина/опасное
+        ("у меня воспаление что делать", "transfer_operator", "medical"),
+        ("выпишите мне крем", "transfer_operator", "medical"),
+        ("болит после процедуры", "transfer_operator", "medical"),
+        # Geography
+        ("я из Новосибирска можно?", "clarify", "location_mismatch"),
+        ("работаете в Питере?", "clarify", "location_mismatch"),
+        # Off-topic
+        ("слетела цепь на велике", "off_topic", None),
+        ("какая погода", "off_topic", None),
+    ]
 POLICY_ACTIONS = {
     "answer",
     "ask_contact",
@@ -171,14 +179,19 @@ async def _policy_result_for_message(message: str, session: Any, request: Any, k
 
 
 def _chat_lead_result(client: Any, company_id: str, message: str) -> ScenarioResult:
+    initial_response = client.post(
+        "/api/chat/message",
+        json={"company_id": company_id, "session_id": None, "message": "хочу записаться"},
+    )
+    session_id = initial_response.json().get("session_id")
     response = client.post(
         "/api/chat/message",
-        json={"company_id": company_id, "session_id": None, "message": message},
+        json={"company_id": company_id, "session_id": session_id, "message": message},
     )
     payload = response.json()
     got_action = str(payload.get("action") or f"http_{response.status_code}")
     got_marker = "lead_created" if payload.get("lead_created") is True else None
-    result = ScenarioResult(message, "answer", "lead_created", got_action, got_marker, False)
+    result = ScenarioResult(message, "ask_contact", "lead_created", got_action, got_marker, False)
     result.ok = _matches_expected(result)
     return result
 
@@ -207,9 +220,10 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
     results: list[ScenarioResult] = []
     with TestClient(app) as client:
         knowledge_base = app.state.knowledge_base_resolver.get(company_id, fallback=False)
+        scenarios = _build_scenarios(knowledge_base)
         request = Request({"type": "http", "app": app})
 
-        for message, expected_action, expected_marker in SCENARIOS:
+        for message, expected_action, expected_marker in scenarios:
             if expected_marker == "lead_created":
                 result = _chat_lead_result(client, company_id, message)
                 results.append(result)

@@ -68,11 +68,11 @@ class AnalyticsService:
                 message=message,
                 metadata=metadata,
             )
-        if policy_result.reason == PolicyReason.MEDICAL_ADVICE:
+        if policy_result.reason == PolicyReason.REGULATED_ADVICE:
             await self.track_event(
                 company_id=company_id,
                 session_id=session_id,
-                event_type="medical_handoff",
+                event_type="regulated_handoff",
                 message=message,
                 metadata=metadata,
             )

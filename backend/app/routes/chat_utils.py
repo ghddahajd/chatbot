@@ -17,6 +17,11 @@ from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import AFFIRMATIVE_MESSAGES
 from ..policy.extractors import mentions_company_city
+from ..policy.restricted import (
+    get_restricted_categories,
+    has_medical_restricted_category,
+    is_restricted_question,
+)
 
 
 fallback_llm_client = MockLLMClient()
@@ -28,6 +33,8 @@ RATE_LIMIT_ANSWER = (
     "Похоже, разговор затянулся. Если остались вопросы — оставьте телефон, "
     "мы свяжемся, или попробуйте начать новый диалог."
 )
+CONSULTATION_RISK_RESTRICTED = "RESTRICTED"
+CONSULTATION_RISK_SAFE = "SAFE"
 
 
 def format_quick_actions(
@@ -236,13 +243,43 @@ def should_use_consultation_llm(context: dict[str, object]) -> bool:
     return isinstance(service, dict) and bool(service.get("name"))
 
 
-async def classify_consultation_medical_risk(
+async def classify_consultation_risk(
     request: Request,
     message: str,
     context: dict[str, object],
 ) -> tuple[str, str]:
+    """классифицирует риск консультационного ответа относительно domain_profile."""
+
     request_id = uuid4().hex[:10]
     started_at = time.perf_counter()
+    domain_profile = context.get("domain_profile") if isinstance(context.get("domain_profile"), dict) else {}
+    categories = get_restricted_categories(domain_profile)
+    if not categories:
+        return CONSULTATION_RISK_SAFE, request_id
+
+    is_restricted, restricted_category = is_restricted_question(message, domain_profile)
+    if is_restricted:
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "request_id=%s classification_restricted_ms=%.1f result=%s category=%s source=local",
+            request_id,
+            elapsed_ms,
+            CONSULTATION_RISK_RESTRICTED,
+            restricted_category,
+        )
+        return CONSULTATION_RISK_RESTRICTED, request_id
+
+    if not has_medical_restricted_category(domain_profile):
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "request_id=%s classification_restricted_ms=%.1f result=%s categories=%s source=policy",
+            request_id,
+            elapsed_ms,
+            CONSULTATION_RISK_SAFE,
+            ",".join(categories),
+        )
+        return CONSULTATION_RISK_SAFE, request_id
+
     local_result = await fallback_llm_client.classify_medical_risk(message)
     service = context.get("service")
     has_service_context = isinstance(service, dict) and bool(service.get("name"))
@@ -252,24 +289,28 @@ async def classify_consultation_medical_risk(
         try:
             result = await request.app.state.llm_client.classify_medical_risk(message)
         except Exception as error:
-            logger.info("medical_classifier_source=local reason=helper_error error=%s", type(error).__name__)
+            logger.info("restricted_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             result = local_result
 
     normalized_result = str(result or "").strip().upper()
     if normalized_result not in {"MEDICAL", "COSMETIC"}:
         normalized_result = "MEDICAL"
+    risk = CONSULTATION_RISK_RESTRICTED if normalized_result == "MEDICAL" else CONSULTATION_RISK_SAFE
 
     elapsed_ms = (time.perf_counter() - started_at) * 1000
     logger.info(
-        "request_id=%s classification_medical_ms=%.1f result=%s",
+        "request_id=%s classification_restricted_ms=%.1f result=%s legacy_result=%s category=medical",
         request_id,
         elapsed_ms,
+        risk,
         normalized_result,
     )
-    return normalized_result, request_id
+    return risk, request_id
 
 
-async def safe_medical_handoff(request: Request, message: str) -> str:
+async def safe_restricted_handoff(request: Request, message: str) -> str:
+    """возвращает безопасный handoff-ответ для restricted тем."""
+
     del request, message
     return await fallback_llm_client.medical_handoff("")
 

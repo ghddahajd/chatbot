@@ -14,17 +14,18 @@ from ..models import (
 )
 from ..policy import classify_and_extract
 from ..routes.chat_utils import (
+    CONSULTATION_RISK_RESTRICTED,
     HAS_LETTER_OR_DIGIT,
     MAX_MESSAGE_LENGTH,
     MAX_SESSION_MESSAGES,
     RATE_LIMIT_ANSWER,
-    classify_consultation_medical_risk,
+    classify_consultation_risk,
     contextual_affirmative_response,
     format_quick_actions,
     maybe_contextual_classification,
     resolve_classification,
     safe_complete,
-    safe_medical_handoff,
+    safe_restricted_handoff,
     safe_small_talk,
     service_classifier_payload,
     should_use_consultation_llm,
@@ -250,29 +251,29 @@ class ChatService:
         elif policy_result.action == PolicyAction.REJECT:
             answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
         elif should_use_consultation_llm(policy_result.safe_context):
-            medical_risk, _request_id = await classify_consultation_medical_risk(
+            consultation_risk, _request_id = await classify_consultation_risk(
                 request,
                 message,
                 policy_result.safe_context,
             )
-            if medical_risk == "MEDICAL":
+            if consultation_risk == CONSULTATION_RISK_RESTRICTED:
                 await analytics_service.track_event(
                     company_id=session.company_id,
                     session_id=session.session_id,
-                    event_type="medical_handoff",
+                    event_type="regulated_handoff",
                     message=message,
-                    metadata={"source": "medical_risk_classifier"},
+                    metadata={"source": "consultation_risk_classifier"},
                 )
                 await analytics_service.track_event(
                     company_id=session.company_id,
                     session_id=session.session_id,
                     event_type="operator_requested",
                     message=message,
-                    metadata={"source": "medical_risk_classifier"},
+                    metadata={"source": "consultation_risk_classifier"},
                 )
                 await session_store.set_operator_requested(session.session_id, True)
                 await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
-                answer = await safe_medical_handoff(request, message)
+                answer = await safe_restricted_handoff(request, message)
                 response_action = PolicyAction.TRANSFER_OPERATOR
                 response_quick_actions = ["Оставить телефон"]
             else:

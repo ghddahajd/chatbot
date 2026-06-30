@@ -17,6 +17,10 @@ backend/logs/*.jsonl
 # Local client knowledge bases
 backend/data/clients/*
 !backend/data/clients/.gitkeep
+
+# Local client eval phrases
+evals/clients/*
+!evals/clients/.gitkeep
 AGENTS.md
 CLAUDE.md
 CODEX.md

@@ -10,9 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_DIR.parent
+EVALS_DIR = REPO_ROOT / "evals"
 
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(REPO_ROOT))
@@ -54,72 +57,100 @@ def _is_auto_domain(knowledge_base: Any) -> bool:
     return str(domain_profile.get("type") or "").strip().lower().startswith("auto")
 
 
-def _build_universal_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
+@dataclass(frozen=True)
+class Scenario:
+    message: str
+    expected_action: str
+    expected_marker: str | None = None
+    setup: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioSet:
+    name: str
+    path: Path
+    scenarios: list[Scenario]
+
+
+def _scenario_context(knowledge_base: Any) -> dict[str, str]:
     services = list(getattr(knowledge_base, "services", []) or [])
     first_service = _service_name(services[0], "первая услуга") if services else "первая услуга"
     second_service = _service_name(services[1], first_service) if len(services) > 1 else first_service
-
-    return [
-        # Приветствие
-        ("привет", "small_talk", None),
-        ("добрый день", "small_talk", None),
-        # Список услуг
-        ("покажи услуги", "list_services", None),
-        ("что у вас есть", "list_services", None),
-        ("а можно услуги", "list_services", None),
-        # Цена (есть в KB)
-        (f"сколько стоит {first_service}", "answer", "price"),
-        (f"цена на {second_service}", "answer", "price"),
-        # Цена (услуга не названа)
-        ("сколько стоит?", "clarify", "price_question_no_service"),
-        # Цена (нет в KB)
-        ("сколько стоит ботокс", "clarify", "unknown_service"),
-        # Длительность
-        ("сколько длится процедура", "clarify", "unknown_service"),
-        (f"как долго {first_service}", "answer", None),
-        # Неизвестная услуга
-        ("есть ботокс?", "clarify", "unknown_service"),
-        ("делаете татуаж?", "clarify", "unknown_service"),
-        # Описание услуги
-        (f"расскажи про {first_service}", "answer", None),
-        (f"что входит в {second_service}", "answer", None),
-        # Запись/лид
-        ("хочу записаться", "clarify", "booking_request"),
-        (f"Иван +7 999 123-45-67 хочу на {first_service}", "ask_contact", "lead_created"),
-        # Оператор
-        ("позовите оператора", "clarify", "operator_soft"),
-        ("хочу живого человека", "clarify", "operator_soft"),
-        ("да оператора", "transfer_operator", None),
-        # Geography
-        ("я из Новосибирска можно?", "clarify", "location_mismatch"),
-        ("работаете в Питере?", "clarify", "location_mismatch"),
-        # Off-topic
-        ("слетела цепь на велике", "off_topic", None),
-        ("какая погода", "off_topic", None),
-    ]
+    return {
+        "first_service": first_service,
+        "second_service": second_service,
+    }
 
 
-def _build_medical_scenarios() -> list[tuple[str, str, str | None]]:
-    return [
-        ("у меня воспаление что делать", "transfer_operator", "medical"),
-        ("выпишите мне крем", "transfer_operator", "medical"),
-        ("болит после процедуры", "transfer_operator", "medical"),
-    ]
+def _load_eval_file(path: Path, context: dict[str, str]) -> list[Scenario]:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw_scenarios = payload.get("scenarios") if isinstance(payload, dict) else None
+    if not isinstance(raw_scenarios, list):
+        raise ValueError(f"{path} должен содержать list в поле scenarios")
+
+    scenarios: list[Scenario] = []
+    for index, raw_scenario in enumerate(raw_scenarios, start=1):
+        if not isinstance(raw_scenario, dict):
+            raise ValueError(f"{path}:{index} scenario должен быть object")
+        message = str(raw_scenario.get("message") or "").format(**context).strip()
+        expected_action = str(raw_scenario.get("action") or "").strip()
+        expected_marker = raw_scenario.get("marker")
+        setup = raw_scenario.get("setup")
+        if not message or not expected_action:
+            raise ValueError(f"{path}:{index} scenario требует message и action")
+        scenarios.append(
+            Scenario(
+                message=message,
+                expected_action=expected_action,
+                expected_marker=str(expected_marker).strip() if expected_marker else None,
+                setup=str(setup).strip() if setup else None,
+            )
+        )
+    return scenarios
 
 
-def _build_auto_scenarios() -> list[tuple[str, str, str | None]]:
-    return [
-        ("диагностика", "answer", None),
-        ("компьютерная диагностика", "answer", None),
-    ]
-
-
-def _build_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
-    scenarios = _build_universal_scenarios(knowledge_base)
+def _domain_eval_paths(knowledge_base: Any) -> list[Path]:
+    paths: list[Path] = []
     if _has_medical_restrictions(knowledge_base):
-        scenarios.extend(_build_medical_scenarios())
+        paths.append(EVALS_DIR / "domains" / "medical.yaml")
     if _is_auto_domain(knowledge_base):
-        scenarios.extend(_build_auto_scenarios())
+        paths.append(EVALS_DIR / "domains" / "auto_service.yaml")
+    return paths
+
+
+def _build_scenario_sets(company_id: str, knowledge_base: Any) -> list[ScenarioSet]:
+    context = _scenario_context(knowledge_base)
+    scenario_sets = [
+        ScenarioSet(
+            name="universal",
+            path=EVALS_DIR / "universal.yaml",
+            scenarios=_load_eval_file(EVALS_DIR / "universal.yaml", context),
+        )
+    ]
+    for path in _domain_eval_paths(knowledge_base):
+        scenario_sets.append(
+            ScenarioSet(
+                name=f"domain:{path.stem}",
+                path=path,
+                scenarios=_load_eval_file(path, context),
+            )
+        )
+    client_path = EVALS_DIR / "clients" / f"{company_id}.yaml"
+    if client_path.exists():
+        scenario_sets.append(
+            ScenarioSet(
+                name=f"client:{company_id}",
+                path=client_path,
+                scenarios=_load_eval_file(client_path, context),
+            )
+        )
+    return scenario_sets
+
+
+def _flatten_scenarios(scenario_sets: list[ScenarioSet]) -> list[Scenario]:
+    scenarios: list[Scenario] = []
+    for scenario_set in scenario_sets:
+        scenarios.extend(scenario_set.scenarios)
     return scenarios
 
 
@@ -222,7 +253,7 @@ async def _policy_result_for_message(message: str, session: Any, request: Any, k
     return policy_result, classification
 
 
-def _chat_lead_result(client: Any, company_id: str, message: str) -> ScenarioResult:
+def _chat_lead_result(client: Any, company_id: str, scenario: Scenario) -> ScenarioResult:
     initial_response = client.post(
         "/api/chat/message",
         json={"company_id": company_id, "session_id": None, "message": "хочу записаться"},
@@ -230,12 +261,19 @@ def _chat_lead_result(client: Any, company_id: str, message: str) -> ScenarioRes
     session_id = initial_response.json().get("session_id")
     response = client.post(
         "/api/chat/message",
-        json={"company_id": company_id, "session_id": session_id, "message": message},
+        json={"company_id": company_id, "session_id": session_id, "message": scenario.message},
     )
     payload = response.json()
     got_action = str(payload.get("action") or f"http_{response.status_code}")
     got_marker = "lead_created" if payload.get("lead_created") is True else None
-    result = ScenarioResult(message, "ask_contact", "lead_created", got_action, got_marker, False)
+    result = ScenarioResult(
+        scenario.message,
+        scenario.expected_action,
+        scenario.expected_marker,
+        got_action,
+        got_marker,
+        False,
+    )
     result.ok = _matches_expected(result)
     return result
 
@@ -264,22 +302,24 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
     results: list[ScenarioResult] = []
     with TestClient(app) as client:
         knowledge_base = app.state.knowledge_base_resolver.get(company_id, fallback=False)
-        scenarios = _build_scenarios(knowledge_base)
+        scenario_sets = _build_scenario_sets(company_id, knowledge_base)
+        scenarios = _flatten_scenarios(scenario_sets)
         request = Request({"type": "http", "app": app})
+        app.state.ai_smoke_scenario_sets = scenario_sets
 
-        for message, expected_action, expected_marker in scenarios:
-            if expected_marker == "lead_created":
-                result = _chat_lead_result(client, company_id, message)
+        for scenario in scenarios:
+            if scenario.expected_marker == "lead_created":
+                result = _chat_lead_result(client, company_id, scenario)
                 results.append(result)
                 continue
 
             session = Session(company_id=company_id)
-            if message == "да оператора":
+            if scenario.setup == "operator_soft":
                 session.messages.append(
                     Message(role=MessageRole.ASSISTANT, text=OPERATOR_SOFT_OFFER_MESSAGE)
                 )
             policy_result, classification = await _policy_result_for_message(
-                message,
+                scenario.message,
                 session,
                 request,
                 knowledge_base,
@@ -287,12 +327,19 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
             got_action = str(policy_result.action.value)
             got_marker = _policy_marker(policy_result, classification)
             if (
-                expected_marker is None
-                and expected_action in POLICY_ACTIONS
+                scenario.expected_marker is None
+                and scenario.expected_action in POLICY_ACTIONS
                 and got_marker in SPECIAL_REASONS
             ):
                 got_marker = None
-            result = ScenarioResult(message, expected_action, expected_marker, got_action, got_marker, False)
+            result = ScenarioResult(
+                scenario.message,
+                scenario.expected_action,
+                scenario.expected_marker,
+                got_action,
+                got_marker,
+                False,
+            )
             result.ok = _matches_expected(result)
             results.append(result)
 
@@ -320,8 +367,20 @@ def main() -> int:
 
         print(f"AI Conversation Smoke Test — {args.company}")
         print(_resolve_runner_label(args.real_llm))
+        scenario_sets = []
+        # Заполняется внутри _run после загрузки FastAPI app.
         print("─" * 40)
         results = anyio.run(_run, args.company, args.real_llm, temp_dir)
+        from app.main import app  # noqa: WPS433
+
+        scenario_sets = getattr(app.state, "ai_smoke_scenario_sets", [])
+        if scenario_sets:
+            sources = ", ".join(
+                f"{scenario_set.name} ({len(scenario_set.scenarios)})"
+                for scenario_set in scenario_sets
+            )
+            print(f"Scenario sets: {sources}")
+            print("─" * 40)
         for result in results:
             _print_result(result)
 

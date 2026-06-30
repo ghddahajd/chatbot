@@ -16,6 +16,21 @@ MEDICAL_RESTRICTED_CATEGORIES = {
     "diagnosis",
     "treatment",
 }
+REMOTE_SAFETY_CATEGORIES = {"remote_safety_assessment", "safety_assessment"}
+REMOTE_SAFETY_KEYWORDS = {
+    "можно ездить",
+    "можно ли ездить",
+    "безопасно ездить",
+    "опасно ездить",
+    "стучит",
+    "скрипит",
+    "горит чек",
+    "загорелся чек",
+    "тормоза",
+    "педаль тормоза",
+    "руль бьет",
+    "руль бьёт",
+}
 
 
 def _profile_value(domain_profile: Any, key: str) -> Any:
@@ -36,11 +51,14 @@ def get_restricted_categories(domain_profile: Any) -> list[str]:
 
 
 def _has_medical_restrictions(categories: list[str]) -> bool:
-    normalized_categories = {
+    return bool(_normalized_categories(categories) & MEDICAL_RESTRICTED_CATEGORIES)
+
+
+def _normalized_categories(categories: list[str]) -> set[str]:
+    return {
         str(category).strip().lower()
         for category in categories
     } | {normalize_text(category).replace(" ", "_") for category in categories}
-    return bool(normalized_categories & MEDICAL_RESTRICTED_CATEGORIES)
 
 
 def has_medical_restricted_category(domain_profile: Any) -> bool:
@@ -65,5 +83,8 @@ def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str
     normalized_message = normalize_text(message)
     if _has_medical_restrictions(categories) and contains_keyword(normalized_message, MEDICAL_KEYWORDS):
         return True, "medical"
+    if _normalized_categories(categories) & REMOTE_SAFETY_CATEGORIES:
+        if contains_keyword(normalized_message, REMOTE_SAFETY_KEYWORDS):
+            return True, "remote_safety_assessment"
 
     return False, None

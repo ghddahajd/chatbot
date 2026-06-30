@@ -25,6 +25,7 @@ POLICY_ACTIONS = {
     "transfer_operator",
 }
 SPECIAL_MARKERS = {
+    "booking_request",
     "contact_provided",
     "cosmetic_concern",
     "lead_created",

@@ -66,7 +66,9 @@ def analyze_message(
     if intent == "price_question" and normalized_message in GENERIC_PRICE_MESSAGES:
         service = None
     if service is None and (
-        intent == "price_question" or contains_keyword(normalized_message, DURATION_KEYWORDS)
+        intent == "price_question"
+        or contains_keyword(normalized_message, DURATION_KEYWORDS)
+        or contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     ):
         service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
     phone = extract_phone(message)

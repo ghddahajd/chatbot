@@ -98,10 +98,17 @@ def maybe_contextual_classification(
     session: Session,
 ) -> dict[str, object] | None:
     normalized_message = normalize_text(message)
+    last_assistant_text = _last_assistant_text(session)
+    if normalized_message in {"что еще", "что ещё", "а что еще", "а что ещё"} and (
+        "доступны услуги" in last_assistant_text
+        or "список услуг" in last_assistant_text
+        or "услуги:" in last_assistant_text
+    ):
+        return {"intent": "list_services", "service_id": None, "confidence": 0.88}
+
     if normalized_message not in AFFIRMATIVE_MESSAGES:
         return None
 
-    last_assistant_text = _last_assistant_text(session)
     if (
         "могу рассказать про услуги" in last_assistant_text
         or "давайте я расскажу про наши услуги" in last_assistant_text

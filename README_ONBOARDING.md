@@ -143,6 +143,106 @@ python3 backend/scripts/smoke_onboarding.py
 docker compose restart backend
 ```
 
+## Настройка уведомлений
+
+Заявки и запросы оператора доставляются через generic delivery outbox.
+Даже если Telegram или webhook временно недоступны, событие пишется в
+`backend/logs/delivery_outbox.jsonl` и может быть повторено позже.
+
+Токен Telegram хранится только в `.env`:
+
+```env
+TELEGRAM_BOT_TOKEN=123456:bot-token
+```
+
+В `config.yaml` клиента указывается только `chat_id` и список событий:
+
+```yaml
+notifications:
+  telegram:
+    enabled: true
+    chat_id: "-100123456789"
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+  webhook:
+    enabled: false
+    url: ""
+    secret: ""
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+```
+
+Webhook включается так:
+
+```yaml
+notifications:
+  webhook:
+    enabled: true
+    url: "https://client-crm.example/webhook"
+    secret: ""
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+```
+
+Backend отправляет webhook с заголовками:
+
+```text
+X-Widget-Event: booking_created
+X-Delivery-ID: <stable uuid>
+X-Company-ID: <company_id>
+```
+
+`X-Delivery-ID` одинаковый при retry, чтобы CRM могла дедуплицировать
+повторные доставки.
+
+## Проверка уведомлений
+
+Перед запуском клиента проверь delivery без ручного чата:
+
+```bash
+python3 backend/scripts/send_test_delivery.py \
+  --company=client_id \
+  --event=booking_created \
+  --dry-run
+```
+
+`--dry-run` показывает destinations и payload, но ничего не отправляет и
+не пишет в outbox.
+
+Реальная тестовая отправка:
+
+```bash
+python3 backend/scripts/send_test_delivery.py \
+  --company=client_id \
+  --event=all
+```
+
+Ожидаемые статусы:
+
+- `sent (status 200)` — канал принял событие.
+- `not configured` — канал выключен или не заполнен в `config.yaml` / `.env`.
+- `failed — ConnectError` — backend не смог подключиться к webhook URL.
+- `failed — http_status_...` — webhook ответил ошибкой.
+
+Проверить outbox:
+
+```bash
+tail -n 20 backend/logs/delivery_outbox.jsonl
+```
+
+Повторить due-доставки:
+
+```bash
+curl -s -X POST \
+  "http://localhost:8000/api/delivery/retry?token=demo-operator-token"
+```
+
 ## Проверка вставки виджета
 
 Перед передачей клиенту стоит руками проверить четыре сценария:
@@ -163,6 +263,10 @@ docker compose restart backend
 - `bootstrap 404` → `company_id` не совпадает с именем папки или клиент не опубликован.
 - Бот говорит “не вижу в базе” → проверить `services.json` и синонимы услуги.
 - Кнопка Telegram не работает → проверить `telegram_url` в `company.yaml`.
+- Telegram-уведомления не приходят → проверить `TELEGRAM_BOT_TOKEN` в `.env`
+  и `notifications.telegram.chat_id` в `config.yaml`.
+- Webhook падает с `ConnectError` → проверить URL, доступность CRM и HTTPS.
+- В outbox нет записей → для события нет включённых destinations.
 - Автодетект не работает → домен должен быть уникальным среди всех клиентов.
 
 ## Как подключаем клиента за 15 минут

@@ -1,5 +1,7 @@
 # Чеклист запуска клиента
 
+Подробный рабочий порядок подключения: [CLIENT_ONBOARDING_PLAYBOOK.md](CLIENT_ONBOARDING_PLAYBOOK.md).
+
 ## Подготовка KB
 
 - [ ] `company.yaml` заполнен: name, city, phone, hours.

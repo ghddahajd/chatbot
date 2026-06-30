@@ -11,6 +11,7 @@ from .constants import (
     CLARIFY_SHORT_MESSAGES,
     COSMETIC_CONCERN_KEYWORDS,
     CONTACT_LINK_KEYWORDS,
+    LEAD_REQUEST_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
     PRICE_KEYWORDS,
     SERVICE_LIST_FAST_MESSAGES,
@@ -19,7 +20,7 @@ from .constants import (
     UNKNOWN_SERVICE_KEYWORDS,
     VISIT_KEYWORDS,
 )
-from .extractors import contains_keyword, is_location_mismatch
+from .extractors import contains_keyword, is_location_mismatch, mentions_company_city
 from .restricted import is_restricted_question
 
 
@@ -94,6 +95,8 @@ def classify_and_extract(
         return {"intent": "clarify", "service_id": None, "confidence": 0.7}
     if is_location_mismatch(message, normalized_message, company_city):
         return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
+    if mentions_company_city(normalized_message, company_city):
+        return {"intent": "clarify", "service_id": None, "confidence": 0.78}
     if contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
     if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):
@@ -108,6 +111,8 @@ def classify_and_extract(
         normalized_message, VISIT_KEYWORDS
     ):
         return {"intent": "contact_link", "service_id": None, "confidence": 0.88}
+    if contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS):
+        return {"intent": "lead_request", "service_id": service_id, "confidence": 0.88}
     if contains_keyword(normalized_message, PRICE_KEYWORDS):
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, BOOKING_KEYWORDS):

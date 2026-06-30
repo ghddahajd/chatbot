@@ -130,6 +130,13 @@ def test_location_inside_company_city_is_not_mismatch(policy_session, knowledge_
     assert result.reason != PolicyReason.LOCATION_MISMATCH
 
 
+def test_company_city_statement_is_not_off_topic(policy_session, knowledge_base) -> None:
+    result = _analyze("я из москвы", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.OK
+
+
 def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_base) -> None:
     result = _analyze("что входит в компьютерная диагностика", policy_session, knowledge_base)
 
@@ -148,3 +155,33 @@ def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, kno
 
     assert result.action == PolicyAction.ASK_CONTACT
     assert result.reason == PolicyReason.BOOKING_REQUEST
+
+
+def test_lead_request_asks_for_contact(policy_session, knowledge_base) -> None:
+    result = _analyze("хочу оставить телефон", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ASK_CONTACT
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+    assert "message_to_user" in result.safe_context
+
+
+def test_lead_request_with_reversed_word_order_asks_for_contact(policy_session, knowledge_base) -> None:
+    result = _analyze("хочу телефон оставить", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ASK_CONTACT
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+
+
+def test_contact_prompt_can_be_cancelled(policy_session, knowledge_base) -> None:
+    policy_session.messages.append(
+        Message(
+            role=MessageRole.ASSISTANT,
+            text="Оставьте имя и телефон, и менеджер сможет связаться с вами позже.",
+        )
+    )
+
+    result = _analyze("нет не надо", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+    assert result.safe_context["contact_request_cancelled"] is True

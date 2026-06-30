@@ -23,7 +23,7 @@ INTENT_CLASSIFICATION_PROMPT = (
     "Проанализируй сообщение пользователя и верни JSON:\n"
     "{\n"
     '  "intent": "small_talk|off_topic|list_services|price_question|'
-    'cosmetic_concern|medical_advice|operator_request|contact_link|service_mention|'
+    'cosmetic_concern|medical_advice|operator_request|booking_request|lead_request|contact_link|service_mention|'
     'unknown_service|location_mismatch",\n'
     '  "service_id": "<id из списка или null>",\n'
     '  "confidence": 0.0-1.0\n'
@@ -41,6 +41,7 @@ INTENT_CLASSIFICATION_PROMPT = (
     "- location_mismatch — пользователь упоминает, что он из другого города или другой страны, "
     "не из города центра.\n"
     "- contact_link — пользователь просит сайт, Telegram, контакты или способ связи.\n"
+    "- lead_request — пользователь хочет оставить телефон, контакты или заявку.\n"
     "Ответь ТОЛЬКО JSON, без текста вокруг."
 )
 STRUCTURED_INTENT_CLASSIFICATION_PROMPT = (
@@ -56,6 +57,7 @@ STRUCTURED_INTENT_CLASSIFICATION_PROMPT = (
     "service_id=null, service_match_type='unknown'.\n"
     "- Если пользователь просит цену, intent='price_question'. Саму цену не называй.\n"
     "- Если пользователь просит запись, intent='booking_request'.\n"
+    "- Если пользователь хочет оставить телефон/контакты/заявку без конкретной записи, intent='lead_request'.\n"
     "- Если пользователь просит оператора/человека/администратора, intent='operator_request'.\n"
     "- Если пользователь просит сайт, Telegram или контакты, intent='contact_link'.\n"
     "- Если пользователь хочет список услуг, intent='list_services'.\n"

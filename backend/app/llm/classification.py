@@ -15,6 +15,7 @@ Intent = Literal[
     "regulated_advice",
     "operator_request",
     "booking_request",
+    "lead_request",
     "contact_link",
     "service_mention",
     "unknown_service",

@@ -90,3 +90,39 @@ def test_merge_keeps_protected_operator_flow() -> None:
     )
 
     assert result["intent"] == "operator_request"
+
+
+def test_merge_keeps_local_small_talk_when_model_says_off_topic() -> None:
+    result = merge_policy_classifications(
+        {"intent": "small_talk", "service_id": None, "confidence": 0.76},
+        {"intent": "off_topic", "service_id": None, "confidence": 0.91},
+    )
+
+    assert result["intent"] == "small_talk"
+
+
+def test_merge_keeps_local_service_list_when_model_says_off_topic() -> None:
+    result = merge_policy_classifications(
+        {"intent": "list_services", "service_id": None, "confidence": 0.9},
+        {"intent": "off_topic", "service_id": None, "confidence": 0.91},
+    )
+
+    assert result["intent"] == "list_services"
+
+
+def test_merge_keeps_local_operator_when_model_says_off_topic() -> None:
+    result = merge_policy_classifications(
+        {"intent": "operator_request", "service_id": None, "confidence": 0.88},
+        {"intent": "off_topic", "service_id": None, "confidence": 0.91},
+    )
+
+    assert result["intent"] == "operator_request"
+
+
+def test_merge_keeps_local_lead_request_when_model_says_off_topic() -> None:
+    result = merge_policy_classifications(
+        {"intent": "lead_request", "service_id": None, "confidence": 0.88},
+        {"intent": "off_topic", "service_id": None, "confidence": 0.91},
+    )
+
+    assert result["intent"] == "lead_request"

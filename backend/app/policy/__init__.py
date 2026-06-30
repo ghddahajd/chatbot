@@ -14,6 +14,7 @@ from .constants import (
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     HANDOFF_MESSAGE,
+    LEAD_REQUEST_KEYWORDS,
     NEGATIVE_MESSAGES,
     OPERATOR_SOFT_OFFER_MESSAGE,
     PRICE_KEYWORDS,
@@ -27,6 +28,7 @@ from .extractors import (
     extract_phone,
     find_unsupported_city,
     has_booking_contact_prompt,
+    has_contact_prompt,
     has_operator_soft_offer,
     is_location_mismatch,
     last_service_from_history,
@@ -72,12 +74,26 @@ def analyze_message(
     ) or intent == "operator_request"
     price_requested = intent == "price_question" or contains_keyword(normalized_message, PRICE_KEYWORDS)
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
+    lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
+
+    if has_contact_prompt(session) and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.CONTACT_PROVIDED,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "contact_request_cancelled": True,
+                "message_to_user": "Ок, контакт не оставляем. Могу подсказать по услугам, ценам или позвать менеджера.",
+            },
+            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        )
 
     if has_booking_contact_prompt(session) and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
         return PolicyResult(
@@ -212,6 +228,20 @@ def analyze_message(
             confidence=classifier_confidence or 0.88,
             safe_context={"message_to_user": message_to_user},
             quick_actions=quick_actions,
+        )
+
+    if lead_requested:
+        return PolicyResult(
+            action=PolicyAction.ASK_CONTACT,
+            reason=PolicyReason.CONTACT_PROVIDED,
+            service_id=service.id if service else None,
+            confidence=classifier_confidence or 0.88,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": _phrase(knowledge_base, "contact_prompt") or CONTACT_PROMPT,
+                "service": service.model_dump() if service else None,
+            },
+            quick_actions=["Позвать оператора", "Посмотреть услуги"],
         )
 
     if unsupported_city:

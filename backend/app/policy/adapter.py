@@ -19,11 +19,16 @@ LEGACY_INTENT_BY_RISK = {
 }
 REGULATED_INTENTS = {"medical_advice", "regulated_advice"}
 PROTECTED_LOCAL_INTENTS = {
+    "small_talk",
+    "list_services",
+    "price_question",
     "operator_request",
     "booking_request",
     "contact_link",
+    "lead_request",
     "location_mismatch",
 }
+MODEL_RISK_INTENTS = {"off_topic", "location_mismatch"}
 
 
 def structured_to_policy_classification(
@@ -61,9 +66,13 @@ def merge_policy_classifications(
         return local_result
     if model_intent in REGULATED_INTENTS:
         return model_result
+    if model_intent == "unknown_service" and local_intent == "price_question" and not local_service_id:
+        return model_result
     if local_intent in PROTECTED_LOCAL_INTENTS and local_confidence >= 0.75:
         return local_result
     if local_service_id and not model_service_id:
+        return local_result
+    if model_intent in MODEL_RISK_INTENTS and local_confidence >= 0.75:
         return local_result
     if model_intent in {"off_topic", "unknown_service", "location_mismatch"}:
         return model_result
@@ -76,6 +85,7 @@ def merge_policy_classifications(
             "price_question",
             "operator_request",
             "contact_link",
+            "lead_request",
             "off_topic",
             "cosmetic_concern",
             "booking_request",

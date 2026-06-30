@@ -76,9 +76,16 @@ def _scenario_context(knowledge_base: Any) -> dict[str, str]:
     services = list(getattr(knowledge_base, "services", []) or [])
     first_service = _service_name(services[0], "первая услуга") if services else "первая услуга"
     second_service = _service_name(services[1], first_service) if len(services) > 1 else first_service
+    company_city = str(getattr(knowledge_base.company, "city", "") or "город")
+    city_from_forms = {
+        "Москва": "москвы",
+        "Санкт-Петербург": "санкт-петербурга",
+    }
     return {
         "first_service": first_service,
         "second_service": second_service,
+        "company_city": company_city,
+        "company_city_from": city_from_forms.get(company_city, company_city),
     }
 
 
@@ -297,7 +304,7 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
 
     from app.main import app  # noqa: WPS433
     from app.models import Message, MessageRole, Session  # noqa: WPS433
-    from app.policy.constants import OPERATOR_SOFT_OFFER_MESSAGE  # noqa: WPS433
+    from app.policy.constants import CONTACT_PROMPT, OPERATOR_SOFT_OFFER_MESSAGE  # noqa: WPS433
 
     results: list[ScenarioResult] = []
     with TestClient(app) as client:
@@ -318,6 +325,8 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
                 session.messages.append(
                     Message(role=MessageRole.ASSISTANT, text=OPERATOR_SOFT_OFFER_MESSAGE)
                 )
+            if scenario.setup == "contact_prompt":
+                session.messages.append(Message(role=MessageRole.ASSISTANT, text=CONTACT_PROMPT))
             policy_result, classification = await _policy_result_for_message(
                 scenario.message,
                 session,

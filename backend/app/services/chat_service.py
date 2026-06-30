@@ -212,8 +212,6 @@ class ChatService:
                     await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
             else:
                 answer = str(policy_result.safe_context.get("message_to_user") or "")
-                await session_store.set_operator_requested(session.session_id, True)
-                await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         elif policy_result.action == PolicyAction.SMALL_TALK:
             answer = await safe_small_talk(request, knowledge_base.company.company_name, message)
         elif policy_result.action == PolicyAction.OFF_TOPIC:

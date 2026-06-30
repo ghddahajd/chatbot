@@ -232,8 +232,18 @@ class ChatService:
                 PolicyReason.OPERATOR_REQUESTED,
                 PolicyReason.LOCATION_MISMATCH,
                 PolicyReason.UNSUPPORTED_CITY,
+                PolicyReason.UNKNOWN_SERVICE,
+                PolicyReason.SIMILAR_SERVICES_FOUND,
+                PolicyReason.PRICE_QUESTION_NO_SERVICE,
+                PolicyReason.SERVICE_EXPLANATION,
+                PolicyReason.BOOKING_REQUEST,
+                PolicyReason.CONTACT_PROVIDED,
             }
-            if policy_result.reason in direct_clarify_reasons or policy_result.safe_context.get("force_direct_answer"):
+            if (
+                policy_result.reason in direct_clarify_reasons
+                or policy_result.safe_context.get("force_direct_answer")
+                or policy_result.safe_context.get("message_to_user")
+            ):
                 answer = str(
                     policy_result.safe_context.get("message_to_user")
                     or policy_result.safe_context.get("city_note")
@@ -248,6 +258,14 @@ class ChatService:
                 )
         elif policy_result.action == PolicyAction.REJECT:
             answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
+        elif (
+            policy_result.action == PolicyAction.ANSWER
+            and policy_result.safe_context.get("message_to_user")
+            and not policy_result.safe_context.get("question_type")
+            and not policy_result.safe_context.get("service")
+            and not policy_result.safe_context.get("all_services")
+        ):
+            answer = str(policy_result.safe_context.get("message_to_user") or "")
         elif should_use_consultation_llm(policy_result.safe_context):
             consultation_risk, _request_id = await classify_consultation_risk(
                 request,

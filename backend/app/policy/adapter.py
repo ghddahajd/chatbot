@@ -27,6 +27,7 @@ PROTECTED_LOCAL_INTENTS = {
     "contact_link",
     "lead_request",
     "location_mismatch",
+    "off_topic",
 }
 MODEL_RISK_INTENTS = {"off_topic", "location_mismatch"}
 
@@ -63,6 +64,8 @@ def merge_policy_classifications(
     model_confidence = float(model_result.get("confidence") or 0.0)
 
     if local_intent in REGULATED_INTENTS:
+        return local_result
+    if local_intent == "off_topic" and local_confidence >= 0.75:
         return local_result
     if model_intent in REGULATED_INTENTS:
         return model_result

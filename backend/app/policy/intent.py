@@ -13,7 +13,9 @@ from .constants import (
     CONTACT_LINK_KEYWORDS,
     LEAD_REQUEST_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
+    OPERATOR_REQUEST_KEYWORDS,
     PRICE_KEYWORDS,
+    PROMPT_INJECTION_KEYWORDS,
     SERVICE_LIST_FAST_MESSAGES,
     SERVICE_LIST_KEYWORDS,
     SMALL_TALK_KEYWORDS,
@@ -97,6 +99,10 @@ def classify_and_extract(
         return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
     if mentions_company_city(normalized_message, company_city):
         return {"intent": "clarify", "service_id": None, "confidence": 0.78}
+    if contains_keyword(normalized_message, PROMPT_INJECTION_KEYWORDS):
+        return {"intent": "off_topic", "service_id": None, "confidence": 0.96}
+    if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS):
+        return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
     if contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
     if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):

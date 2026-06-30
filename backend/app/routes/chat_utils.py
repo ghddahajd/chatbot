@@ -162,6 +162,22 @@ def should_ignore_model_location_mismatch(
     return mentions_company_city(normalize_text(message), company_city)
 
 
+def should_ignore_model_regulated_advice(
+    local_result: dict[str, object],
+    model_result: dict[str, object],
+    domain_profile: dict[str, object],
+) -> bool:
+    """не даёт generic/auto домену принять medical-like risk от модели."""
+
+    model_intent = str(model_result.get("intent") or "")
+    local_intent = str(local_result.get("intent") or "")
+    return (
+        model_intent in {"medical_advice", "regulated_advice"}
+        and local_intent not in {"medical_advice", "regulated_advice"}
+        and not has_medical_restricted_category(domain_profile)
+    )
+
+
 async def resolve_classification(
     message: str,
     request: Request,
@@ -212,6 +228,9 @@ async def resolve_classification(
             return local_result
     else:
         model_result = structured_to_policy_classification(structured_result)
+
+    if should_ignore_model_regulated_advice(local_result, model_result, selected_knowledge_base.domain_profile):
+        return local_result
 
     if should_ignore_model_location_mismatch(
         message,

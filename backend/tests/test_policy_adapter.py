@@ -119,6 +119,15 @@ def test_merge_keeps_local_operator_when_model_says_off_topic() -> None:
     assert result["intent"] == "operator_request"
 
 
+def test_merge_keeps_local_off_topic_when_model_says_regulated() -> None:
+    result = merge_policy_classifications(
+        {"intent": "off_topic", "service_id": None, "confidence": 0.82},
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.97},
+    )
+
+    assert result["intent"] == "off_topic"
+
+
 def test_merge_keeps_local_lead_request_when_model_says_off_topic() -> None:
     result = merge_policy_classifications(
         {"intent": "lead_request", "service_id": None, "confidence": 0.88},

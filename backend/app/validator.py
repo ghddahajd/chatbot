@@ -18,6 +18,9 @@ RAW_CONTEXT_PATTERNS = (
     re.compile(r"\bsafe_context\b", re.IGNORECASE),
     re.compile(r"\bshort_description\b", re.IGNORECASE),
     re.compile(r"\bquestion_type\b", re.IGNORECASE),
+    re.compile(r"готовый безопасный смысл ответа", re.IGNORECASE),
+    re.compile(r"на основе предоставленного контекста", re.IGNORECASE),
+    re.compile(r"предоставленн(?:ого|ом)\s+контекст", re.IGNORECASE),
     re.compile(r"\{[^{}]*(?:service|price|company|service_id|price_text)[^{}]*\}", re.IGNORECASE | re.DOTALL),
 )
 UNSUPPORTED_DETAIL_PATTERNS = (

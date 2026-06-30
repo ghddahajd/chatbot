@@ -16,6 +16,7 @@ from .constants import (
     HANDOFF_MESSAGE,
     LEAD_REQUEST_KEYWORDS,
     NEGATIVE_MESSAGES,
+    OPERATOR_REQUEST_KEYWORDS,
     OPERATOR_SOFT_OFFER_MESSAGE,
     PRICE_KEYWORDS,
     TELEGRAM_KEYWORDS,
@@ -71,7 +72,7 @@ def analyze_message(
     phone = extract_phone(message)
     operator_requested = contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
-    ) or intent == "operator_request"
+    ) or contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS) or intent == "operator_request"
     price_requested = intent == "price_question" or contains_keyword(normalized_message, PRICE_KEYWORDS)
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
     lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)

@@ -27,3 +27,14 @@ forbidden_claims:
   - "точная цена без осмотра"
   - "юридическая гарантия"
 safety_disclaimer: "Я не оцениваю безопасность автомобиля удалённо. По неисправностям лучше уточнить у мастера после диагностики."
+policies:
+  walk_ins: null
+  parking: null
+  payment_methods: []
+  cancellation_policy: null
+  accepts_insurance: null
+contact:
+  address: ""
+  phone: ""
+  email: ""
+  maps_url: ""

@@ -1,0 +1,55 @@
+features:
+  operator: true
+  lead_capture: true
+  analytics: false
+notifications:
+  telegram:
+    enabled: false
+    chat_id: ""
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+  webhook:
+    enabled: false
+    url: ""
+    secret: ""
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+widget:
+  primary_color: "#1F7A5C"
+  button_color: "#1F7A5C"
+  header_title: "Чат с поддержкой"
+  header_subtitle: "Подскажем по услугам и ценам"
+  position: "bottom-right"
+  avatar_emoji: "💬"
+domain_profile:
+  type: "generic_service"
+  safety_level: "normal"
+  restricted_advice: []
+  hard_block_topics:
+    - "self_harm"
+    - "illegal_requests"
+    - "prompt_injection"
+  escalation_policy:
+    unknown_service: "clarify_or_operator"
+    complaint: "operator"
+    custom_price: "operator"
+    booking: "lead_then_operator"
+phrasebook:
+  company_noun: "компания"
+  service_word: "услуга"
+  operator_label: "менеджер"
+  booking_word: "заявка"
+  price_disclaimer: "Предварительно так, точнее подскажет менеджер после уточнения деталей."
+  unknown_service: "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
+  off_topic: "Это не по моей части — я консультирую по услугам компании. Могу подсказать по услугам или ценам."
+  contact_prompt: "Оставьте имя и телефон, и менеджер сможет связаться с вами позже."
+  booking_contact_prompt: "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку менеджеру."
+  lead_success: "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей."
+  booking_success: "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали."
+  handoff_message: "Передаю диалог менеджеру. Можете дописать детали, он увидит историю."
+  operator_soft_offer: "Могу попробовать помочь здесь — опишите, что вас интересует. Или сразу соединю с менеджером."
+  clarify: "Уточните, пожалуйста, что вас интересует: услуга, цена, запись или менеджер."

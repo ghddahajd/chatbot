@@ -105,8 +105,8 @@ def _run_api_checks(runner: SmokeRunner, temp_dir: Path, clients_dir: Path) -> N
         runner.check(
             "chat list services",
             "template services",
-            lambda: "Первичная консультация" in str(list_payload.get("answer") or "")
-            and "Пример процедуры" in str(list_payload.get("answer") or ""),
+            lambda: "Консультация" in str(list_payload.get("answer") or "")
+            and "Базовая услуга" in str(list_payload.get("answer") or ""),
         )
 
         price_payload = client.post(
@@ -114,13 +114,13 @@ def _run_api_checks(runner: SmokeRunner, temp_dir: Path, clients_dir: Path) -> N
             json={
                 "company_id": COMPANY_ID,
                 "session_id": None,
-                "message": "сколько стоит первичная консультация",
+                "message": "сколько стоит консультация",
             },
         ).json()
         runner.check(
             "chat price",
-            "от 2 500 ₽",
-            lambda: "от 2 500 ₽" in str(price_payload.get("answer") or "")
+            "от 2 000 ₽",
+            lambda: "от 2 000 ₽" in str(price_payload.get("answer") or "")
             and "Предварительно" in str(price_payload.get("answer") or ""),
         )
 

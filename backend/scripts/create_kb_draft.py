@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = REPO_ROOT / "backend" / "data" / "client_template" / "medical_sample"
+TEMPLATE_DIR = REPO_ROOT / "backend" / "data" / "client_template" / "universal_sample"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "new" / "kb_drafts"
 
 
@@ -138,6 +138,17 @@ def _update_company_yaml(
         '  - "точная цена без проверки"',
         '  - "регулируемая консультация без специалиста"',
         'safety_disclaimer: "По этому вопросу лучше уточнить у специалиста."',
+        "policies:",
+        "  walk_ins: null",
+        "  parking: null",
+        "  payment_methods: []",
+        "  cancellation_policy: null",
+        "  accepts_insurance: null",
+        "contact:",
+        f"  address: {_yaml_value('уточняется')}",
+        f"  phone: {_yaml_value(phone)}",
+        "  email: \"\"",
+        "  maps_url: \"\"",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -148,6 +159,26 @@ def _write_faq(path: Path, sources: list[str]) -> None:
         "",
         "Этот файл черновой. Перед публикацией нужно вручную проверить факты, услуги, цены и формулировки.",
         "",
+        "## Запись и отмена",
+        "",
+        "Опишите порядок записи, подтверждения, отмены и переноса заявки.",
+        "",
+        "## Как добраться / парковка",
+        "",
+        "Добавьте адрес, ориентиры, ссылку на карту и условия парковки.",
+        "",
+        "## Оплата",
+        "",
+        "Укажите способы оплаты, аванс, оплату по счёту или другие условия.",
+        "",
+        "## Что взять с собой",
+        "",
+        "Перечислите документы, материалы, данные или подготовку перед визитом.",
+        "",
+        "## Частые вопросы по услугам",
+        "",
+        "Добавьте типовые вопросы по услугам, срокам и ограничениям.",
+        "",
     ]
     for source in sources:
         label, text = _read_source(source)
@@ -156,19 +187,6 @@ def _write_faq(path: Path, sources: list[str]) -> None:
                 f"## Source: {label}",
                 "",
                 text[:12000].strip() or "[Пустой источник]",
-                "",
-            ]
-        )
-    if not sources:
-        sections.extend(
-            [
-                "## Что заполнить",
-                "",
-                "- правила записи;",
-                "- режим работы;",
-                "- частые вопросы;",
-                "- ограничения и дисклеймеры;",
-                "- что делать, если услуга неизвестна.",
                 "",
             ]
         )

@@ -23,6 +23,7 @@ REQUIRED_SERVICE_FIELDS = (
     "short_description",
     "requires_specialist",
 )
+MIN_FAQ_SECTIONS = 3
 
 
 def _strip_quotes(value: str) -> str:
@@ -40,6 +41,7 @@ def load_simple_yaml(path: Path) -> dict[str, object]:
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
             continue
+        indent = len(raw_line) - len(raw_line.lstrip())
 
         if stripped.startswith("- "):
             if current_list_key is None:
@@ -49,6 +51,9 @@ def load_simple_yaml(path: Path) -> dict[str, object]:
             if not isinstance(list_value, list):
                 raise ValueError(f"{path.name}:{line_number}: key is not a list")
             list_value.append(_strip_quotes(stripped[2:]))
+            continue
+
+        if indent > 0:
             continue
 
         if ":" not in stripped:
@@ -91,6 +96,14 @@ def load_json_list(path: Path, label: str) -> list[dict[str, object]]:
     return payload
 
 
+def faq_section_count(path: Path) -> int:
+    count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("## "):
+            count += 1
+    return count
+
+
 def validate_kb(kb_dir: Path, defaults_dir: Path | None = None) -> list[str]:
     errors: list[str] = []
 
@@ -119,6 +132,8 @@ def validate_kb(kb_dir: Path, defaults_dir: Path | None = None) -> list[str]:
         company.update(load_simple_yaml(kb_dir / "company.yaml"))
         services = load_json_list(kb_dir / "services.json", "services.json")
         prices = load_json_list(kb_dir / "prices.json", "prices.json")
+        faq_text = (kb_dir / "faq.md").read_text(encoding="utf-8")
+        faq_sections = faq_section_count(kb_dir / "faq.md")
     except Exception as error:
         return [f"не удалось загрузить KB: {type(error).__name__}: {error}"]
 
@@ -164,6 +179,11 @@ def validate_kb(kb_dir: Path, defaults_dir: Path | None = None) -> list[str]:
             errors.append(f"prices.json[{index}]: service_id не найден в services.json: {service_id!r}")
         if not str(price.get("price_text") or "").strip():
             errors.append(f"prices.json[{index}]: пустое price_text у service_id={service_id!r}")
+
+    if not faq_text.strip():
+        errors.append("faq.md: файл пустой")
+    if faq_sections < MIN_FAQ_SECTIONS:
+        errors.append(f"faq.md: нужно минимум {MIN_FAQ_SECTIONS} секции формата '## ...', найдено {faq_sections}")
 
     return errors
 

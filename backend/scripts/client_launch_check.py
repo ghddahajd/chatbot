@@ -82,7 +82,11 @@ def _has_medical_restrictions(domain_profile: dict[str, Any]) -> bool:
     )
 
 
-def _configure_env(company_id: str, temp_dir: Path) -> None:
+def _configure_env(company_id: str, temp_dir: Path) -> dict[str, str]:
+    original_env = {
+        "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+        "TELEGRAM_CHAT_ID": os.environ.get("TELEGRAM_CHAT_ID", ""),
+    }
     os.environ["LLM_PROVIDER"] = "mock"
     os.environ["LLM_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
@@ -96,6 +100,7 @@ def _configure_env(company_id: str, temp_dir: Path) -> None:
     os.environ["TELEGRAM_BOT_TOKEN"] = ""
     os.environ["TELEGRAM_CHAT_ID"] = ""
     os.environ.setdefault("OPERATOR_TOKEN", "demo-operator-token")
+    return original_env
 
 
 def _first_service_name(services: list[dict[str, Any]]) -> str:
@@ -184,6 +189,70 @@ def _check_client_files(company_id: str, client_dir: Path, state: CheckState) ->
         state.warn("allowed_domains содержит только localhost")
 
     return services, prices, company
+
+
+def _masked_value(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        return ""
+    if len(stripped) <= 8:
+        return "***"
+    return f"{stripped[:4]}...{stripped[-4:]}"
+
+
+def _notification_events(config: dict[str, Any]) -> str:
+    events = config.get("events")
+    if not isinstance(events, list) or not events:
+        return "events не заданы"
+    return "events: " + ", ".join(str(event) for event in events if str(event).strip())
+
+
+def _check_notifications(
+    company_id: str,
+    client_dir: Path,
+    temp_dir: Path,
+    original_env: dict[str, str],
+    state: CheckState,
+) -> None:
+    print("\nNotifications:")
+    state.ok(f"jsonl delivery: active ({temp_dir / 'delivery_outbox.jsonl'})")
+
+    config_payload = _load_yaml(client_dir / "config.yaml")
+    company_payload = _load_yaml(client_dir / "company.yaml")
+    notifications = {}
+    raw_company_notifications = company_payload.get("notifications")
+    if isinstance(raw_company_notifications, dict):
+        notifications.update(raw_company_notifications)
+    raw_config_notifications = config_payload.get("notifications")
+    if isinstance(raw_config_notifications, dict):
+        notifications.update(raw_config_notifications)
+
+    telegram = notifications.get("telegram")
+    telegram_token = original_env.get("TELEGRAM_BOT_TOKEN", "")
+    if isinstance(telegram, dict) and bool(telegram.get("enabled")):
+        chat_id = str(telegram.get("chat_id") or "").strip()
+        if chat_id:
+            state.ok(f"telegram: configured (chat_id: {_masked_value(chat_id)}, {_notification_events(telegram)})")
+        else:
+            state.warn("telegram: enabled, но chat_id пустой")
+        if telegram_token:
+            state.ok("telegram: bot_token задан в .env")
+        else:
+            state.warn("telegram: bot_token не задан в .env — уведомления в Telegram не будут отправляться")
+    elif telegram_token:
+        state.warn("telegram: bot_token задан в .env, но notifications.telegram выключен у клиента")
+    else:
+        state.warn("telegram: not configured")
+
+    webhook = notifications.get("webhook")
+    if isinstance(webhook, dict) and bool(webhook.get("enabled")):
+        url = str(webhook.get("url") or "").strip()
+        if url:
+            state.ok(f"webhook: configured ({url}, {_notification_events(webhook)})")
+        else:
+            state.warn("webhook: enabled, но url пустой")
+    else:
+        state.warn("webhook: not configured — для webhook доставки добавьте notifications.webhook.url в config.yaml")
 
 
 def _run_api_checks(
@@ -301,7 +370,7 @@ def main() -> int:
     args = parse_args()
     with tempfile.TemporaryDirectory(prefix="chatbot-client-launch-") as temp:
         temp_dir = Path(temp)
-        _configure_env(args.company, temp_dir)
+        original_env = _configure_env(args.company, temp_dir)
 
         from app.config import get_settings  # noqa: WPS433
 
@@ -315,6 +384,7 @@ def main() -> int:
         print("══════════════════════════════════════")
 
         services, _prices, _company = _check_client_files(args.company, client_dir, state)
+        _check_notifications(args.company, client_dir, temp_dir, original_env, state)
         if state.blockers:
             print("\nBootstrap / Chat smoke / Leads:")
             state.warn("API-проверки пропущены из-за блокеров в KB или конфиге")

@@ -7,7 +7,7 @@ from app.policy.adapter import merge_policy_classifications, structured_to_polic
 KNOWN_SERVICES = {"facial_cleansing", "laser_epilation"}
 
 
-def test_structured_regulated_risk_maps_to_medical_advice() -> None:
+def test_structured_regulated_risk_maps_to_regulated_advice() -> None:
     classification = normalize_intent_classification(
         {
             "intent": "service_mention",
@@ -22,7 +22,7 @@ def test_structured_regulated_risk_maps_to_medical_advice() -> None:
     result = structured_to_policy_classification(classification)
 
     assert result == {
-        "intent": "medical_advice",
+        "intent": "regulated_advice",
         "service_id": None,
         "confidence": 0.97,
     }

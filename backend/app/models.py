@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SessionStatus(str, Enum):
@@ -38,7 +38,8 @@ class PolicyReason(str, Enum):
     OK = "ok"
     UNKNOWN_SERVICE = "unknown_service"
     SIMILAR_SERVICES_FOUND = "similar_services_found"
-    MEDICAL_ADVICE = "medical_advice"
+    REGULATED_ADVICE = "regulated_advice"
+    MEDICAL_ADVICE = "regulated_advice"
     PRICE_QUESTION = "price_question"
     PRICE_QUESTION_NO_SERVICE = "price_question_no_service"
     OPERATOR_REQUESTED = "operator_requested"
@@ -113,7 +114,24 @@ class CompanyConfig(BaseModel):
     allowed_topics: list[str] = Field(default_factory=list)
     operator_triggers: list[str] = Field(default_factory=list)
     forbidden_claims: list[str] = Field(default_factory=list)
-    medical_disclaimer: str
+    safety_disclaimer: str = ""
+    medical_disclaimer: str = ""
+
+    @model_validator(mode="after")
+    def fill_legacy_disclaimers(self) -> "CompanyConfig":
+        """синхронизирует новый safety_disclaimer со старым medical_disclaimer."""
+
+        safety_disclaimer = self.safety_disclaimer.strip()
+        medical_disclaimer = self.medical_disclaimer.strip()
+        if not safety_disclaimer and medical_disclaimer:
+            self.safety_disclaimer = medical_disclaimer
+        elif not medical_disclaimer and safety_disclaimer:
+            self.medical_disclaimer = safety_disclaimer
+        elif not safety_disclaimer and not medical_disclaimer:
+            fallback = "По этому вопросу лучше уточнить у специалиста."
+            self.safety_disclaimer = fallback
+            self.medical_disclaimer = fallback
+        return self
 
 
 class PolicyResult(BaseModel):

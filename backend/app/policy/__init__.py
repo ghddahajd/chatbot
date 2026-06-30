@@ -75,7 +75,7 @@ def analyze_message(
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
-    medical_requested = intent == "medical_advice" or is_restricted
+    medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
 
@@ -232,11 +232,11 @@ def analyze_message(
     if medical_requested:
         return PolicyResult(
             action=PolicyAction.TRANSFER_OPERATOR,
-            reason=PolicyReason.MEDICAL_ADVICE,
+            reason=PolicyReason.REGULATED_ADVICE,
             service_id=service.id if service else None,
             confidence=0.98,
             safe_context={
-                "message_to_user": knowledge_base.company.medical_disclaimer,
+                "message_to_user": knowledge_base.company.safety_disclaimer,
                 "handoff_message": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE,
                 "restricted_category": restricted_category,
             },

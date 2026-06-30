@@ -314,7 +314,7 @@ class KnowledgeBase:
             "service": service_payload,
             "price": price.model_dump() if price else None,
             "faq": self.faq_markdown,
-            "disclaimer": self.company.medical_disclaimer,
+            "disclaimer": self.company.safety_disclaimer,
             "phrasebook": self.phrasebook,
         }
 

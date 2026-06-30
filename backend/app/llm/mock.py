@@ -289,10 +289,13 @@ class MockLLMClient(BaseLLMClient):
         known_services: list[dict[str, str]],
         domain_profile: dict[str, Any] | None = None,
     ) -> IntentClassification | None:
-        del domain_profile
         from ..policy import classify_and_extract
 
-        legacy_result = classify_and_extract(user_message, known_services)
+        legacy_result = classify_and_extract(
+            user_message,
+            known_services,
+            domain_profile=domain_profile,
+        )
         intent = str(legacy_result.get("intent") or "service_mention")
         service_id = legacy_result.get("service_id")
         confidence = float(legacy_result.get("confidence") or 0.0)

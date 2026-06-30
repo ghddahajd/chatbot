@@ -288,6 +288,7 @@ ALLOWED_CLASSIFIER_INTENTS = {
     "list_services",
     "price_question",
     "cosmetic_concern",
+    "regulated_advice",
     "medical_advice",
     "operator_request",
     "contact_link",

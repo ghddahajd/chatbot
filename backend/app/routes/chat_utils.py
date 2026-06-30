@@ -170,7 +170,7 @@ async def resolve_classification(
     )
     local_intent = str(local_result.get("intent") or "")
     local_confidence = float(local_result.get("confidence") or 0.0)
-    if local_intent == "medical_advice":
+    if local_intent in {"medical_advice", "regulated_advice"}:
         return local_result
 
     settings = request.app.state.settings

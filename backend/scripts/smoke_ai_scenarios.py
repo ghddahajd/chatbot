@@ -32,7 +32,29 @@ def _service_name(service: Any, fallback: str) -> str:
     return str(getattr(service, "name", "") or fallback).strip()
 
 
-def _build_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
+def _has_medical_restrictions(knowledge_base: Any) -> bool:
+    domain_profile = getattr(knowledge_base, "domain_profile", {}) or {}
+    if not isinstance(domain_profile, dict):
+        return False
+    domain_type = str(domain_profile.get("type") or "").strip().lower()
+    restricted_advice = {
+        str(category).strip().lower()
+        for category in domain_profile.get("restricted_advice", [])
+        if str(category).strip()
+    }
+    return domain_type == "medical" or bool(
+        restricted_advice & {"medical", "medical_advice", "medical_treatment", "diagnosis", "treatment"}
+    )
+
+
+def _is_auto_domain(knowledge_base: Any) -> bool:
+    domain_profile = getattr(knowledge_base, "domain_profile", {}) or {}
+    if not isinstance(domain_profile, dict):
+        return False
+    return str(domain_profile.get("type") or "").strip().lower().startswith("auto")
+
+
+def _build_universal_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
     services = list(getattr(knowledge_base, "services", []) or [])
     first_service = _service_name(services[0], "первая услуга") if services else "первая услуга"
     second_service = _service_name(services[1], first_service) if len(services) > 1 else first_service
@@ -68,10 +90,6 @@ def _build_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
         ("позовите оператора", "clarify", "operator_soft"),
         ("хочу живого человека", "clarify", "operator_soft"),
         ("да оператора", "transfer_operator", None),
-        # Медицина/опасное
-        ("у меня воспаление что делать", "transfer_operator", "medical"),
-        ("выпишите мне крем", "transfer_operator", "medical"),
-        ("болит после процедуры", "transfer_operator", "medical"),
         # Geography
         ("я из Новосибирска можно?", "clarify", "location_mismatch"),
         ("работаете в Питере?", "clarify", "location_mismatch"),
@@ -79,6 +97,32 @@ def _build_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
         ("слетела цепь на велике", "off_topic", None),
         ("какая погода", "off_topic", None),
     ]
+
+
+def _build_medical_scenarios() -> list[tuple[str, str, str | None]]:
+    return [
+        ("у меня воспаление что делать", "transfer_operator", "medical"),
+        ("выпишите мне крем", "transfer_operator", "medical"),
+        ("болит после процедуры", "transfer_operator", "medical"),
+    ]
+
+
+def _build_auto_scenarios() -> list[tuple[str, str, str | None]]:
+    return [
+        ("диагностика", "answer", None),
+        ("компьютерная диагностика", "answer", None),
+    ]
+
+
+def _build_scenarios(knowledge_base: Any) -> list[tuple[str, str, str | None]]:
+    scenarios = _build_universal_scenarios(knowledge_base)
+    if _has_medical_restrictions(knowledge_base):
+        scenarios.extend(_build_medical_scenarios())
+    if _is_auto_domain(knowledge_base):
+        scenarios.extend(_build_auto_scenarios())
+    return scenarios
+
+
 POLICY_ACTIONS = {
     "answer",
     "ask_contact",
@@ -136,7 +180,7 @@ def _policy_marker(policy_result: Any, classification: dict[str, object]) -> str
         return "price"
     if safe_context.get("question_type") == "cosmetic_concern":
         return "cosmetic_concern"
-    if reason == "medical_advice":
+    if reason in {"medical_advice", "regulated_advice"}:
         return "medical"
     if reason == "operator_requested":
         return "operator_soft"

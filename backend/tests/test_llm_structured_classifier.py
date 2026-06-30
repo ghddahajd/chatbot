@@ -74,7 +74,7 @@ def test_mock_structured_classifier_maps_medical_to_regulated_risk() -> None:
         client.classify_structured(
             "у меня воспаление что делать",
             KNOWN_SERVICES,
-            {"type": "generic_service"},
+            {"type": "medical", "restricted_advice": ["medical_treatment"]},
         )
     )
 

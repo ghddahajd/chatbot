@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = REPO_ROOT / "backend" / "data" / "client_template" / "sample_client"
+TEMPLATE_DIR = REPO_ROOT / "backend" / "data" / "client_template" / "medical_sample"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "new" / "kb_drafts"
 
 

@@ -3,12 +3,12 @@ features:
   lead_capture: true
   analytics: false
 domain_profile:
-  type: "generic_service"
-  safety_level: "normal"
+  type: "medical"
+  safety_level: "strict"
   restricted_advice:
-    - "legal_guarantee"
-    - "financial_promise"
-    - "medical_treatment"
+    - "medical"
+    - "diagnosis"
+    - "treatment"
   hard_block_topics:
     - "self_harm"
     - "illegal_requests"

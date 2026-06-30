@@ -1,8 +1,11 @@
 """проверки KnowledgeBaseResolver."""
 
+import shutil
+
 import pytest
 
 from app.knowledge import DuplicateDomainError
+from app.policy.restricted import get_restricted_categories
 
 
 def test_known_company_loads_kb(resolver) -> None:
@@ -37,12 +40,26 @@ def test_duplicate_domain_raises_409(resolver) -> None:
 
 
 def test_domain_profile_defaults(resolver) -> None:
-    profile = resolver.domain_profile("rosh_demo")
+    profile = resolver.domain_profile("unknown_company")
 
-    assert profile["type"] == "generic_service"
+    assert profile["type"] == "generic"
     assert profile["safety_level"] == "normal"
-    assert "medical_treatment" in profile["restricted_advice"]
+    assert profile["restricted_advice"] == []
     assert profile["escalation_policy"]["booking"] == "lead_then_operator"
+    assert get_restricted_categories(profile) == []
+
+
+def test_default_profile_is_unrestricted(resolver, managed_env) -> None:
+    client_dir = managed_env["clients_dir"] / "generic_no_profile"
+    client_dir.mkdir()
+    source_dir = managed_env["clients_dir"] / "rosh_demo"
+    for file_name in ("company.yaml", "services.json", "prices.json", "faq.md"):
+        shutil.copy2(source_dir / file_name, client_dir / file_name)
+
+    profile = resolver.domain_profile("generic_no_profile")
+
+    assert profile["type"] == "generic"
+    assert get_restricted_categories(profile) == []
 
 
 def test_domain_profile_from_client_config(resolver, managed_env) -> None:

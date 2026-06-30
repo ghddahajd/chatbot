@@ -31,3 +31,9 @@ forbidden_claims:
   - медицинские рекомендации
   - услуги не из базы
 safety_disclaimer: "Я не врач и не ставлю диагнозы. По медицинским вопросам вас сориентирует специалист."
+domain_profile:
+  type: medical
+  restricted_advice:
+    - medical
+    - diagnosis
+    - treatment

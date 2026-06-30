@@ -26,7 +26,33 @@ def test_medical_question_blocked(policy_session, knowledge_base) -> None:
     result = _analyze("что попить от прыщей?", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.TRANSFER_OPERATOR
-    assert result.reason == PolicyReason.MEDICAL_ADVICE
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_explicit_medical_profile_restricted(policy_session, knowledge_base) -> None:
+    result = _analyze("у меня воспаление что делать", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_generic_profile_does_not_auto_block_medical_phrase(resolver, managed_env) -> None:
+    from app.models import Session
+
+    client_dir = managed_env["clients_dir"] / "generic_no_profile"
+    client_dir.mkdir()
+    source_dir = managed_env["clients_dir"] / "rosh_demo"
+    for file_name in ("company.yaml", "services.json", "prices.json", "faq.md"):
+        (client_dir / file_name).write_text(
+            (source_dir / file_name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+    knowledge_base = resolver.get("generic_no_profile", fallback=False)
+    session = Session(company_id="generic_no_profile")
+    result = _analyze("у меня воспаление что делать", session, knowledge_base)
+
+    assert result.reason != PolicyReason.REGULATED_ADVICE
 
 
 def test_price_with_known_service(policy_session, knowledge_base) -> None:

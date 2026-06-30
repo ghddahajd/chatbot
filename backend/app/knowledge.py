@@ -32,13 +32,9 @@ DEFAULT_WIDGET_CONFIG = {
     "avatar_emoji": "💬",
 }
 DEFAULT_DOMAIN_PROFILE = {
-    "type": "generic_service",
+    "type": "generic",
     "safety_level": "normal",
-    "restricted_advice": [
-        "legal_guarantee",
-        "financial_promise",
-        "medical_treatment",
-    ],
+    "restricted_advice": [],
     "hard_block_topics": [
         "self_harm",
         "illegal_requests",
@@ -502,38 +498,8 @@ class KnowledgeBaseResolver:
     def domain_profile(self, company_id: str) -> dict[str, object]:
         """возвращает профиль домена для будущей structured intent classification."""
 
-        profile = {
-            **DEFAULT_DOMAIN_PROFILE,
-            "restricted_advice": list(DEFAULT_DOMAIN_PROFILE["restricted_advice"]),
-            "hard_block_topics": list(DEFAULT_DOMAIN_PROFILE["hard_block_topics"]),
-            "escalation_policy": dict(DEFAULT_DOMAIN_PROFILE["escalation_policy"]),
-        }
         payload = self._client_config(company_id)
-        raw_profile = payload.get("domain_profile") if isinstance(payload, dict) else None
-        if not isinstance(raw_profile, dict):
-            return profile
-
-        for key in ("type", "safety_level"):
-            value = raw_profile.get(key)
-            if isinstance(value, str) and value.strip():
-                profile[key] = value.strip()
-
-        for key in ("restricted_advice", "hard_block_topics"):
-            value = raw_profile.get(key)
-            if isinstance(value, list):
-                profile[key] = [str(item).strip() for item in value if str(item).strip()]
-
-        escalation_policy = raw_profile.get("escalation_policy")
-        if isinstance(escalation_policy, dict):
-            profile["escalation_policy"].update(
-                {
-                    str(key).strip(): str(value).strip()
-                    for key, value in escalation_policy.items()
-                    if str(key).strip() and str(value).strip()
-                }
-            )
-
-        return profile
+        return _domain_profile_from_payload(payload)
 
     def phrasebook(self, company_id: str) -> dict[str, str]:
         """возвращает user-facing фразы клиента с нейтральными fallback-значениями."""

@@ -5,13 +5,9 @@
     "analytics": false
   },
   "domain_profile": {
-    "type": "generic_service",
+    "type": "generic",
     "safety_level": "normal",
-    "restricted_advice": [
-      "legal_guarantee",
-      "financial_promise",
-      "medical_treatment"
-    ],
+    "restricted_advice": [],
     "hard_block_topics": [
       "self_harm",
       "illegal_requests",

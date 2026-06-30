@@ -78,6 +78,23 @@ def _write_duplicate_company(path: Path, company_id: str) -> None:
     )
 
 
+def _write_medical_config(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "domain_profile:",
+                '  type: "medical"',
+                "  restricted_advice:",
+                '    - "medical"',
+                '    - "diagnosis"',
+                '    - "treatment"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _prepare_clients_dir(temp_dir: Path) -> Path:
     clients_dir = temp_dir / "clients"
     clients_dir.mkdir(parents=True, exist_ok=True)
@@ -86,8 +103,9 @@ def _prepare_clients_dir(temp_dir: Path) -> Path:
     rosh_dir.mkdir()
     for file_name in REQUIRED_KB_FILES:
         shutil.copy2(REPO_ROOT / "backend" / "data" / file_name, rosh_dir / file_name)
+    _write_medical_config(rosh_dir / "config.yaml")
 
-    template_dir = REPO_ROOT / "backend" / "data" / "client_template" / "sample_client"
+    template_dir = REPO_ROOT / "backend" / "data" / "client_template" / "medical_sample"
     for company_id in ("dup_one", "dup_two"):
         target_dir = clients_dir / company_id
         shutil.copytree(template_dir, target_dir)

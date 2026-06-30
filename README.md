@@ -201,7 +201,7 @@ backend/data/clients/<company_id>/
 Шаблон:
 
 ```bash
-cp -R backend/data/client_template/sample_client backend/data/clients/new_client
+cp -R backend/data/client_template/medical_sample backend/data/clients/new_client
 ```
 
 После копирования поменяй `company_id` в `company.yaml` на название папки, например `new_client`.
@@ -261,7 +261,7 @@ python3 backend/scripts/onboard_client.py new/kb_drafts/client_id \
 Ручной fallback, если draft не нужен:
 
 ```bash
-cp -R backend/data/client_template/sample_client new/kb_drafts/client_id
+cp -R backend/data/client_template/medical_sample new/kb_drafts/client_id
 # заполнить company.yaml, services.json, prices.json, faq.md
 python3 backend/scripts/onboard_client.py new/kb_drafts/client_id
 ```

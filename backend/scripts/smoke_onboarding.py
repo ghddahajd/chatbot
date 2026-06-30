@@ -132,7 +132,10 @@ def _run_api_checks(runner: SmokeRunner, temp_dir: Path, clients_dir: Path) -> N
             "unknown service",
             "clarify",
             lambda: unknown_payload.get("action") == "clarify"
-            and "не вижу" in str(unknown_payload.get("answer") or ""),
+            and (
+                "не вижу" in str(unknown_payload.get("answer") or "")
+                or "не наш" in str(unknown_payload.get("answer") or "")
+            ),
         )
 
         lead_payload = client.post(

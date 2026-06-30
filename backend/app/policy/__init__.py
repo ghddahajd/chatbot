@@ -254,6 +254,7 @@ def analyze_message(
                 safe_context={
                     "question_type": "cosmetic_concern",
                     "suggested_services": services_summary(suggested_services),
+                    "domain_profile": knowledge_base.domain_profile,
                     "message_to_user": (
                         f"Для такого запроса обычно подходят: {service_names}. "
                         "Точные рекомендации даст специалист на консультации."

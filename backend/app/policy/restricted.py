@@ -43,6 +43,12 @@ def _has_medical_restrictions(categories: list[str]) -> bool:
     return bool(normalized_categories & MEDICAL_RESTRICTED_CATEGORIES)
 
 
+def has_medical_restricted_category(domain_profile: Any) -> bool:
+    """возвращает true, если профиль домена включает медицинские ограничения."""
+
+    return _has_medical_restrictions(get_restricted_categories(domain_profile))
+
+
 def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str | None]:
     """
     возвращает (is_restricted, category).

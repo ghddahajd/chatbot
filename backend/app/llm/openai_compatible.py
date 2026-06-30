@@ -468,7 +468,7 @@ class OpenAIClient(BaseLLMClient):
             .get("content", "")
             .strip()
         )
-        if not validate_consultation_response(answer):
+        if not validate_consultation_response(answer, context):
             logger.warning("service_consultation_source=fallback reason=validator answer=%r", answer[:240])
             return service_consultation_template(context, user_message, history)
         logger.info("service_consultation_source=provider model=%s", self.model)

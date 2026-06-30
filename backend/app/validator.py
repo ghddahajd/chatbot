@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+from .policy.restricted import has_medical_restricted_category
+
 
 logger = logging.getLogger(__name__)
 _intercept_count = 0
@@ -30,13 +32,15 @@ CONSULTATION_FORBIDDEN_PATTERNS = (
     *RAW_CONTEXT_PATTERNS,
     re.compile(r"\d"),
     re.compile(r"(?:₽|руб|рублей)", re.IGNORECASE),
+    *UNSUPPORTED_DETAIL_PATTERNS,
+)
+MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS = (
     re.compile(
         r"(?:диагноз|лечени|лечить|препарат|таблет|мазь|антибиотик|назнач|"
         r"гарант|безопасн|побочн|противопоказ|симптом|аллерг|беремен|"
         r"кров|родин|осложнен|осложнён|нормально|опасн|покраснен|от[её]к)",
         re.IGNORECASE,
     ),
-    *UNSUPPORTED_DETAIL_PATTERNS,
 )
 
 
@@ -113,12 +117,23 @@ def validate_response(answer: str, context: dict[str, Any] | None = None) -> boo
     return True
 
 
-def validate_consultation_response(answer: str) -> bool:
+def _context_has_medical_restrictions(context: dict[str, Any] | None) -> bool:
+    if context is None:
+        return True
+    domain_profile = context.get("domain_profile") if isinstance(context.get("domain_profile"), dict) else {}
+    return has_medical_restricted_category(domain_profile)
+
+
+def validate_consultation_response(answer: str, context: dict[str, Any] | None = None) -> bool:
     """более мягкая защита для консультационных ответов только от llm."""
 
     if not answer.strip():
         return False
-    return not any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS)
+    if any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS):
+        return False
+    if _context_has_medical_restrictions(context):
+        return not any(pattern.search(answer) for pattern in MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS)
+    return True
 
 
 def validator_intercept_count() -> int:
@@ -148,6 +163,11 @@ def clean_template_answer(context: dict[str, Any]) -> str:
 
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
     price = context.get("price") if isinstance(context.get("price"), dict) else {}
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    price_disclaimer = str(
+        phrasebook.get("price_disclaimer")
+        or "Предварительно так, точнее сообщит специалист."
+    )
     parts: list[str] = []
     if service.get("name"):
         description = service.get("short_description")

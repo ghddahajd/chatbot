@@ -316,6 +316,7 @@ class KnowledgeBase:
             "faq": self.faq_markdown,
             "disclaimer": self.company.safety_disclaimer,
             "phrasebook": self.phrasebook,
+            "domain_profile": self.domain_profile,
         }
 
 

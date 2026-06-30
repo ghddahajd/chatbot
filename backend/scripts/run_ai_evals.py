@@ -83,6 +83,27 @@ def _configure_env(company_id: str, use_real_llm: bool, temp_dir: Path, intent_e
         os.environ["GEMINI_API_KEY"] = ""
 
 
+def _apply_llm_overrides(args: argparse.Namespace) -> None:
+    if args.llm_provider:
+        os.environ["LLM_PROVIDER"] = args.llm_provider
+    if args.llm_base_url:
+        os.environ["LLM_BASE_URL"] = args.llm_base_url
+    if args.llm_model:
+        os.environ["LLM_MODEL"] = args.llm_model
+    if args.llm_api_key:
+        os.environ["LLM_API_KEY"] = args.llm_api_key
+
+
+def _print_llm_config(settings: Any, use_real_llm: bool, intent_engine: str) -> None:
+    mode = "real" if use_real_llm else "mock"
+    print(f"provider: {mode}")
+    print(f"intent_engine: {intent_engine}")
+    print(f"llm_provider: {settings.llm_provider}")
+    print(f"llm_model: {settings.llm_model}")
+    print(f"llm_base_url: {settings.llm_base_url}")
+    print(f"structured_classifier: {settings.llm_use_structured_classifier}")
+
+
 def _case_context(knowledge_base: Any) -> dict[str, str]:
     services = list(getattr(knowledge_base, "services", []) or [])
     first_service = services[0] if services else None
@@ -341,6 +362,10 @@ def parse_args() -> argparse.Namespace:
         help="какой classifier path использовать для прогона",
     )
     parser.add_argument("--real-llm", action="store_true")
+    parser.add_argument("--llm-provider", default="", help="override LLM_PROVIDER for this run")
+    parser.add_argument("--llm-base-url", default="", help="override LLM_BASE_URL for this run")
+    parser.add_argument("--llm-model", default="", help="override LLM_MODEL for this run")
+    parser.add_argument("--llm-api-key", default="", help="override LLM_API_KEY for this run")
     parser.add_argument("--strict", action="store_true", help="вернуть exit 1, если есть провалы")
     return parser.parse_args()
 
@@ -350,12 +375,16 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="chatbot-ai-evals-") as temp:
         temp_dir = Path(temp)
         _configure_env(args.company, args.real_llm, temp_dir, args.intent_engine)
+        _apply_llm_overrides(args)
 
         import anyio
 
+        from app.config import get_settings  # noqa: WPS433
+
+        get_settings.cache_clear()
+
         print(f"AI Quality Evals — {args.company}")
-        print("provider: real env" if args.real_llm else "provider: mock")
-        print(f"intent_engine: {args.intent_engine}")
+        _print_llm_config(get_settings(), args.real_llm, args.intent_engine)
         print("─" * 60)
         results = anyio.run(_run, args.company, args.real_llm, temp_dir)
         for result in results:

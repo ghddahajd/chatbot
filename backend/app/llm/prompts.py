@@ -107,7 +107,7 @@ SERVICE_CONSULTATION_TONE_VARIANTS = (
     "Тон: уверенный и простой, без медицинских обещаний.",
     "Тон: разговорный, но аккуратный; не звучать как скрипт.",
 )
-MEDICAL_RISK_CLASSIFICATION_PROMPT = (
+RESTRICTED_RISK_CLASSIFICATION_PROMPT = (
     "Ты — классификатор медицинского риска для виджета косметологического центра.\n"
     "Определи: относится ли сообщение к медицинской теме (симптомы, боль, "
     "кровотечение, аллергии, хронические заболевания, беременность, "
@@ -127,7 +127,7 @@ MEDICAL_RISK_CLASSIFICATION_PROMPT = (
     "\"сколько стоит чистка\" → COSMETIC\n"
     "\"какая процедура от прыщей\" → MEDICAL"
 )
-MEDICAL_HANDOFF_PROMPT = (
+RESTRICTED_HANDOFF_PROMPT = (
     "Сообщение пользователя классифицировано как касающееся здоровья. Тебе НЕЛЬЗЯ:\n"
     "- ставить диагноз\n"
     "- давать медицинские советы или оценивать опасность\n"
@@ -136,4 +136,7 @@ MEDICAL_HANDOFF_PROMPT = (
     "Прояви понимание по-человечески и мягко передай вопрос специалисту, "
     "без канцелярита, 1 предложение."
 )
-MEDICAL_HANDOFF_FALLBACK = "Понимаю, лучше уточнить это у специалиста напрямую — подключаю оператора."
+RESTRICTED_HANDOFF_FALLBACK = "Понимаю, лучше уточнить это у специалиста напрямую — подключаю оператора."
+MEDICAL_RISK_CLASSIFICATION_PROMPT = RESTRICTED_RISK_CLASSIFICATION_PROMPT
+MEDICAL_HANDOFF_PROMPT = RESTRICTED_HANDOFF_PROMPT
+MEDICAL_HANDOFF_FALLBACK = RESTRICTED_HANDOFF_FALLBACK

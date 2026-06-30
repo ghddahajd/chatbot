@@ -280,14 +280,14 @@ async def classify_consultation_risk(
         )
         return CONSULTATION_RISK_SAFE, request_id
 
-    local_result = await fallback_llm_client.classify_medical_risk(message)
+    local_result = await fallback_llm_client.classify_restricted_risk(message)
     service = context.get("service")
     has_service_context = isinstance(service, dict) and bool(service.get("name"))
     if local_result == "MEDICAL" or has_service_context:
         result = local_result
     else:
         try:
-            result = await request.app.state.llm_client.classify_medical_risk(message)
+            result = await request.app.state.llm_client.classify_restricted_risk(message)
         except Exception as error:
             logger.info("restricted_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             result = local_result
@@ -312,7 +312,7 @@ async def safe_restricted_handoff(request: Request, message: str) -> str:
     """возвращает безопасный handoff-ответ для restricted тем."""
 
     del request, message
-    return await fallback_llm_client.medical_handoff("")
+    return await fallback_llm_client.restricted_handoff("")
 
 
 async def safe_complete(

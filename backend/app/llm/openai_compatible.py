@@ -20,9 +20,9 @@ from .parsing import normalize_classification_result, tolerant_json_parse
 from .prompts import (
     DEFAULT_FALLBACK,
     INTENT_CLASSIFICATION_PROMPT,
-    MEDICAL_HANDOFF_FALLBACK,
-    MEDICAL_HANDOFF_PROMPT,
-    MEDICAL_RISK_CLASSIFICATION_PROMPT,
+    RESTRICTED_HANDOFF_FALLBACK,
+    RESTRICTED_HANDOFF_PROMPT,
+    RESTRICTED_RISK_CLASSIFICATION_PROMPT,
     SERVICE_CONSULTATION_PROMPT,
     SERVICE_CONSULTATION_TONE_VARIANTS,
     SMALL_TALK_PROMPT,
@@ -474,11 +474,11 @@ class OpenAIClient(BaseLLMClient):
         logger.info("service_consultation_source=provider model=%s", self.model)
         return answer
 
-    async def classify_medical_risk(self, user_message: str) -> str:
+    async def classify_restricted_risk(self, user_message: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": MEDICAL_RISK_CLASSIFICATION_PROMPT},
+                {"role": "system", "content": RESTRICTED_RISK_CLASSIFICATION_PROMPT},
                 {"role": "user", "content": f"Сообщение: {user_message}"},
             ],
             "temperature": 0,
@@ -492,7 +492,7 @@ class OpenAIClient(BaseLLMClient):
                 timeout=min(self.timeout, 5.0),
             )
         except Exception as error:
-            logger.warning("medical_classifier_source=fallback reason=request_error error=%s", type(error).__name__)
+            logger.warning("restricted_classifier_source=fallback reason=request_error error=%s", type(error).__name__)
             return "MEDICAL"
 
         data = response.json()
@@ -509,11 +509,11 @@ class OpenAIClient(BaseLLMClient):
             return "MEDICAL"
         return "MEDICAL"
 
-    async def medical_handoff(self, user_message: str) -> str:
+    async def restricted_handoff(self, user_message: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": MEDICAL_HANDOFF_PROMPT},
+                {"role": "system", "content": RESTRICTED_HANDOFF_PROMPT},
                 {"role": "user", "content": f"Сообщение: {user_message}"},
             ],
             "temperature": 0.35,
@@ -527,8 +527,8 @@ class OpenAIClient(BaseLLMClient):
                 timeout=min(self.timeout, 6.0),
             )
         except Exception as error:
-            logger.warning("medical_handoff_source=fallback reason=request_error error=%s", type(error).__name__)
-            return MEDICAL_HANDOFF_FALLBACK
+            logger.warning("restricted_handoff_source=fallback reason=request_error error=%s", type(error).__name__)
+            return RESTRICTED_HANDOFF_FALLBACK
 
         data = response.json()
         answer = (
@@ -538,5 +538,11 @@ class OpenAIClient(BaseLLMClient):
             .strip()
         )
         if not validate_consultation_response(answer):
-            return MEDICAL_HANDOFF_FALLBACK
+            return RESTRICTED_HANDOFF_FALLBACK
         return answer
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        return await self.classify_restricted_risk(user_message)
+
+    async def medical_handoff(self, user_message: str) -> str:
+        return await self.restricted_handoff(user_message)

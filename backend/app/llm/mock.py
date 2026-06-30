@@ -11,8 +11,8 @@ from .base import BaseLLMClient
 from .classification import IntentClassification, normalize_intent_classification
 from .prompts import (
     DEFAULT_FALLBACK,
-    MEDICAL_HANDOFF_FALLBACK,
     PRICE_DISCLAIMER,
+    RESTRICTED_HANDOFF_FALLBACK,
     SMALL_TALK_SERVICE_PIVOT,
 )
 
@@ -267,12 +267,18 @@ class MockLLMClient(BaseLLMClient):
     ) -> str:
         return service_consultation_template(context, user_message, history)
 
-    async def classify_medical_risk(self, user_message: str) -> str:
+    async def classify_restricted_risk(self, user_message: str) -> str:
         return medical_risk_template(user_message)
 
-    async def medical_handoff(self, user_message: str) -> str:
+    async def restricted_handoff(self, user_message: str) -> str:
         del user_message
-        return MEDICAL_HANDOFF_FALLBACK
+        return RESTRICTED_HANDOFF_FALLBACK
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        return await self.classify_restricted_risk(user_message)
+
+    async def medical_handoff(self, user_message: str) -> str:
+        return await self.restricted_handoff(user_message)
 
     async def classify_and_extract(
         self,

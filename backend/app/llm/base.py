@@ -62,14 +62,24 @@ class BaseLLMClient(ABC):
             return message_to_user.strip()
         return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
 
-    async def classify_medical_risk(self, user_message: str) -> str:
-        """классифицирует сообщение консультационной зоны как медицинское или косметическое."""
+    async def classify_restricted_risk(self, user_message: str) -> str:
+        """классифицирует консультационное сообщение как restricted или safe."""
 
         del user_message
         return "COSMETIC"
 
-    async def medical_handoff(self, user_message: str) -> str:
-        """возвращает безопасный ответ для передачи медицинских сообщений специалисту."""
+    async def restricted_handoff(self, user_message: str) -> str:
+        """возвращает безопасный ответ для передачи restricted сообщений оператору."""
 
         del user_message
         return "Понимаю, лучше уточнить это у специалиста напрямую — подключаю оператора."
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        """legacy alias для старого medical-oriented API."""
+
+        return await self.classify_restricted_risk(user_message)
+
+    async def medical_handoff(self, user_message: str) -> str:
+        """legacy alias для старого medical-oriented API."""
+
+        return await self.restricted_handoff(user_message)

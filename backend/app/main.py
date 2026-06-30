@@ -15,7 +15,7 @@ from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
-from .routes import analytics, chat, delivery, leads, operator, widget, ws
+from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .sessions import SessionStore
 from .ws_manager import ConnectionManager
 
@@ -72,6 +72,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(leads.router)
 app.include_router(analytics.router)
+app.include_router(debug.router)
 app.include_router(delivery.router)
 app.include_router(operator.router)
 app.include_router(widget.router)

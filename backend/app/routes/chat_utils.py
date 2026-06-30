@@ -166,6 +166,7 @@ async def resolve_classification(
         message,
         known_services,
         selected_knowledge_base.company.city,
+        selected_knowledge_base.domain_profile,
     )
     local_intent = str(local_result.get("intent") or "")
     local_confidence = float(local_result.get("confidence") or 0.0)

@@ -71,6 +71,45 @@ DEFAULT_PHRASEBOOK = {
 }
 
 
+def _default_domain_profile() -> dict[str, object]:
+    return {
+        **DEFAULT_DOMAIN_PROFILE,
+        "restricted_advice": list(DEFAULT_DOMAIN_PROFILE["restricted_advice"]),
+        "hard_block_topics": list(DEFAULT_DOMAIN_PROFILE["hard_block_topics"]),
+        "escalation_policy": dict(DEFAULT_DOMAIN_PROFILE["escalation_policy"]),
+    }
+
+
+def _domain_profile_from_payload(payload: dict[str, object]) -> dict[str, object]:
+    profile = _default_domain_profile()
+    raw_profile = payload.get("domain_profile") if isinstance(payload, dict) else None
+    if not isinstance(raw_profile, dict):
+        return profile
+
+    for key in ("type", "safety_level"):
+        value = raw_profile.get(key)
+        if isinstance(value, str) and value.strip():
+            profile[key] = value.strip()
+
+    for key in ("restricted_advice", "hard_block_topics"):
+        value = raw_profile.get(key)
+        if isinstance(value, list):
+            profile[key] = [str(item).strip() for item in value if str(item).strip()]
+
+    escalation_policy = raw_profile.get("escalation_policy")
+    if isinstance(escalation_policy, dict):
+        profile["escalation_policy"] = {
+            **dict(profile["escalation_policy"]),
+            **{
+                str(key): str(value)
+                for key, value in escalation_policy.items()
+                if str(key).strip() and str(value).strip()
+            },
+        }
+
+    return profile
+
+
 def normalize_text(value: str) -> str:
     """нормализует текст для нечёткого поиска по ключевым словам."""
 
@@ -128,12 +167,14 @@ class KnowledgeBase:
         prices: list[PriceEntry],
         faq_markdown: str,
         phrasebook: Optional[dict[str, str]] = None,
+        domain_profile: Optional[dict[str, object]] = None,
     ) -> None:
         self.company = company
         self.services = services
         self.prices = prices
         self.faq_markdown = faq_markdown
         self.phrasebook = phrasebook or dict(DEFAULT_PHRASEBOOK)
+        self.domain_profile = domain_profile or _default_domain_profile()
 
         self._services_by_id = {service.id: service for service in services}
         self._prices_by_service_id = {price.service_id: price for price in prices}
@@ -159,7 +200,14 @@ class KnowledgeBase:
             for item in json.loads((data_dir / "prices.json").read_text(encoding="utf-8"))
         ]
         faq_markdown = (data_dir / "faq.md").read_text(encoding="utf-8")
-        return cls(company=company, services=services, prices=prices, faq_markdown=faq_markdown)
+        domain_profile = _domain_profile_from_payload(company_payload)
+        return cls(
+            company=company,
+            services=services,
+            prices=prices,
+            faq_markdown=faq_markdown,
+            domain_profile=domain_profile,
+        )
 
     def _build_search_index(self, services: list[Service]) -> dict[str, str]:
         index: dict[str, str] = {}
@@ -390,6 +438,7 @@ class KnowledgeBaseResolver:
                     self.defaults_data_dir,
                 )
                 knowledge_base.phrasebook = self.phrasebook(target_company_id)
+                knowledge_base.domain_profile = self.domain_profile(target_company_id)
                 self._cache[target_company_id] = knowledge_base
             return self._cache[target_company_id]
 
@@ -411,6 +460,7 @@ class KnowledgeBaseResolver:
             if self.default_company_id not in self._cache:
                 knowledge_base = KnowledgeBase.load(self._client_dir(self.default_company_id))
                 knowledge_base.phrasebook = self.phrasebook(self.default_company_id)
+                knowledge_base.domain_profile = self.domain_profile(self.default_company_id)
                 self._cache[self.default_company_id] = knowledge_base
             return self._cache[self.default_company_id]
 

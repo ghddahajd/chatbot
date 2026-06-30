@@ -14,7 +14,6 @@ from .constants import (
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     HANDOFF_MESSAGE,
-    MEDICAL_KEYWORDS,
     NEGATIVE_MESSAGES,
     OPERATOR_SOFT_OFFER_MESSAGE,
     PRICE_KEYWORDS,
@@ -34,6 +33,7 @@ from .extractors import (
 )
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
+from .restricted import is_restricted_question
 from .rules import (
     city_prepositional,
     cosmetic_concern_services,
@@ -74,7 +74,8 @@ def analyze_message(
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
-    medical_requested = intent == "medical_advice" or contains_keyword(normalized_message, MEDICAL_KEYWORDS)
+    is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
+    medical_requested = intent == "medical_advice" or is_restricted
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
 
@@ -237,6 +238,7 @@ def analyze_message(
             safe_context={
                 "message_to_user": knowledge_base.company.medical_disclaimer,
                 "handoff_message": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE,
+                "restricted_category": restricted_category,
             },
             quick_actions=["Позвать оператора", "Оставить телефон"],
         )

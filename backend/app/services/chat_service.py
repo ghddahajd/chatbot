@@ -106,6 +106,7 @@ class ChatService:
                 message,
                 service_classifier_payload(request, knowledge_base),
                 knowledge_base.company.city,
+                knowledge_base.domain_profile,
             )
             waiting_policy_result = request.app.state.policy_analyzer(
                 message,

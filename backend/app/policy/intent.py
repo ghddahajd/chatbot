@@ -11,7 +11,6 @@ from .constants import (
     CLARIFY_SHORT_MESSAGES,
     COSMETIC_CONCERN_KEYWORDS,
     CONTACT_LINK_KEYWORDS,
-    MEDICAL_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
     PRICE_KEYWORDS,
     SERVICE_LIST_FAST_MESSAGES,
@@ -21,6 +20,7 @@ from .constants import (
     VISIT_KEYWORDS,
 )
 from .extractors import contains_keyword, is_location_mismatch
+from .restricted import is_restricted_question
 
 
 def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
@@ -85,6 +85,7 @@ def classify_and_extract(
     message: str,
     known_services: list[dict[str, Any]],
     company_city: str = "Москва",
+    domain_profile: Any | None = None,
 ) -> dict[str, object]:
     """локальный резервный путь, если внешний классификатор недоступен."""
 
@@ -111,7 +112,8 @@ def classify_and_extract(
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, BOOKING_KEYWORDS):
         return {"intent": "booking_request", "service_id": service_id, "confidence": 0.88}
-    if contains_keyword(normalized_message, MEDICAL_KEYWORDS):
+    is_restricted, _category = is_restricted_question(message, domain_profile)
+    if is_restricted:
         return {"intent": "medical_advice", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, COSMETIC_CONCERN_KEYWORDS):
         return {"intent": "cosmetic_concern", "service_id": service_id, "confidence": 0.82}

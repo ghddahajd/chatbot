@@ -47,7 +47,7 @@ def _write_duplicate_company(path: Path, company_id: str) -> None:
                 '  - "специалист"',
                 "forbidden_claims:",
                 '  - "гарантия результата"',
-                'medical_disclaimer: "Я не врач и не ставлю диагнозы."',
+                'safety_disclaimer: "Я не врач и не ставлю диагнозы."',
                 "",
             ]
         ),

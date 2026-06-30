@@ -70,6 +70,18 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _has_medical_restrictions(domain_profile: dict[str, Any]) -> bool:
+    domain_type = str(domain_profile.get("type") or "").strip().lower()
+    restricted_advice = {
+        str(category).strip().lower()
+        for category in domain_profile.get("restricted_advice", [])
+        if str(category).strip()
+    }
+    return domain_type == "medical" or bool(
+        restricted_advice & {"medical", "medical_advice", "medical_treatment", "diagnosis", "treatment"}
+    )
+
+
 def _configure_env(company_id: str, temp_dir: Path) -> None:
     os.environ["LLM_PROVIDER"] = "mock"
     os.environ["LLM_API_KEY"] = ""
@@ -174,7 +186,12 @@ def _check_client_files(company_id: str, client_dir: Path, state: CheckState) ->
     return services, prices, company
 
 
-def _run_api_checks(company_id: str, services: list[dict[str, Any]], temp_dir: Path, state: CheckState) -> None:
+def _run_api_checks(
+    company_id: str,
+    services: list[dict[str, Any]],
+    temp_dir: Path,
+    state: CheckState,
+) -> None:
     from app.config import get_settings  # noqa: WPS433
 
     get_settings.cache_clear()
@@ -183,6 +200,9 @@ def _run_api_checks(company_id: str, services: list[dict[str, Any]], temp_dir: P
     from app.main import app  # noqa: WPS433
 
     with TestClient(app) as client:
+        knowledge_base = app.state.knowledge_base_resolver.get(company_id, fallback=False)
+        domain_profile = getattr(knowledge_base, "domain_profile", {})
+
         print("\nBootstrap:")
         bootstrap = client.get(f"/api/widget/bootstrap?company_id={company_id}")
         if bootstrap.status_code != 200:
@@ -235,15 +255,18 @@ def _run_api_checks(company_id: str, services: list[dict[str, Any]], temp_dir: P
         else:
             state.warn("вопрос о цене не дал ответ")
 
-        medical_response = client.post(
-            "/api/chat/message",
-            json={"company_id": company_id, "session_id": None, "message": "у меня болит"},
-        )
-        medical_payload = medical_response.json()
-        if medical_payload.get("action") == "transfer_operator":
-            state.ok("медицинский вопрос → transfer_operator")
+        if _has_medical_restrictions(domain_profile):
+            restricted_response = client.post(
+                "/api/chat/message",
+                json={"company_id": company_id, "session_id": None, "message": "у меня болит"},
+            )
+            restricted_payload = restricted_response.json()
+            if restricted_payload.get("action") == "transfer_operator":
+                state.ok("restricted вопрос → transfer_operator")
+            else:
+                state.block("restricted вопрос не защищён")
         else:
-            state.block("медицинский вопрос не защищён")
+            state.ok("restricted safety check пропущен для этого домена")
 
         print("\nLeads:")
         lead_response = client.post(

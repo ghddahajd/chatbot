@@ -1,8 +1,8 @@
 # Chat Widget MVP
 
-Встраиваемый AI-чат для сайта медицинского / косметологического центра.
+Встраиваемый AI-чат для сайта клиента.
 
-Виджет подключается одной строкой через `<script>`, отвечает по локальной базе знаний, не даёт медицинские рекомендации и умеет передавать диалог оператору.
+Виджет подключается одной строкой через `<script>`, отвечает по базе знаний конкретного клиента и умеет передавать диалог оператору.
 
 ## Что внутри
 
@@ -213,7 +213,7 @@ python3 backend/scripts/validate_kb.py backend/data/clients/new_client
 ```
 
 Общие дефолты лежат в `backend/data/defaults/`. Если в клиентском `company.yaml`
-нет общего поля вроде `medical_disclaimer`, backend и валидатор возьмут его оттуда.
+нет общего поля вроде `safety_disclaimer`, backend и валидатор возьмут его оттуда.
 
 В embed-коде укажи тот же `company_id`:
 
@@ -388,7 +388,7 @@ curl -s "http://localhost:8000/api/analytics/summary?company_id=client_id&token=
 ```
 
 Сейчас это lightweight-аналитика по in-memory sessions и jsonl-логам: лиды,
-operator requests, unknown questions, medical handoffs. Это не BI и не dashboard.
+operator requests, unknown questions, regulated handoffs. Это не BI и не dashboard.
 
 ## Production notes
 

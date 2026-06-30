@@ -621,7 +621,7 @@
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent =
-        "Я отвечаю только по услугам центра и не даю медицинских рекомендаций. Спросите про услугу, цену, запись или попросите оператора.";
+        "Я отвечаю только по базе клиента. Спросите про услугу, цену, запись или попросите оператора.";
       this.elements.messages.appendChild(empty);
     }
 

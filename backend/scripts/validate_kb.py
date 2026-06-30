@@ -14,7 +14,6 @@ REQUIRED_COMPANY_FIELDS = (
     "city",
     "working_hours",
     "phone",
-    "medical_disclaimer",
 )
 REQUIRED_SERVICE_FIELDS = (
     "id",
@@ -126,6 +125,8 @@ def validate_kb(kb_dir: Path, defaults_dir: Path | None = None) -> list[str]:
     for field_name in REQUIRED_COMPANY_FIELDS:
         if not str(company.get(field_name) or "").strip():
             errors.append(f"company.yaml: пустое или отсутствует поле {field_name}")
+    if not str(company.get("safety_disclaimer") or company.get("medical_disclaimer") or "").strip():
+        errors.append("company.yaml: пустое или отсутствует поле safety_disclaimer")
 
     company_id = str(company.get("company_id") or "").strip()
     if not company_id:

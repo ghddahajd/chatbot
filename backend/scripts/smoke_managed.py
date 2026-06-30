@@ -70,7 +70,7 @@ def _write_duplicate_company(path: Path, company_id: str) -> None:
                 '  - "специалист"',
                 "forbidden_claims:",
                 '  - "гарантия результата"',
-                'medical_disclaimer: "Я не врач и не ставлю диагнозы."',
+                'safety_disclaimer: "По этому вопросу лучше уточнить у специалиста."',
                 "",
             ]
         ),
@@ -201,7 +201,7 @@ def main() -> int:
                 == 200,
             )
             runner.check(
-                "chat medical handoff",
+                "chat regulated handoff",
                 "transfer_operator",
                 lambda: client.post(
                     "/api/chat/message",

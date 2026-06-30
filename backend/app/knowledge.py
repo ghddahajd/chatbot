@@ -516,6 +516,23 @@ class KnowledgeBaseResolver:
                 phrasebook[key] = value.strip()
         return phrasebook
 
+    def notifications_config(self, company_id: str) -> dict[str, object]:
+        """возвращает настройки доставки событий из company.yaml/config.yaml."""
+
+        payload: dict[str, object] = {}
+        if not self.client_exists(company_id):
+            return payload
+
+        company_path = self._client_dir(company_id) / "company.yaml"
+        if company_path.exists() and company_path.is_file():
+            company_payload = yaml.safe_load(company_path.read_text(encoding="utf-8")) or {}
+            if isinstance(company_payload, dict):
+                payload.update(company_payload)
+
+        payload.update(self._client_config(company_id))
+        raw_notifications = payload.get("notifications")
+        return raw_notifications if isinstance(raw_notifications, dict) else {}
+
     def _client_config(self, company_id: str) -> dict[str, object]:
         if not self.client_exists(company_id):
             return {}

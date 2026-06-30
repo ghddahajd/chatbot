@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -10,6 +11,9 @@ from .utils.jsonl import append_jsonl
 
 if TYPE_CHECKING:
     from .delivery import DeliveryService
+
+
+logger = logging.getLogger(__name__)
 
 
 def lead_to_payload(lead: Lead) -> dict[str, Any]:
@@ -35,11 +39,25 @@ class LeadService:
         self.leads_file = leads_file
         self.delivery_service = delivery_service
 
-    async def save(self, lead: Lead) -> None:
+    async def save(self, lead: Lead, event_type: str = "lead_created") -> None:
         append_jsonl(self.leads_file, lead_to_payload(lead))
 
         if self.delivery_service is not None:
-            await self.delivery_service.enqueue_lead(lead)
+            try:
+                await self.delivery_service.enqueue_event(
+                    event_type=event_type,
+                    company_id=lead.company_id,
+                    session_id=lead.session_id,
+                    payload=lead_to_payload(lead),
+                )
+            except Exception as error:
+                logger.warning(
+                    "lead delivery enqueue failed company_id=%s session_id=%s event_type=%s error=%s",
+                    lead.company_id,
+                    lead.session_id,
+                    event_type,
+                    type(error).__name__,
+                )
 
 
 def build_lead_from_contact(

@@ -42,18 +42,64 @@ def _parse_datetime(value: Any) -> Optional[datetime]:
         return None
 
 
-def _telegram_text(payload: dict[str, Any]) -> str:
-    message = (
-        "Новый лид\n"
-        f"Клиент: {payload.get('company_id')}\n"
-        f"Имя: {payload.get('name')}\n"
-        f"Телефон: {payload.get('phone')}\n"
-        f"Сессия: {payload.get('session_id')}\n"
-        f"Запрос: {payload.get('summary')}"
+def _text_value(value: Any) -> str:
+    text = str(value or "").strip()
+    return text or "не указано"
+
+
+def _telegram_text(
+    *,
+    event_type: str,
+    company_name: str,
+    timestamp: str,
+    payload: dict[str, Any],
+    service_name: str = "",
+) -> str:
+    if event_type == "booking_created":
+        service_line = f"\n✂️ {_text_value(service_name)}" if service_name else ""
+        return (
+            f"📅 *Запись на услугу* — {_text_value(company_name)}\n\n"
+            f"👤 {_text_value(payload.get('name'))}\n"
+            f"📞 {_text_value(payload.get('phone'))}"
+            f"{service_line}\n"
+            f"💬 {_text_value(payload.get('summary'))}\n"
+            f"🕐 {_text_value(timestamp)}"
+        )
+
+    if event_type == "operator_requested":
+        operator_url = str(payload.get("operator_url") or "").strip()
+        operator_line = f"\n🔗 Открыть панель: {operator_url}" if operator_url else ""
+        return (
+            f"⚡️ *Клиент просит оператора* — {_text_value(company_name)}\n\n"
+            f"💬 \"{_text_value(payload.get('last_message'))}\"\n"
+            f"🕐 {_text_value(timestamp)}"
+            f"{operator_line}"
+        )
+
+    return (
+        f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
+        f"👤 {_text_value(payload.get('name'))}\n"
+        f"📞 {_text_value(payload.get('phone'))}\n"
+        f"💬 {_text_value(payload.get('summary'))}\n"
+        f"🕐 {_text_value(timestamp)}"
     )
-    if payload.get("service_id"):
-        message += f"\nУслуга: {payload.get('service_id')}"
-    return message
+
+
+def _webhook_payload(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event_type": record.get("event_type") or "lead_created",
+        "delivery_id": record.get("delivery_id"),
+        "company_id": record.get("company_id"),
+        "timestamp": record.get("timestamp"),
+        "data": record.get("payload") or {},
+    }
+
+
+def _event_enabled(config: dict[str, Any], event_type: str) -> bool:
+    events = config.get("events")
+    if not isinstance(events, list):
+        return False
+    return event_type in {str(event) for event in events}
 
 
 class DeliveryService:
@@ -74,21 +120,39 @@ class DeliveryService:
         self._lock = asyncio.Lock()
 
     async def enqueue_lead(self, lead: Lead) -> list[dict[str, Any]]:
-        """создаёт outbox-записи и сразу делает первую попытку доставки."""
+        """ставит событие создания лида в generic delivery outbox."""
+
+        return await self.enqueue_event(
+            event_type="lead_created",
+            company_id=lead.company_id,
+            session_id=lead.session_id,
+            payload=lead_to_payload(lead),
+        )
+
+    async def enqueue_event(
+        self,
+        *,
+        event_type: str,
+        company_id: str,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """создаёт outbox-записи события и сразу делает первую попытку доставки."""
 
         records = []
-        for destination in self._destinations_for(lead):
+        for destination in self._destinations_for(company_id=company_id, event_type=event_type):
             record = {
                 "timestamp": _iso(_utcnow()),
                 "delivery_id": str(uuid4()),
-                "company_id": lead.company_id,
-                "session_id": lead.session_id,
+                "event_type": event_type,
+                "company_id": company_id,
+                "session_id": session_id,
                 "destination_type": destination["type"],
                 "status": "pending",
                 "attempts": 0,
                 "next_attempt_at": _iso(_utcnow()),
                 "target": destination.get("target"),
-                "payload": lead_to_payload(lead),
+                "payload": payload,
                 "last_error": None,
                 "response_status": None,
             }
@@ -165,19 +229,44 @@ class DeliveryService:
             "recent": recent,
         }
 
-    def _destinations_for(self, lead: Lead) -> list[dict[str, str]]:
+    def _destinations_for(self, *, company_id: str, event_type: str) -> list[dict[str, str]]:
         destinations: list[dict[str, str]] = []
-        if self.telegram_bot_token and self.telegram_chat_id:
-            destinations.append({"type": "telegram", "target": "telegram"})
-
         try:
-            company = self.knowledge_base_resolver.get(lead.company_id, fallback=False).company
+            knowledge_base = self.knowledge_base_resolver.get(company_id, fallback=False)
         except KeyError:
-            logger.warning("delivery skipped webhook for unknown company_id=%s", lead.company_id)
-            company = None
+            logger.warning("delivery skipped destinations for unknown company_id=%s", company_id)
+            return destinations
 
-        if company is not None and company.lead_webhook_url:
-            destinations.append({"type": "webhook", "target": company.lead_webhook_url})
+        notifications = self.knowledge_base_resolver.notifications_config(company_id)
+        if notifications:
+            telegram_config = notifications.get("telegram")
+            if isinstance(telegram_config, dict):
+                chat_id = str(telegram_config.get("chat_id") or "").strip()
+                if (
+                    bool(telegram_config.get("enabled"))
+                    and self.telegram_bot_token
+                    and chat_id
+                    and _event_enabled(telegram_config, event_type)
+                ):
+                    destinations.append({"type": "telegram", "target": chat_id})
+
+            webhook_config = notifications.get("webhook")
+            if isinstance(webhook_config, dict):
+                webhook_url = str(webhook_config.get("url") or "").strip()
+                if (
+                    bool(webhook_config.get("enabled"))
+                    and webhook_url
+                    and _event_enabled(webhook_config, event_type)
+                ):
+                    destinations.append({"type": "webhook", "target": webhook_url})
+
+            return destinations
+
+        if self.telegram_bot_token and self.telegram_chat_id:
+            destinations.append({"type": "telegram", "target": self.telegram_chat_id})
+
+        if knowledge_base.company.lead_webhook_url:
+            destinations.append({"type": "webhook", "target": knowledge_base.company.lead_webhook_url})
 
         return destinations
 
@@ -225,13 +314,29 @@ class DeliveryService:
         destination_type = record.get("destination_type")
         payload = record.get("payload") or {}
         delivery_id = str(record.get("delivery_id") or "")
+        event_type = str(record.get("event_type") or "lead_created")
+        company_id = str(record.get("company_id") or "")
+        timestamp = str(record.get("timestamp") or "")
+        company_name = self._company_name(company_id)
+        service_name = self._service_name(company_id, payload.get("service_id"))
 
         async with httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS) as client:
             if destination_type == "telegram":
                 url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+                chat_id = str(record.get("target") or self.telegram_chat_id)
                 response = await client.post(
                     url,
-                    json={"chat_id": self.telegram_chat_id, "text": _telegram_text(payload)},
+                    json={
+                        "chat_id": chat_id,
+                        "text": _telegram_text(
+                            event_type=event_type,
+                            company_name=company_name,
+                            timestamp=timestamp,
+                            payload=payload,
+                            service_name=service_name,
+                        ),
+                        "parse_mode": "Markdown",
+                    },
                 )
                 return response.status_code
 
@@ -239,15 +344,31 @@ class DeliveryService:
                 target = str(record.get("target") or "")
                 response = await client.post(
                     target,
-                    json=payload,
+                    json=_webhook_payload(record),
                     headers={
                         "X-Delivery-ID": delivery_id,
+                        "X-Widget-Event": event_type,
                         "X-Company-ID": str(record.get("company_id") or ""),
                     },
                 )
                 return response.status_code
 
         raise httpx.HTTPError(f"unsupported destination_type={destination_type}")
+
+    def _company_name(self, company_id: str) -> str:
+        try:
+            return self.knowledge_base_resolver.get(company_id, fallback=False).company.company_name
+        except KeyError:
+            return company_id
+
+    def _service_name(self, company_id: str, service_id: Any) -> str:
+        if not service_id:
+            return ""
+        try:
+            service = self.knowledge_base_resolver.get(company_id, fallback=False).find_service_by_id(str(service_id))
+        except KeyError:
+            return str(service_id)
+        return service.name if service is not None else str(service_id)
 
     async def _append_record(self, record: dict[str, Any]) -> None:
         async with self._lock:

@@ -27,3 +27,68 @@ def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> Non
     assert second_payload["action"] == "clarify"
     assert second_payload["status"] == "AI_ACTIVE"
     assert "контакт не оставляем" in second_payload["answer"].lower()
+
+
+def test_booking_contact_enqueues_booking_event(test_client, monkeypatch) -> None:
+    events = []
+
+    async def fake_enqueue_event(**kwargs):
+        events.append(kwargs)
+        return []
+
+    monkeypatch.setattr(test_client.app.state.delivery_service, "enqueue_event", fake_enqueue_event)
+
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "хочу записаться на Консультация косметолога",
+        },
+    )
+    first_payload = first_response.json()
+
+    assert first_response.status_code == 200
+    assert first_payload["action"] == "clarify"
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["lead_created"] is True
+    assert events[-1]["event_type"] == "booking_created"
+    assert events[-1]["company_id"] == "rosh_demo"
+    assert events[-1]["session_id"] == first_payload["session_id"]
+
+
+def test_transfer_operator_enqueues_operator_requested_event(test_client, monkeypatch) -> None:
+    events = []
+
+    async def fake_enqueue_event(**kwargs):
+        events.append(kwargs)
+        return []
+
+    monkeypatch.setattr(test_client.app.state.delivery_service, "enqueue_event", fake_enqueue_event)
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "у меня воспаление что делать",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "transfer_operator"
+    assert events[-1]["event_type"] == "operator_requested"
+    assert events[-1]["payload"]["last_message"] == "у меня воспаление что делать"
+    assert events[-1]["payload"]["operator_url"].endswith("/operator")

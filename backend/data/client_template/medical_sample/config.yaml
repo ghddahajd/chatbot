@@ -2,6 +2,20 @@ features:
   operator: true
   lead_capture: true
   analytics: false
+notifications:
+  telegram:
+    enabled: false
+    chat_id: ""
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+  webhook:
+    enabled: false
+    url: ""
+    secret: ""
+    events:
+      - lead_created
 domain_profile:
   type: "medical"
   safety_level: "strict"

@@ -1,5 +1,7 @@
 """сервис обработки сообщений чата."""
 
+import logging
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
@@ -32,6 +34,9 @@ from ..routes.chat_utils import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class ChatService:
     """оркестрирует обработку одного пользовательского сообщения."""
 
@@ -42,6 +47,35 @@ class ChatService:
         phrasebook = getattr(self, "_phrasebook", {})
         value = phrasebook.get(key) if isinstance(phrasebook, dict) else None
         return str(value).strip() if value else fallback
+
+    def _operator_url(self) -> str:
+        try:
+            return str(self.request.url_for("operator_page"))
+        except Exception:
+            return "/operator"
+
+    async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> None:
+        delivery_service = getattr(self.request.app.state, "delivery_service", None)
+        if delivery_service is None:
+            return
+
+        try:
+            await delivery_service.enqueue_event(
+                event_type="operator_requested",
+                company_id=company_id,
+                session_id=session_id,
+                payload={
+                    "last_message": message,
+                    "operator_url": self._operator_url(),
+                },
+            )
+        except Exception as error:
+            logger.warning(
+                "operator delivery enqueue failed company_id=%s session_id=%s error=%s",
+                company_id,
+                session_id,
+                type(error).__name__,
+            )
 
     async def handle_message(
         self,
@@ -195,7 +229,10 @@ class ChatService:
                     summary=("Заявка на запись: " + message) if is_booking_request else message,
                     service_id=policy_result.service_id,
                 )
-                await lead_service.save(lead)
+                await lead_service.save(
+                    lead,
+                    event_type="booking_created" if is_booking_request else "lead_created",
+                )
                 lead_created = True
                 await session_store.set_lead_requested(session.session_id, True)
                 if is_booking_request:
@@ -219,6 +256,11 @@ class ChatService:
         elif policy_result.action == PolicyAction.TRANSFER_OPERATOR:
             await session_store.set_operator_requested(session.session_id, True)
             await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+            await self._enqueue_operator_requested(
+                company_id=session.company_id,
+                session_id=session.session_id,
+                message=message,
+            )
             answer = str(
                 policy_result.safe_context.get("handoff_message")
                 or policy_result.safe_context.get("message_to_user")
@@ -289,6 +331,11 @@ class ChatService:
                 )
                 await session_store.set_operator_requested(session.session_id, True)
                 await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+                await self._enqueue_operator_requested(
+                    company_id=session.company_id,
+                    session_id=session.session_id,
+                    message=message,
+                )
                 answer = await safe_restricted_handoff(request, message)
                 response_action = PolicyAction.TRANSFER_OPERATOR
                 response_quick_actions = ["Оставить телефон"]

@@ -148,7 +148,7 @@ def classification_to_legacy_result(classification: IntentClassification) -> dic
     intent = classification.intent
     if classification.risk in {"regulated_advice", "emergency"}:
         intent = "medical_advice"
-    elif classification.risk == "off_topic":
+    elif classification.risk in {"off_topic", "prompt_injection"}:
         intent = "off_topic"
     elif intent in {"regulated_advice", "faq_question"}:
         intent = "service_mention"

@@ -65,7 +65,7 @@ class EvalResult:
     ok: bool
 
 
-def _configure_env(company_id: str, use_real_llm: bool, temp_dir: Path) -> None:
+def _configure_env(company_id: str, use_real_llm: bool, temp_dir: Path, intent_engine: str) -> None:
     os.environ.setdefault("DEV_MODE", "true")
     os.environ.setdefault("DEFAULT_COMPANY_ID", company_id)
     os.environ.setdefault("CLIENTS_DATA_DIR", str(BACKEND_DIR / "data" / "clients"))
@@ -75,6 +75,7 @@ def _configure_env(company_id: str, use_real_llm: bool, temp_dir: Path) -> None:
     os.environ["DELIVERY_OUTBOX_FILE"] = str(temp_dir / "delivery_outbox.jsonl")
     os.environ["TELEGRAM_BOT_TOKEN"] = ""
     os.environ["TELEGRAM_CHAT_ID"] = ""
+    os.environ["LLM_USE_STRUCTURED_CLASSIFIER"] = "true" if intent_engine == "structured" else "false"
     if not use_real_llm:
         os.environ["LLM_PROVIDER"] = "mock"
         os.environ["LLM_API_KEY"] = ""
@@ -333,6 +334,12 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Eval
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Прогнать AI quality eval baseline.")
     parser.add_argument("--company", default="rosh_demo")
+    parser.add_argument(
+        "--intent-engine",
+        choices=("legacy", "structured"),
+        default="structured",
+        help="какой classifier path использовать для прогона",
+    )
     parser.add_argument("--real-llm", action="store_true")
     parser.add_argument("--strict", action="store_true", help="вернуть exit 1, если есть провалы")
     return parser.parse_args()
@@ -342,12 +349,13 @@ def main() -> int:
     args = parse_args()
     with tempfile.TemporaryDirectory(prefix="chatbot-ai-evals-") as temp:
         temp_dir = Path(temp)
-        _configure_env(args.company, args.real_llm, temp_dir)
+        _configure_env(args.company, args.real_llm, temp_dir, args.intent_engine)
 
         import anyio
 
         print(f"AI Quality Evals — {args.company}")
         print("provider: real env" if args.real_llm else "provider: mock")
+        print(f"intent_engine: {args.intent_engine}")
         print("─" * 60)
         results = anyio.run(_run, args.company, args.real_llm, temp_dir)
         for result in results:

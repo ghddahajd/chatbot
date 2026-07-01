@@ -301,39 +301,268 @@ async def debug_page(request: Request) -> str:
   <meta charset="utf-8" />
   <title>Debug trace</title>
   <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 32px; background: #f6f3ee; color: #1f2922; }
-    main { max-width: 960px; margin: 0 auto; }
-    input, textarea, button { font: inherit; box-sizing: border-box; }
-    input, textarea { width: 100%; padding: 12px; border: 1px solid #d8d0c4; border-radius: 12px; background: white; }
-    textarea { min-height: 96px; margin-top: 12px; }
-    button { margin-top: 12px; padding: 12px 18px; border: 0; border-radius: 12px; background: #1f7a5c; color: white; font-weight: 700; cursor: pointer; }
-    pre { white-space: pre-wrap; background: #fff; border: 1px solid #e5dfd5; border-radius: 16px; padding: 16px; box-shadow: 0 2px 12px rgba(45,95,79,.08); }
+    :root {
+      --bg: #f6f3ee;
+      --card: #fffdf9;
+      --ink: #1f2922;
+      --muted: #6b7670;
+      --line: #e5dfd5;
+      --accent: #1f7a5c;
+      --danger: #b45309;
+      --shadow: 0 14px 40px rgba(45, 95, 79, .10);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(31, 122, 92, .14), transparent 34rem),
+        linear-gradient(135deg, #fbf8f2, var(--bg));
+      color: var(--ink);
+    }
+    main { max-width: 1120px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.04em; }
+    p { margin: 0; color: var(--muted); }
+    label { display: block; margin: 18px 0 8px; font-weight: 700; }
+    input, textarea, button, select { font: inherit; }
+    input, textarea, select {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #d8d0c4;
+      border-radius: 14px;
+      background: white;
+      color: var(--ink);
+    }
+    textarea { min-height: 104px; resize: vertical; }
+    button {
+      border: 0;
+      border-radius: 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+      cursor: pointer;
+      padding: 12px 18px;
+    }
+    button.secondary { background: #e8f0ec; color: var(--accent); }
+    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; align-items: start; margin-top: 24px; }
+    .panel, .card {
+      background: rgba(255, 253, 249, .86);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }
+    .panel { padding: 18px; position: sticky; top: 20px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .hint { margin-top: 12px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+    .samples { display: grid; gap: 8px; margin-top: 14px; }
+    .sample {
+      width: 100%;
+      text-align: left;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      font-weight: 650;
+      padding: 10px 12px;
+    }
+    .summary { padding: 18px; margin-bottom: 16px; }
+    .summary h2 { margin: 0 0 10px; font-size: 20px; }
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: white;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .badge.strong { color: white; background: var(--accent); border-color: var(--accent); }
+    .answer {
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 16px;
+      background: white;
+      border: 1px solid var(--line);
+      white-space: pre-wrap;
+    }
+    .steps { display: grid; gap: 12px; }
+    .card { padding: 16px; }
+    .card h3 { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 10px; font-size: 16px; }
+    .duration { color: var(--muted); font-size: 13px; font-weight: 500; }
+    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; font-size: 14px; }
+    .kv div:nth-child(odd) { color: var(--muted); }
+    pre {
+      white-space: pre-wrap;
+      overflow: auto;
+      background: #151b17;
+      color: #f5f1e9;
+      border-radius: 16px;
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 750; }
+    .empty, .error {
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: 18px;
+      color: var(--muted);
+      background: rgba(255,255,255,.55);
+    }
+    .error { color: var(--danger); border-color: rgba(180, 83, 9, .35); background: rgba(255, 247, 237, .8); }
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+      .panel { position: static; }
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>Debug trace</h1>
-    <input id="company" value="rosh_demo" placeholder="company_id" />
-    <textarea id="message" placeholder="Сообщение">сколько стоит чистка лица</textarea>
-    <button id="run">Проверить</button>
-    <pre id="output">Введите сообщение и нажмите Проверить.</pre>
+    <p>Показывает путь решения: classification → restricted check → KB/price lookup → policy → final answer.</p>
+    <div class="grid">
+      <section class="panel">
+        <label for="company">company_id</label>
+        <input id="company" value="rosh_demo" placeholder="rosh_demo" />
+
+        <label for="message">Сообщение</label>
+        <textarea id="message" placeholder="Сообщение">сколько стоит чистка лица</textarea>
+
+        <div class="actions">
+          <button id="run">Проверить</button>
+          <button class="secondary" id="copy" type="button">Копировать JSON</button>
+        </div>
+
+        <div class="hint">
+          Это внутренний инструмент. Он не пишет лиды, не меняет реальные сессии
+          и нужен для разбора спорных ответов перед добавлением кейса в evals.
+        </div>
+
+        <div class="samples">
+          <button class="sample" type="button">сколько стоит чистка лица</button>
+          <button class="sample" type="button">чистка лица</button>
+          <button class="sample" type="button">а что это?</button>
+          <button class="sample" type="button">есть ботокс?</button>
+          <button class="sample" type="button">у меня воспаление что делать</button>
+          <button class="sample" type="button">хочу оставить телефон</button>
+          <button class="sample" type="button">ps5 или xbox</button>
+        </div>
+      </section>
+
+      <section id="output" class="output">
+        <div class="empty">Введите сообщение и нажмите «Проверить».</div>
+      </section>
+    </div>
   </main>
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
+    let lastPayload = null;
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function asJson(value) {
+      return JSON.stringify(value ?? {}, null, 2);
+    }
+
+    function renderValue(value) {
+      if (value === null || value === undefined || value === "") return "—";
+      if (typeof value === "object") return `<pre>${escapeHtml(asJson(value))}</pre>`;
+      return escapeHtml(value);
+    }
+
+    function renderStep(step) {
+      const result = step.result || {};
+      const rows = Object.entries(result)
+        .filter(([key]) => !["local", "final"].includes(key))
+        .map(([key, value]) => `<div>${escapeHtml(key)}</div><div>${renderValue(value)}</div>`)
+        .join("");
+      const localFinal = result.local || result.final
+        ? `<details open>
+             <summary>classification details</summary>
+             <pre>${escapeHtml(asJson({local: result.local, final: result.final}))}</pre>
+           </details>`
+        : "";
+      return `
+        <article class="card">
+          <h3>
+            <span>${escapeHtml(step.step)}</span>
+            <span class="duration">${step.duration_ms ? `${step.duration_ms} ms` : ""}</span>
+          </h3>
+          ${rows ? `<div class="kv">${rows}</div>` : ""}
+          ${localFinal}
+        </article>
+      `;
+    }
+
+    function renderPayload(payload) {
+      const steps = Array.isArray(payload.steps) ? payload.steps : [];
+      const quickActions = Array.isArray(payload.quick_actions)
+        ? payload.quick_actions.map((item) => item.label || item.value).filter(Boolean).join(", ")
+        : "";
+      return `
+        <section class="summary card">
+          <h2>Итог</h2>
+          <div class="badges">
+            <span class="badge strong">${escapeHtml(payload.final_action || "unknown")}</span>
+            <span class="badge">${escapeHtml(payload.company_id || "")}</span>
+            <span class="badge">${escapeHtml(payload.total_time_ms || 0)} ms</span>
+            ${payload.lead_preview ? '<span class="badge">lead preview</span>' : ""}
+          </div>
+          <div class="answer">${escapeHtml(payload.final_answer || "Нет ответа")}</div>
+          ${quickActions ? `<p class="hint">Quick actions: ${escapeHtml(quickActions)}</p>` : ""}
+        </section>
+        <section class="steps">
+          ${steps.map(renderStep).join("")}
+        </section>
+        <details>
+          <summary>raw JSON</summary>
+          <pre>${escapeHtml(asJson(payload))}</pre>
+        </details>
+      `;
+    }
+
     document.getElementById("run").onclick = async () => {
       const output = document.getElementById("output");
-      output.textContent = "Загрузка...";
-      const response = await fetch(`/api/debug/trace?token=${encodeURIComponent(token)}`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          company_id: document.getElementById("company").value,
-          message: document.getElementById("message").value
-        })
-      });
-      const payload = await response.json();
-      output.textContent = JSON.stringify(payload, null, 2);
+      output.innerHTML = '<div class="empty">Загрузка...</div>';
+      try {
+        const response = await fetch(`/api/debug/trace?token=${encodeURIComponent(token)}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            company_id: document.getElementById("company").value,
+            message: document.getElementById("message").value
+          })
+        });
+        const payload = await response.json();
+        lastPayload = payload;
+        if (!response.ok) {
+          output.innerHTML = `<div class="error">${escapeHtml(payload.detail || response.statusText)}</div>`;
+          return;
+        }
+        output.innerHTML = renderPayload(payload);
+      } catch (error) {
+        output.innerHTML = `<div class="error">${escapeHtml(error.message || error)}</div>`;
+      }
     };
+
+    document.getElementById("copy").onclick = async () => {
+      if (!lastPayload) return;
+      await navigator.clipboard.writeText(asJson(lastPayload));
+    };
+
+    document.querySelectorAll(".sample").forEach((button) => {
+      button.onclick = () => {
+        document.getElementById("message").value = button.textContent || "";
+      };
+    });
   </script>
 </body>
 </html>

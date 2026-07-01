@@ -3,6 +3,8 @@
 {"id":"real_rosh_typo_consultation","company":"rosh_demo","message":"консультацыя косметолога скок стоит","expected_action":"answer","expected_marker":"price","expected_service_id":"cosmetologist_consultation"}
 {"id":"real_rosh_short_price_followup","company":"rosh_demo","message":"а по деньгам?","history":[{"role":"user","text":"хочу чистку лица"}],"expected_action":"answer","expected_marker":"price","expected_service_id":"facial_cleansing"}
 {"id":"real_rosh_short_duration_followup","company":"rosh_demo","message":"это долго?","history":[{"role":"user","text":"хочу чистку лица"}],"expected_action":"answer","expected_service_id":"facial_cleansing"}
+{"id":"real_rosh_context_what_is_it","company":"rosh_demo","message":"а что это?","history":[{"role":"user","text":"чистка лица"}],"expected_action":"answer","expected_service_id":"facial_cleansing"}
+{"id":"real_rosh_context_more_details","company":"rosh_demo","message":"а можно поподробнее?","history":[{"role":"user","text":"чистка лица"}],"expected_action":"answer","expected_service_id":"facial_cleansing"}
 {"id":"real_rosh_mixed_known_unknown","company":"rosh_demo","message":"хочу чистку и ботокс","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
 {"id":"real_rosh_unknown_price_mixed","company":"rosh_demo","message":"консультация и ботокс сколько стоит?","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
 {"id":"real_rosh_unknown_hair","company":"rosh_demo","message":"стрижку делаете?","expected_action":"clarify","expected_service_id":null}

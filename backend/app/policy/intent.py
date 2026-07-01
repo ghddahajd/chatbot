@@ -35,9 +35,11 @@ def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
     return [term for term in terms if term]
 
 
-def _service_token_match(term_token: str, query_token: str) -> bool:
+def _service_token_match(term_token: str, query_token: str, *, allow_fuzzy: bool = True) -> bool:
     if _token_prefix_match(term_token, query_token):
         return True
+    if not allow_fuzzy:
+        return False
     if len(term_token) < 6 or len(query_token) < 6:
         return False
     first_letters = {term_token[0], query_token[0]}
@@ -46,7 +48,12 @@ def _service_token_match(term_token: str, query_token: str) -> bool:
     return SequenceMatcher(None, term_token, query_token).ratio() >= 0.74
 
 
-def _local_service_id(message: str, known_services: list[dict[str, Any]]) -> Optional[str]:
+def _local_service_id(
+    message: str,
+    known_services: list[dict[str, Any]],
+    *,
+    allow_fuzzy: bool = True,
+) -> Optional[str]:
     query_tokens = [token for token in normalize_text(message).split() if token]
     if not query_tokens:
         return None
@@ -65,7 +72,10 @@ def _local_service_id(message: str, known_services: list[dict[str, Any]]) -> Opt
 
             term_tokens = [token for token in normalized_term.split() if token]
             if term_tokens and all(
-                any(_service_token_match(term_token, query_token) for query_token in query_tokens)
+                any(
+                    _service_token_match(term_token, query_token, allow_fuzzy=allow_fuzzy)
+                    for query_token in query_tokens
+                )
                 for term_token in term_tokens
             ):
                 return str(service_payload.get("id"))
@@ -118,9 +128,12 @@ def classify_and_extract(
     if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):
         return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
 
-    service_id = _local_service_id(message, known_services)
-    if contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS) and service_id is None:
+    has_off_topic_keyword = contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS)
+    service_id = _local_service_id(message, known_services, allow_fuzzy=not has_off_topic_keyword)
+    if has_off_topic_keyword and service_id is None:
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
+    if service_id is None:
+        service_id = _local_service_id(message, known_services)
     if normalized_message in SERVICE_LIST_FAST_MESSAGES or contains_keyword(
         normalized_message, SERVICE_LIST_KEYWORDS
     ):

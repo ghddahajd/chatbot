@@ -424,7 +424,7 @@ class ChatService:
                         "lead_success",
                         "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
                     )
-                if not is_booking_request and (session.operator_requested or policy_result.service_id is None):
+                if not is_booking_request and session.operator_requested:
                     await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
             else:
                 answer = str(policy_result.safe_context.get("message_to_user") or "")

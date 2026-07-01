@@ -219,6 +219,10 @@ def _contextual_service_classification(
     if not service_id:
         return None
 
+    local_service_id = local_result.get("service_id")
+    if local_service_id and local_service_id != service_id:
+        return local_result
+
     normalized_message = normalize_text(message)
     if contains_keyword(normalized_message, PRICE_KEYWORDS) or normalized_message in {"а сколько", "сколько", "почем", "почём"}:
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.9}

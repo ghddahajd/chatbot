@@ -115,6 +115,7 @@ def test_pending_contact_accepts_messy_phone_and_name(test_client) -> None:
 
     assert second_response.status_code == 200
     assert second_payload["action"] == "ask_contact"
+    assert second_payload["status"] == "AI_ACTIVE"
     assert second_payload["lead_created"] is True
 
 
@@ -131,6 +132,7 @@ def test_contact_request_with_phone_in_same_message_creates_lead(test_client, ma
 
     assert response.status_code == 200
     assert payload["action"] == "ask_contact"
+    assert payload["status"] == "AI_ACTIVE"
     assert payload["lead_created"] is True
     lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert lead["name"] == "Леха"
@@ -174,3 +176,29 @@ def test_partial_phone_does_not_go_to_llm(test_client) -> None:
     assert second_payload["action"] == "clarify"
     assert second_payload["lead_created"] is False
     assert "номер неполный" in second_payload["answer"].lower()
+
+
+def test_explicit_service_beats_previous_service_context(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "Консультация косметолога",
+        },
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "сколько стоит Консультация дерматолога",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "answer"
+    assert "Консультация дерматолога" in second_payload["answer"]

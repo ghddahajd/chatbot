@@ -1,11 +1,13 @@
 """сервис обработки сообщений чата."""
 
 import logging
+import re
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from ..leads import build_lead_from_contact
+from ..knowledge import normalize_text
 from ..models import (
     ChatMessageResponse,
     MessageRole,
@@ -15,6 +17,8 @@ from ..models import (
     SessionStatus,
 )
 from ..policy import classify_and_extract
+from ..policy.constants import NEGATIVE_MESSAGES
+from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
     HAS_LETTER_OR_DIGIT,
@@ -35,6 +39,8 @@ from ..routes.chat_utils import (
 
 
 logger = logging.getLogger(__name__)
+PENDING_CONTACT = "collect_contact"
+PENDING_BOOKING_CONTACT = "booking_contact"
 
 
 class ChatService:
@@ -53,6 +59,155 @@ class ChatService:
             return str(self.request.url_for("operator_page"))
         except Exception:
             return "/operator"
+
+    def _looks_like_partial_phone(self, message: str) -> bool:
+        digits = re.sub(r"\D", "", message)
+        if not digits:
+            return False
+        if len(digits) >= 11:
+            return False
+        return len(digits) >= 7 and digits[0] in {"7", "8", "9"}
+
+    def _pending_contact_answer(self, session, message: str) -> str | None:
+        phone = extract_phone(message)
+        if phone:
+            return None
+        if self._looks_like_partial_phone(message):
+            return "Похоже, номер неполный. Проверьте, пожалуйста, и отправьте телефон ещё раз."
+        name = extract_name(message, None)
+        if name:
+            return f"{name}, напишите, пожалуйста, телефон — передам заявку менеджеру."
+        return "Напишите, пожалуйста, телефон. Можно просто номер и имя одним сообщением."
+
+    async def _clear_contact_state(self, session_store, session_id: str) -> None:
+        await session_store.set_pending_action(session_id, None)
+        await session_store.update_contact_draft(session_id, clear=True)
+
+    async def _handle_pending_contact(
+        self,
+        *,
+        session_store,
+        lead_service,
+        session,
+        message: str,
+    ) -> ChatMessageResponse | None:
+        if session.pending_action not in {PENDING_CONTACT, PENDING_BOOKING_CONTACT}:
+            return None
+
+        normalized_message = normalize_text(message)
+        if contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+            await self._clear_contact_state(session_store, session.session_id)
+            answer = self._phrase(
+                "contact_cancelled",
+                "Ок, контакт не оставляем. Могу подсказать по услугам, ценам или позвать менеджера.",
+            )
+            await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+            session = await session_store.get(session.session_id)
+            return ChatMessageResponse(
+                session_id=session.session_id,
+                status=session.status,
+                action=PolicyAction.CLARIFY,
+                answer=answer,
+                lead_created=False,
+                quick_actions=[],
+            )
+
+        phone = extract_phone(message)
+        if not phone:
+            answer = self._pending_contact_answer(session, message)
+            name = extract_name(message, None)
+            if name:
+                await session_store.update_contact_draft(session.session_id, name=name)
+            await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+            session = await session_store.get(session.session_id)
+            return ChatMessageResponse(
+                session_id=session.session_id,
+                status=session.status,
+                action=PolicyAction.CLARIFY,
+                answer=answer,
+                lead_created=False,
+                quick_actions=[],
+            )
+
+        name = extract_name(message, phone) or str(session.contact_draft.get("name") or "").strip() or None
+        await session_store.update_contact_draft(session.session_id, name=name, phone=phone)
+
+        is_booking_request = session.pending_action == PENDING_BOOKING_CONTACT
+        contact = {"name": name, "phone": phone}
+        lead = build_lead_from_contact(
+            company_id=session.company_id,
+            session_id=session.session_id,
+            contact=contact,
+            summary=("Заявка на запись: " + message) if is_booking_request else message,
+            service_id=session.last_service_id,
+        )
+        await lead_service.save(
+            lead,
+            event_type="booking_created" if is_booking_request else "lead_created",
+        )
+        await session_store.set_lead_requested(session.session_id, True)
+        await self._clear_contact_state(session_store, session.session_id)
+
+        if is_booking_request:
+            answer = self._phrase(
+                "booking_success",
+                "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
+            )
+        else:
+            answer = self._phrase(
+                "lead_success",
+                "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
+            )
+        await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+        session = await session_store.get(session.session_id)
+        return ChatMessageResponse(
+            session_id=session.session_id,
+            status=session.status,
+            action=PolicyAction.ASK_CONTACT,
+            answer=answer,
+            lead_created=True,
+            quick_actions=[],
+        )
+
+    async def _remember_policy_context(self, session_store, session, policy_result) -> None:
+        last_intent = str(policy_result.reason.value if hasattr(policy_result.reason, "value") else policy_result.reason)
+        await session_store.update_context(
+            session.session_id,
+            last_service_id=policy_result.service_id,
+            last_intent=last_intent,
+        )
+
+        if (
+            policy_result.safe_context.get("contact_request_cancelled")
+            or policy_result.safe_context.get("booking_request_cancelled")
+            or policy_result.safe_context.get("contact")
+            or policy_result.action == PolicyAction.TRANSFER_OPERATOR
+        ):
+            await self._clear_contact_state(session_store, session.session_id)
+            return
+
+        if policy_result.action == PolicyAction.ASK_CONTACT and not policy_result.safe_context.get("contact"):
+            pending_action = (
+                PENDING_BOOKING_CONTACT
+                if policy_result.safe_context.get("booking_request")
+                else PENDING_CONTACT
+            )
+            await session_store.set_pending_action(session.session_id, pending_action)
+            return
+
+        message_to_user = normalize_text(str(policy_result.safe_context.get("message_to_user") or ""))
+        asks_for_contact = "телефон" in message_to_user and ("имя" in message_to_user or "заявк" in message_to_user)
+        if policy_result.action == PolicyAction.CLARIFY and asks_for_contact:
+            pending_action = (
+                PENDING_BOOKING_CONTACT
+                if policy_result.safe_context.get("booking_request")
+                else PENDING_CONTACT
+            )
+            await session_store.set_pending_action(session.session_id, pending_action)
+            return
+
+        if policy_result.action in {PolicyAction.ANSWER, PolicyAction.SMALL_TALK, PolicyAction.OFF_TOPIC}:
+            await session_store.set_pending_action(session.session_id, None)
 
     async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> None:
         delivery_service = getattr(self.request.app.state, "delivery_service", None)
@@ -134,7 +289,29 @@ class ChatService:
             )
 
         message = stripped_message[:MAX_MESSAGE_LENGTH]
-        await session_store.append_message(session.session_id, MessageRole.USER, message)
+        session = await session_store.append_message(session.session_id, MessageRole.USER, message) or session
+
+        pending_contact_response = await self._handle_pending_contact(
+            session_store=session_store,
+            lead_service=lead_service,
+            session=session,
+            message=message,
+        )
+        if pending_contact_response is not None:
+            return pending_contact_response
+
+        if not extract_phone(message) and self._looks_like_partial_phone(message):
+            answer = "Похоже, номер неполный. Проверьте, пожалуйста, и отправьте телефон ещё раз."
+            await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+            session = await session_store.get(session.session_id)
+            return ChatMessageResponse(
+                session_id=session.session_id,
+                status=session.status,
+                action=PolicyAction.CLARIFY,
+                answer=answer,
+                lead_created=False,
+                quick_actions=[],
+            )
 
         if session.status == SessionStatus.WAITING_OPERATOR:
             local_classification = classify_and_extract(
@@ -212,6 +389,7 @@ class ChatService:
             message=message,
             policy_result=policy_result,
         )
+        await self._remember_policy_context(session_store, session, policy_result)
 
         lead_created = False
         answer = ""
@@ -235,6 +413,7 @@ class ChatService:
                 )
                 lead_created = True
                 await session_store.set_lead_requested(session.session_id, True)
+                await self._clear_contact_state(session_store, session.session_id)
                 if is_booking_request:
                     answer = self._phrase(
                         "booking_success",

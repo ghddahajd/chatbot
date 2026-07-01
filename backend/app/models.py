@@ -68,6 +68,10 @@ class Session(BaseModel):
     message_count: int = 0
     lead_requested: bool = False
     operator_requested: bool = False
+    pending_action: Optional[str] = None
+    last_service_id: Optional[str] = None
+    last_intent: Optional[str] = None
+    contact_draft: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

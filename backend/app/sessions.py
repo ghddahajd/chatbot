@@ -87,6 +87,57 @@ class SessionStore:
             session.updated_at = datetime.utcnow()
             return session
 
+    async def set_pending_action(self, session_id: str, action: Optional[str]) -> Optional[Session]:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            session.pending_action = action
+            session.updated_at = datetime.utcnow()
+            return session
+
+    async def update_context(
+        self,
+        session_id: str,
+        *,
+        last_service_id: Optional[str] = None,
+        last_intent: Optional[str] = None,
+    ) -> Optional[Session]:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if last_service_id is not None:
+                session.last_service_id = last_service_id
+            if last_intent is not None:
+                session.last_intent = last_intent
+            session.updated_at = datetime.utcnow()
+            return session
+
+    async def update_contact_draft(
+        self,
+        session_id: str,
+        *,
+        name: Optional[str] = None,
+        phone: Optional[str] = None,
+        clear: bool = False,
+    ) -> Optional[Session]:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if clear:
+                session.contact_draft = {}
+            else:
+                draft = dict(session.contact_draft)
+                if name:
+                    draft["name"] = name
+                if phone:
+                    draft["phone"] = phone
+                session.contact_draft = draft
+            session.updated_at = datetime.utcnow()
+            return session
+
     async def list_operator_sessions(self) -> list[OperatorSessionSummary]:
         async with self._lock:
             relevant_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}

@@ -215,12 +215,12 @@ def _contextual_service_classification(
     if session is None:
         return None
 
-    service_id = last_service_from_history(session, knowledge_base)
+    service_id = session.last_service_id or last_service_from_history(session, knowledge_base)
     if not service_id:
         return None
 
     normalized_message = normalize_text(message)
-    if contains_keyword(normalized_message, PRICE_KEYWORDS):
+    if contains_keyword(normalized_message, PRICE_KEYWORDS) or normalized_message in {"а сколько", "сколько", "почем", "почём"}:
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.9}
     if contains_keyword(normalized_message, DURATION_KEYWORDS) or contains_keyword(
         normalized_message,

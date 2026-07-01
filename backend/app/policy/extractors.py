@@ -46,17 +46,49 @@ def extract_phone(message: str) -> Optional[str]:
 
 
 def extract_name(message: str, phone: Optional[str]) -> Optional[str]:
+    source = message
     if phone is not None:
-        message = message.replace(phone, " ")
-    parts = [part.strip() for part in re.split(r"[,;]", message) if part.strip()]
-    if not parts:
-        return None
+        match = PHONE_PATTERN.search(message)
+        if match is not None:
+            line_start = message.rfind("\n", 0, match.start()) + 1
+            line_end = message.find("\n", match.end())
+            if line_end == -1:
+                line_end = len(message)
+            line = message[line_start:line_end]
+            local_start = match.start() - line_start
+            local_end = match.end() - line_start
+            before_phone = line[:local_start].strip()
+            after_phone = line[local_end:].strip()
+            source = before_phone or after_phone
 
-    candidate = parts[0]
-    words = candidate.split()
-    if not words:
-        return None
-    return words[0].strip().title()
+    cleaned = PHONE_PATTERN.sub(" ", source)
+    if phone is not None:
+        cleaned = cleaned.replace(phone, " ")
+        cleaned = cleaned.replace(phone.removeprefix("+"), " ")
+    cleaned = re.sub(r"[\d+\-\(\)]", " ", cleaned)
+    cleaned = re.sub(r"[,;:.!?]", " ", cleaned)
+
+    stop_words = {
+        "хочу",
+        "записаться",
+        "запиши",
+        "запишите",
+        "заявку",
+        "заявка",
+        "телефон",
+        "номер",
+        "оставить",
+        "оставляю",
+        "на",
+        "по",
+    }
+    for word in cleaned.split():
+        normalized_word = normalize_text(word)
+        if len(normalized_word) < 2 or normalized_word in stop_words:
+            continue
+        if re.search(r"[A-Za-zА-Яа-яЁё]", normalized_word):
+            return normalized_word.title()
+    return None
 
 
 def find_unsupported_city(normalized_message: str, company_city: str) -> Optional[str]:

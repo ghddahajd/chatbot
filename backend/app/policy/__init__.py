@@ -70,7 +70,9 @@ def analyze_message(
         or contains_keyword(normalized_message, DURATION_KEYWORDS)
         or contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     ):
-        service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+        service = knowledge_base.find_service_by_id(
+            session.last_service_id or last_service_from_history(session, knowledge_base)
+        )
     phone = extract_phone(message)
     operator_requested = contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
@@ -109,6 +111,21 @@ def analyze_message(
                 "message_to_user": "Ок, заявку не оформляем. Могу подсказать по услугам, ценам или позвать менеджера.",
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        )
+
+    if phone and lead_requested:
+        return PolicyResult(
+            action=PolicyAction.ASK_CONTACT,
+            reason=PolicyReason.CONTACT_PROVIDED,
+            service_id=service.id if service else None,
+            confidence=0.94,
+            safe_context={
+                "contact": {
+                    "name": extract_name(message, phone),
+                    "phone": phone,
+                },
+                "service": service.model_dump() if service else None,
+            },
         )
 
     if has_booking_contact_prompt(session) and not phone and not operator_requested:
@@ -367,7 +384,22 @@ def analyze_message(
 
     if booking_requested:
         if service is None:
-            service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+            service = knowledge_base.find_service_by_id(
+                session.last_service_id or last_service_from_history(session, knowledge_base)
+            )
+        if service is None and phone and " на " in f" {normalized_message} ":
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.UNKNOWN_SERVICE,
+                confidence=0.82,
+                safe_context={
+                    "message_to_user": (
+                        _phrase(knowledge_base, "unknown_service")
+                        or "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
+                    )
+                },
+                quick_actions=["Посмотреть услуги", "Позвать оператора"],
+            )
         if service is None and not phone:
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
@@ -410,7 +442,9 @@ def analyze_message(
 
     if phone and has_booking_contact_prompt(session):
         if service is None:
-            service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+            service = knowledge_base.find_service_by_id(
+                session.last_service_id or last_service_from_history(session, knowledge_base)
+            )
         return PolicyResult(
             action=PolicyAction.ASK_CONTACT,
             reason=PolicyReason.BOOKING_REQUEST,
@@ -496,7 +530,9 @@ def analyze_message(
 
     if explanation_requested:
         if service is None:
-            service = knowledge_base.find_service_by_id(last_service_from_history(session, knowledge_base))
+            service = knowledge_base.find_service_by_id(
+                session.last_service_id or last_service_from_history(session, knowledge_base)
+            )
         if service is None:
             return PolicyResult(
                 action=PolicyAction.CLARIFY,

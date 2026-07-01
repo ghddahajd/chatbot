@@ -1,5 +1,7 @@
 """интеграционные проверки chat message flow."""
 
+import json
+
 
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
     first_response = test_client.post(
@@ -92,3 +94,83 @@ def test_transfer_operator_enqueues_operator_requested_event(test_client, monkey
     assert events[-1]["event_type"] == "operator_requested"
     assert events[-1]["payload"]["last_message"] == "у меня воспаление что делать"
     assert events[-1]["payload"]["operator_url"].endswith("/operator")
+
+
+def test_pending_contact_accepts_messy_phone_and_name(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу оставить телефон"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "89999229333 леха",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "ask_contact"
+    assert second_payload["lead_created"] is True
+
+
+def test_contact_request_with_phone_in_same_message_creates_lead(test_client, managed_env) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "хочу оставить телефон\n89999229333 леха",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "ask_contact"
+    assert payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["name"] == "Леха"
+    assert lead["phone"] == "+79999229333"
+
+
+def test_unknown_booking_service_with_phone_does_not_create_lead(test_client) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "хочу записаться на шиномонтаж\n89999229333 леха",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "clarify"
+    assert payload["lead_created"] is False
+
+
+def test_partial_phone_does_not_go_to_llm(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу оставить телефон"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "8999922933 леха",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "clarify"
+    assert second_payload["lead_created"] is False
+    assert "номер неполный" in second_payload["answer"].lower()

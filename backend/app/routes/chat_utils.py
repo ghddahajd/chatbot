@@ -15,8 +15,14 @@ from ..knowledge import normalize_text
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, PolicyResult, QuickAction, Session
 from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
-from ..policy.constants import AFFIRMATIVE_MESSAGES
-from ..policy.extractors import mentions_company_city
+from ..policy.constants import (
+    AFFIRMATIVE_MESSAGES,
+    CLARIFY_SHORT_MESSAGES,
+    DURATION_KEYWORDS,
+    EXPLANATION_KEYWORDS,
+    PRICE_KEYWORDS,
+)
+from ..policy.extractors import contains_keyword, extract_phone, last_service_from_history, mentions_company_city
 from ..policy.restricted import (
     get_restricted_categories,
     has_medical_restricted_category,
@@ -185,10 +191,66 @@ def should_ignore_model_regulated_advice(
     )
 
 
+def _clarify_without_model(message: str) -> dict[str, object] | None:
+    normalized_message = normalize_text(message)
+    if not HAS_LETTER_OR_DIGIT.search(message):
+        return {"intent": "clarify", "service_id": None, "confidence": 0.9}
+    if (
+        normalized_message in AFFIRMATIVE_MESSAGES
+        or normalized_message in CLARIFY_SHORT_MESSAGES
+        or len(normalized_message) <= 2
+    ):
+        return {"intent": "clarify", "service_id": None, "confidence": 0.82}
+    if "метро" in normalized_message or "рядом" in normalized_message:
+        return {"intent": "clarify", "service_id": None, "confidence": 0.78}
+    return None
+
+
+def _contextual_service_classification(
+    message: str,
+    session: Session | None,
+    knowledge_base: KnowledgeBase,
+    local_result: dict[str, object],
+) -> dict[str, object] | None:
+    if session is None:
+        return None
+
+    service_id = last_service_from_history(session, knowledge_base)
+    if not service_id:
+        return None
+
+    normalized_message = normalize_text(message)
+    if contains_keyword(normalized_message, PRICE_KEYWORDS):
+        return {"intent": "price_question", "service_id": service_id, "confidence": 0.9}
+    if contains_keyword(normalized_message, DURATION_KEYWORDS) or contains_keyword(
+        normalized_message,
+        EXPLANATION_KEYWORDS,
+    ):
+        return {"intent": str(local_result.get("intent") or "service_mention"), "service_id": service_id, "confidence": 0.86}
+    return None
+
+
+def _looks_like_unknown_service_question(message: str) -> bool:
+    normalized_message = normalize_text(message)
+    return any(
+        phrase in normalized_message
+        for phrase in {
+            "хочу ",
+            "есть",
+            "делаете",
+            "делаите",
+            "можно",
+            "сколько стоит",
+            "цена",
+        }
+    )
+
+
 async def resolve_classification(
     message: str,
     request: Request,
     knowledge_base: KnowledgeBase | None = None,
+    session: Session | None = None,
 ) -> dict[str, object]:
     selected_knowledge_base = knowledge_base or request.app.state.knowledge_base
     known_services = service_classifier_payload(request, selected_knowledge_base)
@@ -202,6 +264,14 @@ async def resolve_classification(
     local_confidence = float(local_result.get("confidence") or 0.0)
     if local_intent in {"medical_advice", "regulated_advice"}:
         return local_result
+    if extract_phone(message):
+        return local_result
+    clarify_result = _clarify_without_model(message)
+    if clarify_result is not None:
+        return clarify_result
+    contextual_result = _contextual_service_classification(message, session, selected_knowledge_base, local_result)
+    if contextual_result is not None:
+        return contextual_result
 
     settings = request.app.state.settings
     skip_local_classifier = settings.llm_skip_classifier_for_local
@@ -244,6 +314,13 @@ async def resolve_classification(
         selected_knowledge_base.company.city,
         local_result,
         model_result,
+    ):
+        return local_result
+    if (
+        str(model_result.get("intent") or "") == "off_topic"
+        and local_intent == "service_mention"
+        and not local_result.get("service_id")
+        and _looks_like_unknown_service_question(message)
     ):
         return local_result
 

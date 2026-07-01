@@ -1,7 +1,7 @@
 {"id":"u_greeting_1","message":"привет","expected_intent":"small_talk","expected_action":"small_talk"}
 {"id":"u_greeting_2","message":"добрый день","expected_intent":"small_talk","expected_action":"small_talk"}
 {"id":"u_greeting_with_request","message":"привет, покажи услуги","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
-{"id":"u_small_talk_help","message":"чем можешь помочь?","expected_action":"clarify"}
+{"id":"u_small_talk_help","message":"чем можешь помочь?","expected_action":"answer","expected_marker":"list_services"}
 {"id":"u_thanks","message":"спасибо","expected_intent":"small_talk","expected_action":"small_talk"}
 {"id":"u_list_1","message":"покажи услуги","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
 {"id":"u_list_2","message":"что у вас есть","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}

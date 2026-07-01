@@ -28,6 +28,7 @@ PROTECTED_LOCAL_INTENTS = {
     "lead_request",
     "location_mismatch",
     "off_topic",
+    "cosmetic_concern",
 }
 MODEL_RISK_INTENTS = {"off_topic", "location_mismatch"}
 
@@ -72,6 +73,8 @@ def merge_policy_classifications(
     if model_intent == "unknown_service" and local_intent == "price_question" and not local_service_id:
         return model_result
     if local_intent in PROTECTED_LOCAL_INTENTS and local_confidence >= 0.75:
+        return local_result
+    if local_intent == "service_mention" and local_service_id and model_intent == "list_services":
         return local_result
     if local_service_id and not model_service_id:
         return local_result

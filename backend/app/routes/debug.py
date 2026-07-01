@@ -179,7 +179,7 @@ async def debug_trace(
         knowledge_base.domain_profile,
     )
     classification_started_at = time.perf_counter()
-    classification = await resolve_classification(message, request, knowledge_base)
+    classification = await resolve_classification(message, request, knowledge_base, session)
     steps.append(
         {
             "step": "classification",

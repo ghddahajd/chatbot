@@ -198,7 +198,7 @@ class ChatService:
         if policy_result is None:
             classification = maybe_contextual_classification(message, session)
             if classification is None:
-                classification = await resolve_classification(message, request, knowledge_base)
+                classification = await resolve_classification(message, request, knowledge_base, session)
             policy_result = request.app.state.policy_analyzer(
                 message,
                 session,

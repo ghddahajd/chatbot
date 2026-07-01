@@ -181,6 +181,7 @@ def _load_cases(company_id: str, knowledge_base: Any) -> list[EvalCase]:
     paths = [
         EVALS_DIR / "universal.jsonl",
         EVALS_DIR / "edge_cases.jsonl",
+        EVALS_DIR / "real_user_phrases.jsonl",
         EVALS_DIR / f"{company_id}.jsonl",
     ]
     cases: list[EvalCase] = []
@@ -235,7 +236,7 @@ async def _evaluate_policy_case(app: Any, company_id: str, case: EvalCase, knowl
     if policy_result is None:
         classification = maybe_contextual_classification(case.message, session)
         if classification is None:
-            classification = await resolve_classification(case.message, request, knowledge_base)
+            classification = await resolve_classification(case.message, request, knowledge_base, session)
         policy_result = app.state.policy_analyzer(case.message, session, knowledge_base, classification)
     else:
         classification = {"intent": "contextual_affirmative", "service_id": None, "confidence": 0.9}

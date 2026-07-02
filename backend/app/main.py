@@ -8,12 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analytics import AnalyticsService
 from .config import get_settings
-from .knowledge import KnowledgeBase
+from .delivery import DeliveryService
+from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
-from .routes import chat, leads, operator, ws
+from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .sessions import SessionStore
 from .ws_manager import ConnectionManager
 
@@ -24,12 +26,25 @@ async def lifespan(app: FastAPI):
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
 
     app.state.settings = settings
-    app.state.knowledge_base = KnowledgeBase.load(settings.data_dir)
+    app.state.knowledge_base_resolver = KnowledgeBaseResolver(
+        data_dir=settings.data_dir,
+        clients_data_dir=settings.clients_data_dir,
+        defaults_data_dir=settings.defaults_data_dir,
+        default_company_id=settings.default_company_id,
+    )
+    app.state.knowledge_base_resolver.build_domain_index()
+    app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
     app.state.session_store = SessionStore()
-    app.state.lead_service = LeadService(
-        leads_file=settings.leads_file,
+    app.state.delivery_service = DeliveryService(
+        outbox_file=settings.delivery_outbox_file,
+        knowledge_base_resolver=app.state.knowledge_base_resolver,
         telegram_bot_token=settings.telegram_bot_token,
         telegram_chat_id=settings.telegram_chat_id,
+    )
+    app.state.lead_service = LeadService(leads_file=settings.leads_file, delivery_service=app.state.delivery_service)
+    app.state.analytics_service = AnalyticsService(
+        analytics_file=settings.analytics_file,
+        leads_file=settings.leads_file,
     )
     app.state.llm_client = build_llm_client(
         provider=settings.llm_provider,
@@ -56,7 +71,11 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(leads.router)
+app.include_router(analytics.router)
+app.include_router(debug.router)
+app.include_router(delivery.router)
 app.include_router(operator.router)
+app.include_router(widget.router)
 app.include_router(ws.router)
 
 app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), name="static")

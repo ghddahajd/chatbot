@@ -1,0 +1,35 @@
+[
+  {
+    "id": "consultation",
+    "name": "Консультация",
+    "category": "Консультации",
+    "synonyms": ["консультация", "первичная консультация", "поговорить со специалистом"],
+    "short_description": "Первичная консультация специалиста по услугам компании.",
+    "price_from": 2000,
+    "duration": "30 минут",
+    "requires_specialist": true,
+    "source_note": "universal sample"
+  },
+  {
+    "id": "basic_service",
+    "name": "Базовая услуга",
+    "category": "Услуги",
+    "synonyms": ["базовая услуга", "стандартная услуга", "обычная услуга"],
+    "short_description": "Стандартная услуга из базы знаний клиента.",
+    "price_from": 5000,
+    "duration": "60 минут",
+    "requires_specialist": true,
+    "source_note": "universal sample"
+  },
+  {
+    "id": "extended_service",
+    "name": "Расширенная услуга",
+    "category": "Услуги",
+    "synonyms": ["расширенная услуга", "полный пакет", "комплексная услуга"],
+    "short_description": "Расширенный формат услуги с уточнением деталей перед выполнением.",
+    "price_from": 9000,
+    "duration": "90 минут",
+    "requires_specialist": true,
+    "source_note": "universal sample"
+  }
+]

@@ -1,6 +1,6 @@
 (function () {
   const SCRIPT = document.currentScript;
-  const COMPANY_ID = (SCRIPT && SCRIPT.dataset.companyId) || "rosh_demo";
+  const EMBED_COMPANY_ID = (SCRIPT && SCRIPT.dataset.companyId) || "";
   const API_BASE =
     (SCRIPT && SCRIPT.dataset.apiBase) ||
     (SCRIPT && new URL(SCRIPT.src, window.location.href).origin) ||
@@ -11,13 +11,12 @@
     WAITING_OPERATOR: "WAITING_OPERATOR",
     HUMAN_ACTIVE: "HUMAN_ACTIVE",
     CLOSED: "CLOSED",
+    UNAVAILABLE: "UNAVAILABLE",
   };
   const MIN_TYPING_VISIBLE_MS = 450;
 
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
-
-  const STORAGE_KEY = "ai-chat-widget-session-id";
 
   const template = document.createElement("template");
   template.innerHTML = `
@@ -32,6 +31,8 @@
         --accent: #1F7A5C;
         --accent-strong: #234C3F;
         --accent-soft: #E8F0EC;
+        --btn-color: #1F7A5C;
+        --btn-color-strong: #234C3F;
         --text-primary: #1F2922;
         --text-secondary: #6B7670;
         --border-subtle: #E5DFD5;
@@ -48,25 +49,31 @@
         font-family: "Plus Jakarta Sans", "Work Sans", "Avenir Next", sans-serif;
         color: var(--text-primary);
       }
+      .shell.position-left {
+        right: auto;
+        left: 24px;
+      }
       .launcher {
         width: 58px;
         height: 58px;
         border: 0;
         border-radius: 20px;
-        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
-        color: var(--accent);
+        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
+        color: #FFFDF8;
         font: inherit;
         font-size: 26px;
         font-weight: 600;
         cursor: pointer;
         box-shadow: var(--shadow-panel);
+        display: grid;
+        place-items: center;
       }
       .launcher.hidden {
         display: none;
       }
       .panel {
         width: min(500px, calc(100vw - 32px));
-        height: min(650px, calc(100vh - 110px));
+        height: min(590px, calc(100vh - 96px));
         display: none;
         grid-template-rows: auto auto 1fr auto;
         overflow: hidden;
@@ -122,6 +129,15 @@
         letter-spacing: -0.02em;
         text-align: center;
         color: var(--text-primary);
+      }
+      .subtitle {
+        margin: 7px auto 0;
+        max-width: 330px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.45;
+        text-align: center;
       }
       .statusbar {
         display: flex;
@@ -204,7 +220,7 @@
       }
       .message {
         max-width: 82%;
-        padding: 13px 15px;
+        padding: 14px 15px;
         border-radius: var(--radius-message);
         line-height: 1.5;
         font-size: 15px;
@@ -215,7 +231,7 @@
       }
       .message.user {
         align-self: flex-end;
-        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        background: var(--accent);
         color: #FFFDF8;
         border: 1px solid rgba(45, 95, 79, 0.24);
         border-bottom-right-radius: 8px;
@@ -264,15 +280,19 @@
         40% { opacity: 1; transform: translateY(-2px); }
       }
       .badge {
-        display: inline-block;
-        margin-bottom: 5px;
-        padding: 2px 7px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-bottom: 6px;
+        padding: 3px 7px;
         border-radius: 999px;
         background: var(--accent-soft);
         color: var(--accent);
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1;
+        text-transform: none;
+        letter-spacing: 0.02em;
       }
       .message.system .badge {
         background: var(--bg-primary);
@@ -326,7 +346,7 @@
         min-height: 54px;
         border: 0;
         border-radius: var(--radius-control);
-        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
         color: #FFFDF8;
         cursor: pointer;
         font: inherit;
@@ -362,7 +382,7 @@
         align-self: stretch;
         border: 0;
         border-radius: var(--radius-control);
-        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
         color: #FFFDF8;
         font: inherit;
         font-size: 14px;
@@ -382,7 +402,8 @@
       }
       @media (max-width: 640px) {
         .shell { right: 12px; bottom: 12px; }
-        .panel { width: calc(100vw - 24px); height: min(78vh, 680px); }
+        .shell.position-left { left: 12px; right: auto; }
+        .panel { width: calc(100vw - 24px); height: min(76vh, 620px); }
         .composer {
           align-items: stretch;
           flex-direction: column;
@@ -399,6 +420,7 @@
           <p class="eyebrow">Medical concierge</p>
           <button class="close" type="button" aria-label="Закрыть чат">×</button>
           <h2 class="title">Чат с поддержкой</h2>
+          <p class="subtitle">Подскажем по услугам и ценам</p>
         </header>
         <div class="statusbar status-ai"><span class="dot"></span><span class="status-text">AI-консультант на связи</span></div>
         <div class="messages"></div>
@@ -420,16 +442,28 @@
         open: false,
         sending: false,
         status: STATUS.AI_ACTIVE,
-        sessionId: window.localStorage.getItem(STORAGE_KEY) || "",
+        companyId: "",
+        sessionId: "",
         ws: null,
         typingNode: null,
         typingStartedAt: 0,
+        widgetConfig: {
+          primary_color: "#1F7A5C",
+          button_color: "#1F7A5C",
+          header_title: "Чат с поддержкой",
+          header_subtitle: "Подскажем по услугам и ценам",
+          position: "bottom-right",
+          avatar_emoji: "💬",
+        },
       };
       this.shadow = this.attachShadow({ mode: "closed" });
       this.shadow.appendChild(template.content.cloneNode(true));
       this.elements = {
         launcher: this.shadow.querySelector(".launcher"),
+        shell: this.shadow.querySelector(".shell"),
         panel: this.shadow.querySelector(".panel"),
+        title: this.shadow.querySelector(".title"),
+        subtitle: this.shadow.querySelector(".subtitle"),
         messages: this.shadow.querySelector(".messages"),
         input: this.shadow.querySelector(".input"),
         send: this.shadow.querySelector(".send"),
@@ -442,10 +476,14 @@
       };
     }
 
+    storageKey() {
+      return "ai-chat-widget-session-id:" + this.state.companyId;
+    }
+
     connectedCallback() {
       this.bindEvents();
       this.pushEmptyMessage();
-      this.restoreSession();
+      this.bootstrap();
     }
 
     bindEvents() {
@@ -462,6 +500,12 @@
     }
 
     async restoreSession() {
+      if (!this.state.companyId) {
+        this.applyState(STATUS.UNAVAILABLE);
+        return;
+      }
+
+      this.state.sessionId = window.localStorage.getItem(this.storageKey()) || "";
       if (!this.state.sessionId) {
         this.applyState(STATUS.AI_ACTIVE);
         return;
@@ -475,6 +519,11 @@
           return;
         }
         const payload = await response.json();
+        if (payload.company_id !== this.state.companyId) {
+          this.resetLocalSession();
+          this.applyState(STATUS.AI_ACTIVE);
+          return;
+        }
         this.renderHistory(payload.messages || []);
         this.applyState(payload.status);
         if (payload.status === STATUS.HUMAN_ACTIVE) {
@@ -483,6 +532,77 @@
       } catch (error) {
         this.applyState(STATUS.AI_ACTIVE);
       }
+    }
+
+    async bootstrap() {
+      try {
+        const bootstrapUrl = new URL(API_BASE + "/api/widget/bootstrap");
+        if (EMBED_COMPANY_ID) {
+          bootstrapUrl.searchParams.set("company_id", EMBED_COMPANY_ID);
+        }
+        const response = await fetch(bootstrapUrl.toString());
+        if (!response.ok) {
+          throw await this.buildBootstrapError(response);
+        }
+        const payload = await response.json();
+        this.state.companyId = payload.company_id || EMBED_COMPANY_ID;
+        if (!this.state.companyId) {
+          throw new Error("Widget company is not resolved");
+        }
+        this.applyWidgetConfig(payload.widget_config || {});
+        await this.restoreSession();
+      } catch (error) {
+        this.markUnavailable(error);
+      }
+    }
+
+    async buildBootstrapError(response) {
+      let detail = "";
+      try {
+        const payload = await response.json();
+        detail = String(payload.detail || payload.error || "");
+      } catch (error) {
+        detail = "";
+      }
+      const error = new Error(detail || "Widget bootstrap failed");
+      error.status = response.status;
+      error.detail = detail;
+      return error;
+    }
+
+    bootstrapErrorMessage(error) {
+      const status = Number(error?.status || 0);
+      if (status === 403) {
+        return "Виджет недоступен: домен не разрешён для этого клиента.";
+      }
+      if (status === 404) {
+        return "Виджет недоступен: клиент не найден. Проверьте company_id.";
+      }
+      if (status === 409) {
+        return "Виджет недоступен: домен привязан к нескольким клиентам.";
+      }
+      if (status >= 500) {
+        return "Сервис чата временно недоступен. Попробуйте позже.";
+      }
+      return "Виджет не запустился. Проверьте код подключения или доступность backend.";
+    }
+
+    applyWidgetConfig(config) {
+      const nextConfig = { ...this.state.widgetConfig };
+      for (const key of Object.keys(nextConfig)) {
+        const value = String(config[key] || "").trim();
+        if (value) nextConfig[key] = value;
+      }
+      if (!["bottom-right", "bottom-left"].includes(nextConfig.position)) {
+        nextConfig.position = "bottom-right";
+      }
+      this.state.widgetConfig = nextConfig;
+      this.style.setProperty("--accent", nextConfig.primary_color);
+      this.style.setProperty("--btn-color", nextConfig.button_color);
+      this.style.setProperty("--btn-color-strong", nextConfig.button_color);
+      this.elements.title.textContent = nextConfig.header_title;
+      this.elements.subtitle.textContent = nextConfig.header_subtitle;
+      this.elements.shell.classList.toggle("position-left", nextConfig.position === "bottom-left");
     }
 
     toggle() {
@@ -501,7 +621,7 @@
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.textContent =
-        "Я отвечаю только по услугам центра и не даю медицинских рекомендаций. Спросите про услугу, цену, запись или попросите оператора.";
+        "Я отвечаю только по базе клиента. Спросите про услугу, цену, запись или попросите оператора.";
       this.elements.messages.appendChild(empty);
     }
 
@@ -549,7 +669,12 @@
       const node = document.createElement("article");
       node.className = "message " + role;
 
-      if (role === "operator") {
+      if (role === "assistant") {
+        const badge = document.createElement("div");
+        badge.className = "badge";
+        badge.textContent = `${this.state.widgetConfig.avatar_emoji} AI`;
+        node.appendChild(badge);
+      } else if (role === "operator") {
         const badge = document.createElement("div");
         badge.className = "badge";
         badge.textContent = "Специалист";
@@ -613,7 +738,12 @@
 
     addQuickActions(actions) {
       this.clearQuickActions();
-      if (!Array.isArray(actions) || actions.length === 0 || this.state.status === STATUS.CLOSED) {
+      if (
+        !Array.isArray(actions) ||
+        actions.length === 0 ||
+        this.state.status === STATUS.CLOSED ||
+        this.state.status === STATUS.UNAVAILABLE
+      ) {
         return;
       }
 
@@ -653,7 +783,15 @@
     }
 
     async sendText(text) {
-      if (!text || this.state.sending || this.state.status === STATUS.CLOSED) return;
+      if (
+        !text ||
+        this.state.sending ||
+        !this.state.companyId ||
+        this.state.status === STATUS.CLOSED ||
+        this.state.status === STATUS.UNAVAILABLE
+      ) {
+        return;
+      }
 
       this.elements.input.value = "";
       this.clearQuickActions();
@@ -675,7 +813,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             session_id: this.state.sessionId || null,
-            company_id: COMPANY_ID,
+            company_id: this.state.companyId,
             message: text,
           }),
         });
@@ -685,7 +823,7 @@
         await this.hideTyping();
         if (payload.session_id) {
           this.state.sessionId = payload.session_id;
-          window.localStorage.setItem(STORAGE_KEY, payload.session_id);
+          window.localStorage.setItem(this.storageKey(), payload.session_id);
         }
         this.applyState(payload.status);
         if (payload.answer) {
@@ -714,28 +852,31 @@
         WAITING_OPERATOR: "Ожидаем специалиста",
         HUMAN_ACTIVE: "Специалист в чате",
         CLOSED: "Диалог завершён",
+        UNAVAILABLE: "Виджет недоступен",
       };
       const placeholders = {
         AI_ACTIVE: "Напишите ваш вопрос",
         WAITING_OPERATOR: "Добавьте детали, оператор их увидит...",
         HUMAN_ACTIVE: "Напишите ваш вопрос",
         CLOSED: "Диалог завершён",
+        UNAVAILABLE: "",
       };
       const statusClasses = {
         AI_ACTIVE: "status-ai",
         WAITING_OPERATOR: "status-waiting",
         HUMAN_ACTIVE: "status-human",
         CLOSED: "status-closed",
+        UNAVAILABLE: "status-closed",
       };
 
       this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;
       this.elements.statusbar.classList.remove("status-ai", "status-waiting", "status-human", "status-closed");
       this.elements.statusbar.classList.add(statusClasses[status] || statusClasses.AI_ACTIVE);
-      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED);
+      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED || status === STATUS.UNAVAILABLE);
       this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
       this.elements.input.placeholder = placeholders[status] || placeholders.AI_ACTIVE;
-      this.elements.input.disabled = status === STATUS.CLOSED;
-      this.elements.send.disabled = status === STATUS.CLOSED;
+      this.elements.input.disabled = status === STATUS.CLOSED || status === STATUS.UNAVAILABLE;
+      this.elements.send.disabled = status === STATUS.CLOSED || status === STATUS.UNAVAILABLE;
     }
 
     async handleSubmit() {
@@ -768,17 +909,45 @@
     }
 
     resetLocalSession() {
+      if (this.state.companyId) {
+        window.localStorage.removeItem(this.storageKey());
+      }
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;
-      window.localStorage.removeItem(STORAGE_KEY);
+    }
+
+    markUnavailable(error) {
+      if (this.state.companyId) {
+        window.localStorage.removeItem(this.storageKey());
+      }
+      this.state.sessionId = "";
+      if (this.state.ws) {
+        this.state.ws.close();
+        this.state.ws = null;
+      }
+      this.clearQuickActions();
+      this.elements.messages.innerHTML = "";
+      this.applyState(STATUS.UNAVAILABLE);
+      this.addMessage("system", this.bootstrapErrorMessage(error));
+      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+        console.warn("[ai-chat-widget] bootstrap failed", {
+          status: error?.status || null,
+          detail: error?.detail || error?.message || null,
+          companyId: EMBED_COMPANY_ID || null,
+          apiBase: API_BASE,
+        });
+      }
     }
 
     connectWebSocket() {
       if (!this.state.sessionId) return;
+      if (!this.state.companyId) return;
       if (this.state.ws && this.state.ws.readyState <= 1) return;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      this.state.ws = new WebSocket(protocol + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
+      const wsUrl = new URL(protocol + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
+      wsUrl.searchParams.set("company_id", this.state.companyId);
+      this.state.ws = new WebSocket(wsUrl.toString());
 
       this.state.ws.addEventListener("message", (event) => {
         try {

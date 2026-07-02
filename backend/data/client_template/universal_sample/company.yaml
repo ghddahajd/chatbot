@@ -1,0 +1,40 @@
+company_id: universal_sample
+company_name: "Universal Sample"
+city: "Москва"
+working_hours: "Пн-Пт 9:00-19:00"
+phone: "+7 000 000-00-00"
+address: "Адрес уточняется"
+website_url: "https://example.com"
+telegram_url: ""
+lead_webhook_url:
+allowed_domains:
+  - localhost
+  - example.com
+allowed_topics:
+  - "услуги"
+  - "цены"
+  - "запись"
+  - "режим работы"
+  - "адрес"
+  - "оплата"
+operator_triggers:
+  - "оператор"
+  - "менеджер"
+  - "человек"
+  - "специалист"
+forbidden_claims:
+  - "гарантия результата"
+  - "точная цена без уточнения деталей"
+  - "регулируемая консультация без специалиста"
+safety_disclaimer: "По этому вопросу лучше уточнить у специалиста."
+policies:
+  walk_ins: null
+  parking: null
+  payment_methods: []
+  cancellation_policy: null
+  accepts_insurance: null
+contact:
+  address: ""
+  phone: ""
+  email: ""
+  maps_url: ""

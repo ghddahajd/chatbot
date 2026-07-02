@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SessionStatus(str, Enum):
@@ -38,7 +38,8 @@ class PolicyReason(str, Enum):
     OK = "ok"
     UNKNOWN_SERVICE = "unknown_service"
     SIMILAR_SERVICES_FOUND = "similar_services_found"
-    MEDICAL_ADVICE = "medical_advice"
+    REGULATED_ADVICE = "regulated_advice"
+    MEDICAL_ADVICE = "regulated_advice"
     PRICE_QUESTION = "price_question"
     PRICE_QUESTION_NO_SERVICE = "price_question_no_service"
     OPERATOR_REQUESTED = "operator_requested"
@@ -67,12 +68,17 @@ class Session(BaseModel):
     message_count: int = 0
     lead_requested: bool = False
     operator_requested: bool = False
+    pending_action: Optional[str] = None
+    last_service_id: Optional[str] = None
+    last_intent: Optional[str] = None
+    contact_draft: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Lead(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    company_id: str
     session_id: str
     name: str
     phone: str
@@ -107,10 +113,29 @@ class CompanyConfig(BaseModel):
     address: Optional[str] = None
     website_url: Optional[str] = None
     telegram_url: Optional[str] = None
+    lead_webhook_url: Optional[str] = None
+    allowed_domains: list[str] = Field(default_factory=list)
     allowed_topics: list[str] = Field(default_factory=list)
     operator_triggers: list[str] = Field(default_factory=list)
     forbidden_claims: list[str] = Field(default_factory=list)
-    medical_disclaimer: str
+    safety_disclaimer: str = ""
+    medical_disclaimer: str = ""
+
+    @model_validator(mode="after")
+    def fill_legacy_disclaimers(self) -> "CompanyConfig":
+        """синхронизирует новый safety_disclaimer со старым medical_disclaimer."""
+
+        safety_disclaimer = self.safety_disclaimer.strip()
+        medical_disclaimer = self.medical_disclaimer.strip()
+        if not safety_disclaimer and medical_disclaimer:
+            self.safety_disclaimer = medical_disclaimer
+        elif not medical_disclaimer and safety_disclaimer:
+            self.medical_disclaimer = safety_disclaimer
+        elif not safety_disclaimer and not medical_disclaimer:
+            fallback = "По этому вопросу лучше уточнить у специалиста."
+            self.safety_disclaimer = fallback
+            self.medical_disclaimer = fallback
+        return self
 
 
 class PolicyResult(BaseModel):
@@ -143,6 +168,16 @@ class ChatMessageResponse(BaseModel):
     quick_actions: list[QuickAction] = Field(default_factory=list)
 
 
+class WidgetBootstrapResponse(BaseModel):
+    company_id: str
+    company_name: str
+    city: str
+    website_url: Optional[str] = None
+    telegram_url: Optional[str] = None
+    features: dict[str, bool] = Field(default_factory=dict)
+    widget_config: dict[str, Any] = Field(default_factory=dict)
+
+
 class SessionPublicResponse(BaseModel):
     session_id: str
     company_id: str
@@ -155,6 +190,7 @@ class SessionPublicResponse(BaseModel):
 
 class OperatorSessionSummary(BaseModel):
     session_id: str
+    company_id: str
     status: SessionStatus
     last_message: Optional[str] = None
     updated_at: datetime

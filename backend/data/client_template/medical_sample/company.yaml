@@ -1,0 +1,38 @@
+company_id: medical_sample
+company_name: "Medical Sample"
+city: "Москва"
+working_hours: "Пн-Пт 9:00-20:00, Сб 10:00-18:00"
+phone: "+7 000 000-00-00"
+address: "Адрес уточняется"
+website_url: "https://example.com"
+telegram_url: "https://t.me/example"
+lead_webhook_url:
+allowed_domains:
+  - localhost
+  - example.com
+allowed_topics:
+  - "услуги"
+  - "цены"
+  - "запись"
+  - "режим работы"
+  - "адрес"
+operator_triggers:
+  - "оператор"
+  - "специалист"
+  - "человек"
+forbidden_claims:
+  - "гарантия результата"
+  - "медицинский диагноз"
+  - "назначение лечения"
+safety_disclaimer: "Я не врач и не ставлю диагнозы. По медицинским вопросам лучше уточнить у специалиста."
+policies:
+  walk_ins: null
+  parking: null
+  payment_methods: []
+  cancellation_policy: null
+  accepts_insurance: null
+contact:
+  address: ""
+  phone: ""
+  email: ""
+  maps_url: ""

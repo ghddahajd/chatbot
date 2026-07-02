@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+from .policy.restricted import has_medical_restricted_category
+
 
 logger = logging.getLogger(__name__)
 _intercept_count = 0
@@ -16,6 +18,9 @@ RAW_CONTEXT_PATTERNS = (
     re.compile(r"\bsafe_context\b", re.IGNORECASE),
     re.compile(r"\bshort_description\b", re.IGNORECASE),
     re.compile(r"\bquestion_type\b", re.IGNORECASE),
+    re.compile(r"готовый безопасный смысл ответа", re.IGNORECASE),
+    re.compile(r"на основе предоставленного контекста", re.IGNORECASE),
+    re.compile(r"предоставленн(?:ого|ом)\s+контекст", re.IGNORECASE),
     re.compile(r"\{[^{}]*(?:service|price|company|service_id|price_text)[^{}]*\}", re.IGNORECASE | re.DOTALL),
 )
 UNSUPPORTED_DETAIL_PATTERNS = (
@@ -30,13 +35,15 @@ CONSULTATION_FORBIDDEN_PATTERNS = (
     *RAW_CONTEXT_PATTERNS,
     re.compile(r"\d"),
     re.compile(r"(?:₽|руб|рублей)", re.IGNORECASE),
+    *UNSUPPORTED_DETAIL_PATTERNS,
+)
+MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS = (
     re.compile(
         r"(?:диагноз|лечени|лечить|препарат|таблет|мазь|антибиотик|назнач|"
         r"гарант|безопасн|побочн|противопоказ|симптом|аллерг|беремен|"
         r"кров|родин|осложнен|осложнён|нормально|опасн|покраснен|от[её]к)",
         re.IGNORECASE,
     ),
-    *UNSUPPORTED_DETAIL_PATTERNS,
 )
 
 
@@ -58,6 +65,11 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
     question_type = context.get("question_type")
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
     price = context.get("price") if isinstance(context.get("price"), dict) else {}
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    price_disclaimer = str(
+        phrasebook.get("price_disclaimer")
+        or "Предварительно так, точнее сообщит специалист."
+    )
 
     if question_type == "price":
         price_text = str(price.get("price_text") or "")
@@ -108,12 +120,23 @@ def validate_response(answer: str, context: dict[str, Any] | None = None) -> boo
     return True
 
 
-def validate_consultation_response(answer: str) -> bool:
+def _context_has_medical_restrictions(context: dict[str, Any] | None) -> bool:
+    if context is None:
+        return True
+    domain_profile = context.get("domain_profile") if isinstance(context.get("domain_profile"), dict) else {}
+    return has_medical_restricted_category(domain_profile)
+
+
+def validate_consultation_response(answer: str, context: dict[str, Any] | None = None) -> bool:
     """более мягкая защита для консультационных ответов только от llm."""
 
     if not answer.strip():
         return False
-    return not any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS)
+    if any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS):
+        return False
+    if _context_has_medical_restrictions(context):
+        return not any(pattern.search(answer) for pattern in MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS)
+    return True
 
 
 def validator_intercept_count() -> int:
@@ -143,6 +166,11 @@ def clean_template_answer(context: dict[str, Any]) -> str:
 
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
     price = context.get("price") if isinstance(context.get("price"), dict) else {}
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    price_disclaimer = str(
+        phrasebook.get("price_disclaimer")
+        or "Предварительно так, точнее сообщит специалист."
+    )
     parts: list[str] = []
     if service.get("name"):
         description = service.get("short_description")
@@ -151,7 +179,7 @@ def clean_template_answer(context: dict[str, Any]) -> str:
         else:
             parts.append(str(service["name"]))
     if price.get("price_text"):
-        parts.append(f"Стоимость: {price['price_text']}. Предварительно так, точнее сообщит специалист.")
+        parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
     if parts:
         return " ".join(parts)
     return "Уточните, пожалуйста, что вас интересует? Могу рассказать про услуги, цены или записать к специалисту."

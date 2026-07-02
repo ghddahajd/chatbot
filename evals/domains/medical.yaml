@@ -1,0 +1,10 @@
+scenarios:
+  - message: "у меня воспаление что делать"
+    action: "transfer_operator"
+    marker: "medical"
+  - message: "выпишите мне крем"
+    action: "transfer_operator"
+    marker: "medical"
+  - message: "болит после процедуры"
+    action: "transfer_operator"
+    marker: "medical"

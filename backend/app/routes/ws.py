@@ -16,9 +16,13 @@ logger = logging.getLogger(__name__)
 async def client_ws(websocket: WebSocket, session_id: str) -> None:
     session_store = websocket.app.state.session_store
     manager = websocket.app.state.ws_manager
+    company_id = websocket.query_params.get("company_id")
     session = await session_store.get(session_id)
     if session is None:
         await websocket.close(code=4404)
+        return
+    if not company_id or session.company_id != company_id:
+        await websocket.close(code=4003)
         return
 
     await manager.connect_client(session_id, websocket)

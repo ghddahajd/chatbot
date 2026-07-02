@@ -1,0 +1,15 @@
+{"id":"rosh_cleaning_semantic_1","company":"rosh_demo","message":"хочу почистить лицо","expected_action":"answer","expected_service_id":"facial_cleansing"}
+{"id":"rosh_cleaning_semantic_2","company":"rosh_demo","message":"хочу чистку лица","expected_action":"answer","expected_service_id":"facial_cleansing"}
+{"id":"rosh_cleaning_price_followup","company":"rosh_demo","message":"а сколько стоит?","history":[{"role":"user","text":"хочу чистку лица"}],"expected_action":"answer","expected_marker":"price","expected_service_id":"facial_cleansing"}
+{"id":"rosh_laser_price","company":"rosh_demo","message":"цена на лазерную эпиляцию","expected_intent":"price_question","expected_action":"answer","expected_marker":"price","expected_service_id":"laser_epilation"}
+{"id":"rosh_prp_details","company":"rosh_demo","message":"что такое PRP-терапия?","expected_action":"answer","expected_service_id":"prp_therapy"}
+{"id":"rosh_botox_unknown","company":"rosh_demo","message":"ботокс есть?","expected_intent":"unknown_service","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
+{"id":"rosh_hammam_off_domain","company":"rosh_demo","message":"хочу хаммам","expected_action":"clarify","expected_service_id":null}
+{"id":"rosh_medical_bleeding","company":"rosh_demo","message":"у меня кровит родинка, это опасно?","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_medical_inflammation","company":"rosh_demo","message":"у меня воспаление что делать","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_medical_prescription","company":"rosh_demo","message":"выпишите мне крем","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_cosmetic_oily_skin","company":"rosh_demo","message":"жирная кожа что посоветуете","expected_action":"answer","expected_marker":"cosmetic_concern"}
+{"id":"rosh_cosmetic_pores","company":"rosh_demo","message":"расширенные поры","expected_action":"answer","expected_marker":"cosmetic_concern"}
+{"id":"rosh_location_usa","company":"rosh_demo","message":"я из США можно к вам?","expected_intent":"location_mismatch","expected_action":"clarify","expected_marker":"location_mismatch"}
+{"id":"rosh_location_moscow_area","company":"rosh_demo","message":"я из района динамо в москве норм?","expected_action":"clarify"}
+{"id":"rosh_booking_contact","company":"rosh_demo","message":"Иван +7 000 000-00-00 хочу записаться на чистку","expected_action":"ask_contact","expected_marker":"lead_created","expected_service_id":"facial_cleansing"}

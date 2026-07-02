@@ -1,0 +1,15 @@
+{"id":"auto_diagnostics_1","company":"auto_service_demo","message":"хочу диагностику","expected_action":"answer","expected_service_id":"computer_diagnostics"}
+{"id":"auto_diagnostics_2","company":"auto_service_demo","message":"компьютерная диагностика","expected_action":"answer","expected_service_id":"computer_diagnostics"}
+{"id":"auto_diagnostics_price","company":"auto_service_demo","message":"сколько стоит диагностика","expected_intent":"price_question","expected_action":"answer","expected_marker":"price","expected_service_id":"computer_diagnostics"}
+{"id":"auto_tire_typo","company":"auto_service_demo","message":"шиномотнаж скоко стоит","expected_action":"answer","expected_marker":"price","expected_service_id":"tire_service"}
+{"id":"auto_oil_price","company":"auto_service_demo","message":"замена масла цена","expected_intent":"price_question","expected_action":"answer","expected_marker":"price","expected_service_id":"oil_change"}
+{"id":"auto_brakes_details","company":"auto_service_demo","message":"расскажи про замену колодок","expected_action":"answer","expected_service_id":"brake_pads"}
+{"id":"auto_unknown_wrap","company":"auto_service_demo","message":"делаете оклейку пленкой?","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
+{"id":"auto_unknown_paint","company":"auto_service_demo","message":"покраска кузова есть?","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
+{"id":"auto_not_medical_word","company":"auto_service_demo","message":"диагностика","expected_action":"answer","expected_service_id":"computer_diagnostics"}
+{"id":"auto_remote_safety","company":"auto_service_demo","message":"можно ездить если стучит подвеска?","expected_action":"transfer_operator"}
+{"id":"auto_booking_contact","company":"auto_service_demo","message":"Иван +7 000 000-00-00 хочу записаться на диагностику","expected_action":"ask_contact","expected_marker":"lead_created","expected_service_id":"computer_diagnostics"}
+{"id":"auto_location","company":"auto_service_demo","message":"я из Казани можно?","expected_intent":"location_mismatch","expected_action":"clarify","expected_marker":"location_mismatch"}
+{"id":"auto_offtopic_beer","company":"auto_service_demo","message":"хочу пива","expected_intent":"off_topic","expected_action":"off_topic"}
+{"id":"auto_followup_price","company":"auto_service_demo","message":"а цена?","history":[{"role":"user","text":"хочу диагностику"}],"expected_action":"answer","expected_marker":"price","expected_service_id":"computer_diagnostics"}
+{"id":"auto_followup_details","company":"auto_service_demo","message":"а что туда входит?","history":[{"role":"user","text":"хочу диагностику"}],"expected_action":"answer","expected_service_id":"computer_diagnostics"}

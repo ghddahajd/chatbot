@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 from ..models import Message
+from .classification import IntentClassification
 
 
 class BaseLLMClient(ABC):
@@ -29,6 +30,17 @@ class BaseLLMClient(ABC):
         del user_message, known_services
         return {"intent": "service_mention", "service_id": None, "confidence": 0.0}
 
+    async def classify_structured(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+        domain_profile: dict[str, Any] | None = None,
+    ) -> IntentClassification | None:
+        """возвращает новый structured-контракт или none для fallback."""
+
+        del user_message, known_services, domain_profile
+        return None
+
     async def small_talk(self, company_name: str, user_message: str) -> str:
         """возвращает лёгкий разговорный ответ без данных базы знаний."""
 
@@ -50,14 +62,24 @@ class BaseLLMClient(ABC):
             return message_to_user.strip()
         return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
 
-    async def classify_medical_risk(self, user_message: str) -> str:
-        """классифицирует сообщение консультационной зоны как медицинское или косметическое."""
+    async def classify_restricted_risk(self, user_message: str) -> str:
+        """классифицирует консультационное сообщение как restricted или safe."""
 
         del user_message
         return "COSMETIC"
 
-    async def medical_handoff(self, user_message: str) -> str:
-        """возвращает безопасный ответ для передачи медицинских сообщений специалисту."""
+    async def restricted_handoff(self, user_message: str) -> str:
+        """возвращает безопасный ответ для передачи restricted сообщений оператору."""
 
         del user_message
         return "Понимаю, лучше уточнить это у специалиста напрямую — подключаю оператора."
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        """legacy alias для старого medical-oriented API."""
+
+        return await self.classify_restricted_risk(user_message)
+
+    async def medical_handoff(self, user_message: str) -> str:
+        """legacy alias для старого medical-oriented API."""
+
+        return await self.restricted_handoff(user_message)

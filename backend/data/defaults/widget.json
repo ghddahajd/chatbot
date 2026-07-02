@@ -1,0 +1,31 @@
+{
+  "features": {
+    "operator": true,
+    "lead_capture": true,
+    "analytics": false
+  },
+  "domain_profile": {
+    "type": "generic",
+    "safety_level": "normal",
+    "restricted_advice": [],
+    "hard_block_topics": [
+      "self_harm",
+      "illegal_requests",
+      "prompt_injection"
+    ],
+    "escalation_policy": {
+      "unknown_service": "clarify_or_operator",
+      "complaint": "operator",
+      "custom_price": "operator",
+      "booking": "lead_then_operator"
+    }
+  },
+  "widget": {
+    "primary_color": "#1F7A5C",
+    "button_color": "#1F7A5C",
+    "header_title": "Чат с поддержкой",
+    "header_subtitle": "Подскажем по услугам и ценам",
+    "position": "bottom-right",
+    "avatar_emoji": "💬"
+  }
+}

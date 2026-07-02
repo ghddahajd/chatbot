@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     app_name: str = "AI Chat Widget MVP"
     app_env: str = "development"
+    dev_mode: bool = True
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
@@ -41,6 +42,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
+    llm_use_structured_classifier: bool = True
     llm_skip_classifier_for_local: Optional[bool] = None
     openai_api_key: str = ""
     gemini_api_key: str = ""
@@ -48,10 +50,15 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     operator_token: str = "demo-operator-token"
     allowed_origins: str = "http://localhost:8000"
+    default_company_id: str = "rosh_demo"
 
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
+    clients_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "clients")
+    defaults_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "defaults")
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
+    analytics_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "analytics.jsonl")
+    delivery_outbox_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "delivery_outbox.jsonl")
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")
     demo_dir: Path = Field(default_factory=lambda: PROJECT_DIR / "demo")
 

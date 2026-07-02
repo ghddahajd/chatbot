@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 from typing import Any, Optional
 
 from ..knowledge import _token_prefix_match, normalize_text
@@ -11,16 +12,19 @@ from .constants import (
     CLARIFY_SHORT_MESSAGES,
     COSMETIC_CONCERN_KEYWORDS,
     CONTACT_LINK_KEYWORDS,
-    MEDICAL_KEYWORDS,
+    LEAD_REQUEST_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
+    OPERATOR_REQUEST_KEYWORDS,
     PRICE_KEYWORDS,
+    PROMPT_INJECTION_KEYWORDS,
     SERVICE_LIST_FAST_MESSAGES,
     SERVICE_LIST_KEYWORDS,
     SMALL_TALK_KEYWORDS,
     UNKNOWN_SERVICE_KEYWORDS,
     VISIT_KEYWORDS,
 )
-from .extractors import contains_keyword, is_location_mismatch
+from .extractors import contains_keyword, is_location_mismatch, mentions_company_city
+from .restricted import is_restricted_question
 
 
 def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
@@ -31,7 +35,25 @@ def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
     return [term for term in terms if term]
 
 
-def _local_service_id(message: str, known_services: list[dict[str, Any]]) -> Optional[str]:
+def _service_token_match(term_token: str, query_token: str, *, allow_fuzzy: bool = True) -> bool:
+    if _token_prefix_match(term_token, query_token):
+        return True
+    if not allow_fuzzy:
+        return False
+    if len(term_token) < 6 or len(query_token) < 6:
+        return False
+    first_letters = {term_token[0], query_token[0]}
+    if term_token[0] != query_token[0] and first_letters != {"е", "э"}:
+        return False
+    return SequenceMatcher(None, term_token, query_token).ratio() >= 0.74
+
+
+def _local_service_id(
+    message: str,
+    known_services: list[dict[str, Any]],
+    *,
+    allow_fuzzy: bool = True,
+) -> Optional[str]:
     query_tokens = [token for token in normalize_text(message).split() if token]
     if not query_tokens:
         return None
@@ -50,7 +72,10 @@ def _local_service_id(message: str, known_services: list[dict[str, Any]]) -> Opt
 
             term_tokens = [token for token in normalized_term.split() if token]
             if term_tokens and all(
-                any(_token_prefix_match(term_token, query_token) for query_token in query_tokens)
+                any(
+                    _service_token_match(term_token, query_token, allow_fuzzy=allow_fuzzy)
+                    for query_token in query_tokens
+                )
                 for term_token in term_tokens
             ):
                 return str(service_payload.get("id"))
@@ -85,6 +110,7 @@ def classify_and_extract(
     message: str,
     known_services: list[dict[str, Any]],
     company_city: str = "Москва",
+    domain_profile: Any | None = None,
 ) -> dict[str, object]:
     """локальный резервный путь, если внешний классификатор недоступен."""
 
@@ -93,12 +119,21 @@ def classify_and_extract(
         return {"intent": "clarify", "service_id": None, "confidence": 0.7}
     if is_location_mismatch(message, normalized_message, company_city):
         return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
-    if contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
-        return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
+    if mentions_company_city(normalized_message, company_city):
+        return {"intent": "clarify", "service_id": None, "confidence": 0.78}
+    if contains_keyword(normalized_message, PROMPT_INJECTION_KEYWORDS):
+        return {"intent": "off_topic", "service_id": None, "confidence": 0.96}
+    if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS):
+        return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
     if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):
         return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
 
-    service_id = _local_service_id(message, known_services)
+    has_off_topic_keyword = contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS)
+    service_id = _local_service_id(message, known_services, allow_fuzzy=not has_off_topic_keyword)
+    if has_off_topic_keyword and service_id is None:
+        return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
+    if service_id is None:
+        service_id = _local_service_id(message, known_services)
     if normalized_message in SERVICE_LIST_FAST_MESSAGES or contains_keyword(
         normalized_message, SERVICE_LIST_KEYWORDS
     ):
@@ -107,11 +142,14 @@ def classify_and_extract(
         normalized_message, VISIT_KEYWORDS
     ):
         return {"intent": "contact_link", "service_id": None, "confidence": 0.88}
+    if contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS):
+        return {"intent": "lead_request", "service_id": service_id, "confidence": 0.88}
     if contains_keyword(normalized_message, PRICE_KEYWORDS):
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, BOOKING_KEYWORDS):
         return {"intent": "booking_request", "service_id": service_id, "confidence": 0.88}
-    if contains_keyword(normalized_message, MEDICAL_KEYWORDS):
+    is_restricted, _category = is_restricted_question(message, domain_profile)
+    if is_restricted:
         return {"intent": "medical_advice", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, COSMETIC_CONCERN_KEYWORDS):
         return {"intent": "cosmetic_concern", "service_id": service_id, "confidence": 0.82}

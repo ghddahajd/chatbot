@@ -6,6 +6,11 @@ phone: "+7 (495) 000-00-00"
 address: "Москва, адрес уточняется оператором"
 website_url: "https://www.medcenterrosh.ru/"
 telegram_url: "https://t.me/rosh_demo"
+lead_webhook_url:
+allowed_domains:
+  - localhost
+  - medcenterrosh.ru
+  - www.medcenterrosh.ru
 allowed_topics:
   - услуги центра
   - запись на прием
@@ -25,4 +30,10 @@ forbidden_claims:
   - гарантии результата
   - медицинские рекомендации
   - услуги не из базы
-medical_disclaimer: "Я не врач и не ставлю диагнозы. По медицинским вопросам вас сориентирует специалист."
+safety_disclaimer: "Я не врач и не ставлю диагнозы. По медицинским вопросам вас сориентирует специалист."
+domain_profile:
+  type: medical
+  restricted_advice:
+    - medical
+    - diagnosis
+    - treatment

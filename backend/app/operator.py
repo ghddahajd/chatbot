@@ -121,6 +121,35 @@ def render_operator_panel() -> str:
       .session-item:hover {
         transform: translateY(-1px);
       }
+      .session-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .session-id {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .company-badge {
+        display: inline-flex;
+        align-items: center;
+        max-width: 100%;
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: #eef5ff;
+        color: #55729f;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+      .session-top .company-badge {
+        flex: 0 0 auto;
+        max-width: 118px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .status {
         color: var(--muted);
         font-size: 13px;
@@ -167,6 +196,12 @@ def render_operator_panel() -> str:
       .chat-meta {
         display: grid;
         gap: 12px;
+      }
+      .chat-identity {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
       }
       .chat-callout {
         display: none;
@@ -324,7 +359,10 @@ def render_operator_panel() -> str:
           <p class="eyebrow">Active chat</p>
           <h2 id="sessionTitle">Чат не выбран</h2>
           <div class="chat-meta">
-            <div id="sessionStatusChip" class="status-chip"><span class="status-dot"></span><span id="sessionStatus">Выберите сессию слева</span></div>
+            <div class="chat-identity">
+              <span id="sessionCompany" class="company-badge">Клиент не выбран</span>
+              <div id="sessionStatusChip" class="status-chip"><span class="status-dot"></span><span id="sessionStatus">Выберите сессию слева</span></div>
+            </div>
             <div id="chatCallout" class="chat-callout"></div>
             <div class="toolbar">
               <button id="closeChat" class="secondary">Закрыть чат</button>
@@ -346,6 +384,8 @@ def render_operator_panel() -> str:
       let ws = null;
       let wsSessionId = null;
       let currentStatus = null;
+      let currentCompanyId = "";
+      let currentCompanyName = "";
 
       function humanStatus(status) {
         const labels = {
@@ -355,6 +395,25 @@ def render_operator_panel() -> str:
           AI_ACTIVE: "AI активен",
         };
         return labels[status] || "Выберите сессию слева";
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function companyLabel(item) {
+        return item.company_name || item.company_id || "Клиент не указан";
+      }
+
+      function activeCompanyLabel() {
+        if (!currentCompanyName && !currentCompanyId) return "Клиент не выбран";
+        if (!currentCompanyId || currentCompanyName === currentCompanyId) return currentCompanyName || currentCompanyId;
+        return `${currentCompanyName} · ${currentCompanyId}`;
       }
 
       function authFetch(url, options = {}) {
@@ -368,6 +427,7 @@ def render_operator_panel() -> str:
         const sendButton = document.getElementById("sendMessage");
         const input = document.getElementById("messageInput");
         const statusChip = document.getElementById("sessionStatusChip");
+        const companyBadge = document.getElementById("sessionCompany");
         const callout = document.getElementById("chatCallout");
 
         const hasSession = Boolean(currentSessionId);
@@ -378,6 +438,7 @@ def render_operator_panel() -> str:
         closeButton.disabled = !hasSession || isClosed;
         sendButton.disabled = !hasSession || !isHumanActive || !ws || ws.readyState !== WebSocket.OPEN;
         input.disabled = !hasSession || !isHumanActive || !ws || ws.readyState !== WebSocket.OPEN;
+        companyBadge.textContent = hasSession ? activeCompanyLabel() : "Клиент не выбран";
 
         statusChip.className = "status-chip";
         if (isWaiting) statusChip.classList.add("waiting");
@@ -453,7 +514,7 @@ def render_operator_panel() -> str:
           const role = displayRole(item);
           const el = document.createElement("div");
           el.className = `msg ${role}`;
-          el.innerHTML = `<div class="msg-head">${role}</div><div>${item.text}</div>`;
+          el.innerHTML = `<div class="msg-head">${escapeHtml(role)}</div><div>${escapeHtml(item.text)}</div>`;
           if (!takeActionAdded && shouldShowTakeAction(item, index, messages)) {
             history.appendChild(el);
             appendTakeChatAction(history);
@@ -474,7 +535,14 @@ def render_operator_panel() -> str:
         for (const item of sessions) {
           const el = document.createElement("li");
           el.className = "session-item" + (item.session_id === currentSessionId ? " active" : "");
-          el.innerHTML = `<strong>${item.session_id}</strong><div class="status" style="margin-top:6px;">${humanStatus(item.status)}</div><div class="subtle" style="margin-top:8px;">${item.last_message || "Без сообщений"}</div>`;
+          el.innerHTML = `
+            <div class="session-top">
+              <strong class="session-id">${escapeHtml(item.session_id)}</strong>
+              <span class="company-badge" title="${escapeHtml(companyLabel(item))}">${escapeHtml(companyLabel(item))}</span>
+            </div>
+            <div class="status" style="margin-top:6px;">${escapeHtml(humanStatus(item.status))}</div>
+            <div class="subtle" style="margin-top:8px;">${escapeHtml(item.last_message || "Без сообщений")}</div>
+          `;
           el.onclick = () => loadSession(item.session_id);
           list.appendChild(el);
         }
@@ -486,6 +554,8 @@ def render_operator_panel() -> str:
         if (!res.ok) return;
         const data = await res.json();
         currentStatus = data.status;
+        currentCompanyId = data.company_id || "";
+        currentCompanyName = data.company_name || data.company_id || "";
         document.getElementById("sessionTitle").textContent = `Чат ${data.session_id}`;
         document.getElementById("sessionStatus").textContent = humanStatus(data.status);
         renderHistory(data.messages);

@@ -1,0 +1,36 @@
+{"id":"u_greeting_1","message":"привет","expected_intent":"small_talk","expected_action":"small_talk"}
+{"id":"u_greeting_2","message":"добрый день","expected_intent":"small_talk","expected_action":"small_talk"}
+{"id":"u_greeting_with_request","message":"привет, покажи услуги","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
+{"id":"u_small_talk_help","message":"чем можешь помочь?","expected_action":"answer","expected_marker":"list_services"}
+{"id":"u_thanks","message":"спасибо","expected_intent":"small_talk","expected_action":"small_talk"}
+{"id":"u_list_1","message":"покажи услуги","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
+{"id":"u_list_2","message":"что у вас есть","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
+{"id":"u_list_3","message":"какие услуги доступны?","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
+{"id":"u_list_followup","message":"что еще по услугам?","expected_intent":"list_services","expected_action":"answer","expected_marker":"list_services"}
+{"id":"u_service_1","message":"хочу {first_service}","expected_intent":"service_mention","expected_action":"answer","expected_service_id":"{first_service_id}"}
+{"id":"u_service_2","message":"расскажи про {second_service}","expected_action":"answer","expected_service_id":"{second_service_id}"}
+{"id":"u_service_details","message":"что входит в {first_service}?","expected_action":"answer","expected_service_id":"{first_service_id}"}
+{"id":"u_price_1","message":"сколько стоит {first_service}","expected_intent":"price_question","expected_action":"answer","expected_marker":"price","expected_service_id":"{first_service_id}"}
+{"id":"u_price_2","message":"цена на {second_service}","expected_intent":"price_question","expected_action":"answer","expected_marker":"price","expected_service_id":"{second_service_id}"}
+{"id":"u_price_no_service","message":"сколько стоит?","expected_intent":"price_question","expected_action":"clarify","expected_marker":"price_question_no_service","expected_service_id":null}
+{"id":"u_price_context","message":"а цена?","history":[{"role":"user","text":"хочу {first_service}"}],"expected_action":"answer","expected_marker":"price","expected_service_id":"{first_service_id}"}
+{"id":"u_duration_no_service","message":"сколько по времени?","expected_action":"clarify","expected_service_id":null}
+{"id":"u_duration_context","message":"а сколько по времени?","history":[{"role":"user","text":"хочу {first_service}"}],"expected_action":"answer","expected_service_id":"{first_service_id}"}
+{"id":"u_unknown_1","message":"есть ботокс?","expected_intent":"unknown_service","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
+{"id":"u_unknown_2","message":"делаете татуаж?","expected_intent":"unknown_service","expected_action":"clarify","expected_marker":"unknown_service","expected_service_id":null}
+{"id":"u_booking_1","message":"хочу записаться","expected_intent":"booking_request","expected_action":"clarify","expected_marker":"booking_request"}
+{"id":"u_booking_service","message":"хочу записаться на {first_service}","expected_intent":"booking_request","expected_action":"clarify","expected_marker":"booking_request","expected_service_id":"{first_service_id}"}
+{"id":"u_booking_contact","message":"Иван +7 000 000-00-00","history":[{"role":"assistant","text":"Чтобы оставить заявку, напишите имя, телефон и удобное время."}],"expected_action":"ask_contact","expected_marker":"contact_provided"}
+{"id":"u_contact_request_1","message":"хочу оставить телефон","expected_action":"ask_contact","expected_marker":"contact_provided"}
+{"id":"u_contact_cancel","message":"нет не надо","history":[{"role":"assistant","text":"Оставьте имя и телефон, и менеджер сможет связаться с вами позже."}],"expected_action":"clarify","expected_marker":"contact_provided"}
+{"id":"u_operator_soft_1","message":"позовите оператора","expected_intent":"operator_request","expected_action":"clarify","expected_marker":"operator_soft"}
+{"id":"u_operator_soft_2","message":"хочу живого человека","expected_intent":"operator_request","expected_action":"clarify","expected_marker":"operator_soft"}
+{"id":"u_operator_confirm","message":"да оператора","history":[{"role":"assistant","text":"Могу попробовать помочь сама — опишите, что вас интересует. Или сразу соединю со специалистом."}],"expected_action":"transfer_operator"}
+{"id":"u_location_far_1","message":"я из Новосибирска можно?","expected_intent":"location_mismatch","expected_action":"clarify","expected_marker":"location_mismatch"}
+{"id":"u_location_far_2","message":"работаете в Питере?","expected_intent":"location_mismatch","expected_action":"clarify","expected_marker":"location_mismatch"}
+{"id":"u_location_same_city","message":"я из {company_city_from}","expected_action":"clarify"}
+{"id":"u_site","message":"сайт можно?","expected_intent":"contact_link","expected_action":"answer"}
+{"id":"u_telegram","message":"а телеграм?","expected_intent":"contact_link","expected_action":"answer"}
+{"id":"u_offtopic_1","message":"какая погода?","expected_intent":"off_topic","expected_action":"off_topic"}
+{"id":"u_offtopic_2","message":"ps5 или xbox?","expected_intent":"off_topic","expected_action":"off_topic"}
+{"id":"u_noise","message":"зм","expected_action":"clarify"}

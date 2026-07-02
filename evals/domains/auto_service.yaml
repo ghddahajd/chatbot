@@ -1,0 +1,5 @@
+scenarios:
+  - message: "диагностика"
+    action: "answer"
+  - message: "компьютерная диагностика"
+    action: "answer"

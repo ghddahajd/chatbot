@@ -11,17 +11,22 @@ import httpx
 from ..models import Message
 from ..validator import fallback_after_invalid_response, validate_consultation_response, validate_response
 from .base import BaseLLMClient
+from .classification import (
+    IntentClassification,
+    safe_normalize_intent_classification,
+)
 from .mock import service_consultation_template, small_talk_template
 from .parsing import normalize_classification_result, tolerant_json_parse
 from .prompts import (
     DEFAULT_FALLBACK,
     INTENT_CLASSIFICATION_PROMPT,
-    MEDICAL_HANDOFF_FALLBACK,
-    MEDICAL_HANDOFF_PROMPT,
-    MEDICAL_RISK_CLASSIFICATION_PROMPT,
+    RESTRICTED_HANDOFF_FALLBACK,
+    RESTRICTED_HANDOFF_PROMPT,
+    RESTRICTED_RISK_CLASSIFICATION_PROMPT,
     SERVICE_CONSULTATION_PROMPT,
     SERVICE_CONSULTATION_TONE_VARIANTS,
     SMALL_TALK_PROMPT,
+    STRUCTURED_INTENT_CLASSIFICATION_PROMPT,
 )
 
 
@@ -33,9 +38,11 @@ def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
 
     from .prompts import PRICE_DISCLAIMER
 
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    price_disclaimer = str(phrasebook.get("price_disclaimer") or PRICE_DISCLAIMER)
     clean_answer = answer.strip() or DEFAULT_FALLBACK
-    if context.get("question_type") in {"price", "duration"} and PRICE_DISCLAIMER not in clean_answer:
-        return f"{clean_answer} {PRICE_DISCLAIMER}"
+    if context.get("question_type") in {"price", "duration"} and price_disclaimer not in clean_answer:
+        return f"{clean_answer} {price_disclaimer}"
     return clean_answer
 
 
@@ -92,6 +99,25 @@ class OpenAIClient(BaseLLMClient):
                     return response
                 raise
             return response
+
+    async def _post_chat_completions_with_schema_fallback(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        try:
+            return await self._post_chat_completions(payload, headers)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code not in {400, 404, 422} or "response_format" not in payload:
+                raise
+            fallback_payload = dict(payload)
+            fallback_payload.pop("response_format", None)
+            logger.info(
+                "structured_classifier_schema=fallback status=%s model=%s",
+                error.response.status_code,
+                self.model,
+            )
+            return await self._post_chat_completions(fallback_payload, headers)
 
     def _context_for_model(self, context: dict[str, Any]) -> str:
         lines: list[str] = []
@@ -191,6 +217,8 @@ class OpenAIClient(BaseLLMClient):
         history: list[Message],
     ) -> str:
         context_for_model = self._context_for_model(context)
+        phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+        price_disclaimer = str(phrasebook.get("price_disclaimer") or "")
         history_payload = json.dumps(
             [
                 {
@@ -209,6 +237,7 @@ class OpenAIClient(BaseLLMClient):
                     "role": "system",
                     "content": (
                         f"{system_prompt}\n\n"
+                        f"Клиентская оговорка цены/сроков: {price_disclaimer}\n\n"
                         f"Контекст для ответа:\n{context_for_model}\n\n"
                         f"recent_history JSON:\n{history_payload}"
                     ),
@@ -275,6 +304,94 @@ class OpenAIClient(BaseLLMClient):
         if raw_result is None:
             return {"intent": "service_mention", "service_id": None, "confidence": 0.0}
         return normalize_classification_result(raw_result, known_services)
+
+    def _structured_classifier_user_payload(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+        domain_profile: dict[str, Any] | None,
+    ) -> str:
+        services_payload = json.dumps(known_services, ensure_ascii=False, default=str)
+        profile_payload = json.dumps(domain_profile or {}, ensure_ascii=False, default=str)
+        return (
+            f"known_services JSON:\n{services_payload}\n\n"
+            f"domain_profile JSON:\n{profile_payload}\n\n"
+            f"user_message:\n{user_message}"
+        )
+
+    def _structured_classifier_response_format(self) -> dict[str, Any]:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "intent_classification",
+                "strict": False,
+                "schema": IntentClassification.model_json_schema(),
+            },
+        }
+
+    async def classify_structured(
+        self,
+        user_message: str,
+        known_services: list[dict[str, str]],
+        domain_profile: dict[str, Any] | None = None,
+    ) -> IntentClassification | None:
+        known_service_ids = {
+            str(service.get("id"))
+            for service in known_services
+            if service.get("id")
+        }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": STRUCTURED_INTENT_CLASSIFICATION_PROMPT},
+                {
+                    "role": "user",
+                    "content": self._structured_classifier_user_payload(
+                        user_message,
+                        known_services,
+                        domain_profile,
+                    ),
+                },
+            ],
+            "temperature": 0,
+            "max_tokens": 220,
+            "response_format": self._structured_classifier_response_format(),
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            response = await asyncio.wait_for(
+                self._post_chat_completions_with_schema_fallback(payload, headers),
+                timeout=min(self.timeout, 6.0),
+            )
+        except Exception as error:
+            logger.info("structured_classifier_source=fallback reason=request_error error=%s", type(error).__name__)
+            return None
+
+        data = response.json()
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "{}")
+            .strip()
+        )
+        raw_result = tolerant_json_parse(content)
+        if raw_result is None:
+            logger.info("structured_classifier_source=fallback reason=invalid_json")
+            return None
+
+        result = safe_normalize_intent_classification(raw_result, known_service_ids)
+        if result is None:
+            logger.info("structured_classifier_source=fallback reason=schema_validation")
+            return None
+        logger.info(
+            "structured_classifier_source=provider intent=%s risk=%s service_id=%s confidence=%.2f",
+            result.intent,
+            result.risk,
+            result.service_id,
+            result.confidence,
+        )
+        return result
 
     async def small_talk(self, company_name: str, user_message: str) -> str:
         payload = {
@@ -351,17 +468,17 @@ class OpenAIClient(BaseLLMClient):
             .get("content", "")
             .strip()
         )
-        if not validate_consultation_response(answer):
+        if not validate_consultation_response(answer, context):
             logger.warning("service_consultation_source=fallback reason=validator answer=%r", answer[:240])
             return service_consultation_template(context, user_message, history)
         logger.info("service_consultation_source=provider model=%s", self.model)
         return answer
 
-    async def classify_medical_risk(self, user_message: str) -> str:
+    async def classify_restricted_risk(self, user_message: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": MEDICAL_RISK_CLASSIFICATION_PROMPT},
+                {"role": "system", "content": RESTRICTED_RISK_CLASSIFICATION_PROMPT},
                 {"role": "user", "content": f"Сообщение: {user_message}"},
             ],
             "temperature": 0,
@@ -375,7 +492,7 @@ class OpenAIClient(BaseLLMClient):
                 timeout=min(self.timeout, 5.0),
             )
         except Exception as error:
-            logger.warning("medical_classifier_source=fallback reason=request_error error=%s", type(error).__name__)
+            logger.warning("restricted_classifier_source=fallback reason=request_error error=%s", type(error).__name__)
             return "MEDICAL"
 
         data = response.json()
@@ -392,11 +509,11 @@ class OpenAIClient(BaseLLMClient):
             return "MEDICAL"
         return "MEDICAL"
 
-    async def medical_handoff(self, user_message: str) -> str:
+    async def restricted_handoff(self, user_message: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": MEDICAL_HANDOFF_PROMPT},
+                {"role": "system", "content": RESTRICTED_HANDOFF_PROMPT},
                 {"role": "user", "content": f"Сообщение: {user_message}"},
             ],
             "temperature": 0.35,
@@ -410,8 +527,8 @@ class OpenAIClient(BaseLLMClient):
                 timeout=min(self.timeout, 6.0),
             )
         except Exception as error:
-            logger.warning("medical_handoff_source=fallback reason=request_error error=%s", type(error).__name__)
-            return MEDICAL_HANDOFF_FALLBACK
+            logger.warning("restricted_handoff_source=fallback reason=request_error error=%s", type(error).__name__)
+            return RESTRICTED_HANDOFF_FALLBACK
 
         data = response.json()
         answer = (
@@ -421,5 +538,11 @@ class OpenAIClient(BaseLLMClient):
             .strip()
         )
         if not validate_consultation_response(answer):
-            return MEDICAL_HANDOFF_FALLBACK
+            return RESTRICTED_HANDOFF_FALLBACK
         return answer
+
+    async def classify_medical_risk(self, user_message: str) -> str:
+        return await self.classify_restricted_risk(user_message)
+
+    async def medical_handoff(self, user_message: str) -> str:
+        return await self.restricted_handoff(user_message)

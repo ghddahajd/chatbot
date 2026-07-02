@@ -1,0 +1,56 @@
+features:
+  operator: true
+  lead_capture: true
+  analytics: false
+notifications:
+  telegram:
+    enabled: false
+    chat_id: ""
+    events:
+      - lead_created
+      - booking_created
+      - operator_requested
+  webhook:
+    enabled: false
+    url: ""
+    secret: ""
+    events:
+      - lead_created
+widget:
+  primary_color: "#D97706"
+  button_color: "#111827"
+  header_title: "СТО Северный Бокс"
+  header_subtitle: "Запись, цены и ремонт"
+  position: "bottom-right"
+  avatar_emoji: "🔧"
+domain_profile:
+  type: "auto_service"
+  safety_level: "normal"
+  restricted_advice:
+    - "legal_guarantee"
+    - "financial_promise"
+    - "remote_safety_assessment"
+  hard_block_topics:
+    - "self_harm"
+    - "illegal_requests"
+    - "prompt_injection"
+  escalation_policy:
+    unknown_service: "clarify_or_operator"
+    complaint: "operator"
+    custom_price: "operator"
+    booking: "lead_then_operator"
+phrasebook:
+  company_noun: "сервис"
+  service_word: "работа"
+  operator_label: "мастер"
+  booking_word: "заявка"
+  price_disclaimer: "Предварительно так, точнее скажет мастер после осмотра."
+  unknown_service: "В базе такой работы не нашёл. Могу показать список услуг или передать вопрос мастеру."
+  off_topic: "Это не по моей части — я консультирую по услугам автосервиса. Могу подсказать по работам или ценам."
+  contact_prompt: "Оставьте имя и телефон, и мастер сможет связаться с вами позже."
+  booking_contact_prompt: "Чтобы оставить заявку, напишите имя, телефон, автомобиль и удобное время. Мы передадим заявку мастеру."
+  lead_success: "Спасибо. Передали ваши контакты мастеру. С вами свяжутся для уточнения деталей."
+  booking_success: "Спасибо. Заявку передали мастеру. С вами свяжутся, чтобы подтвердить время и детали."
+  handoff_message: "Передаю диалог мастеру. Можете дописать детали, он увидит историю."
+  operator_soft_offer: "Могу попробовать помочь здесь — опишите, что нужно по автомобилю. Или сразу соединю с мастером."
+  clarify: "Уточните, пожалуйста, что нужно по автомобилю: работа, цена, запись или мастер."

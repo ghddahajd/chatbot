@@ -1,0 +1,124 @@
+"""проверки KnowledgeBaseResolver."""
+
+import shutil
+
+import pytest
+
+from app.knowledge import DuplicateDomainError
+from app.policy.restricted import get_restricted_categories
+
+
+def test_known_company_loads_kb(resolver) -> None:
+    knowledge_base = resolver.get("rosh_demo", fallback=False)
+
+    assert knowledge_base.company.company_id == "rosh_demo"
+    assert knowledge_base.services
+
+
+def test_unknown_company_raises_without_fallback(resolver) -> None:
+    with pytest.raises(KeyError):
+        resolver.get("missing_company", fallback=False)
+
+
+def test_path_traversal_blocked(resolver) -> None:
+    assert resolver.client_exists("../../etc/passwd") is False
+    with pytest.raises(KeyError):
+        resolver.get("../../etc/passwd", fallback=False)
+
+
+def test_domain_autodetect_known(resolver) -> None:
+    assert resolver.find_tenant_by_domain("http://localhost:5500") == "rosh_demo"
+
+
+def test_domain_autodetect_unknown_returns_none(resolver) -> None:
+    assert resolver.find_tenant_by_domain("https://unknown.example") is None
+
+
+def test_duplicate_domain_raises_409(resolver) -> None:
+    with pytest.raises(DuplicateDomainError):
+        resolver.find_tenant_by_domain("https://duplicate.example")
+
+
+def test_domain_profile_defaults(resolver) -> None:
+    profile = resolver.domain_profile("unknown_company")
+
+    assert profile["type"] == "generic"
+    assert profile["safety_level"] == "normal"
+    assert profile["restricted_advice"] == []
+    assert profile["escalation_policy"]["booking"] == "lead_then_operator"
+    assert get_restricted_categories(profile) == []
+
+
+def test_default_profile_is_unrestricted(resolver, managed_env) -> None:
+    client_dir = managed_env["clients_dir"] / "generic_no_profile"
+    client_dir.mkdir()
+    source_dir = managed_env["clients_dir"] / "rosh_demo"
+    for file_name in ("company.yaml", "services.json", "prices.json", "faq.md"):
+        shutil.copy2(source_dir / file_name, client_dir / file_name)
+
+    profile = resolver.domain_profile("generic_no_profile")
+
+    assert profile["type"] == "generic"
+    assert get_restricted_categories(profile) == []
+
+
+def test_domain_profile_from_client_config(resolver, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "domain_profile:",
+                '  type: "medical"',
+                '  safety_level: "strict"',
+                "  restricted_advice:",
+                '    - "medical_treatment"',
+                '    - "diagnosis"',
+                "  hard_block_topics:",
+                '    - "prompt_injection"',
+                "  escalation_policy:",
+                '    unknown_service: "operator"',
+                '    booking: "lead_then_operator"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    profile = resolver.domain_profile("rosh_demo")
+
+    assert profile["type"] == "medical"
+    assert profile["safety_level"] == "strict"
+    assert profile["restricted_advice"] == ["medical_treatment", "diagnosis"]
+    assert profile["hard_block_topics"] == ["prompt_injection"]
+    assert profile["escalation_policy"]["unknown_service"] == "operator"
+
+
+def test_phrasebook_defaults(resolver) -> None:
+    phrasebook = resolver.phrasebook("rosh_demo")
+
+    assert phrasebook["operator_label"] == "менеджер"
+    assert "менеджер" in phrasebook["unknown_service"]
+
+
+def test_phrasebook_from_client_config(resolver, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "phrasebook:",
+                '  operator_label: "мастер"',
+                '  price_disclaimer: "Предварительно, точнее скажет мастер."',
+                '  unknown_service: "Такой работы нет в базе."',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    phrasebook = resolver.phrasebook("rosh_demo")
+    knowledge_base = resolver.get("rosh_demo", fallback=False)
+
+    assert phrasebook["operator_label"] == "мастер"
+    assert phrasebook["price_disclaimer"] == "Предварительно, точнее скажет мастер."
+    assert phrasebook["unknown_service"] == "Такой работы нет в базе."
+    assert knowledge_base.phrasebook["operator_label"] == "мастер"

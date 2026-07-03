@@ -66,6 +66,38 @@ def _service_quick_actions(service, *labels: str) -> list[object]:
     return actions
 
 
+def _service_variant_examples(service, limit: int = 5) -> list[str]:
+    variants = getattr(service, "variants", [])
+    if not isinstance(variants, list):
+        return []
+
+    examples: list[str] = []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        name = str(variant.get("name") or "").strip()
+        price_text = str(variant.get("price_text") or "").strip()
+        if not name:
+            continue
+        examples.append(f"{name} — {price_text}" if price_text else name)
+        if len(examples) >= limit:
+            break
+    return examples
+
+
+def _service_explanation_message(service) -> str:
+    examples = _service_variant_examples(service)
+    if examples:
+        variants_count = len(getattr(service, "variants", []) or [])
+        return (
+            f"{service.name} — направление с {variants_count} вариантами в прайсе. "
+            "Например: "
+            + "; ".join(examples)
+            + ". Точный вариант и стоимость лучше подтвердить со специалистом."
+        )
+    return f"{service.name} — {service.short_description} Детали уточнит специалист."
+
+
 def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
     config = getattr(knowledge_base, "config_payload", {})
     fact_guards = config.get("fact_guards") if isinstance(config, dict) else None
@@ -609,7 +641,7 @@ def analyze_message(
             service_id=service.id,
             confidence=0.95,
             safe_context={**context, "question_type": "price"},
-            quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
+            quick_actions=_service_quick_actions(service, "Оставить телефон"),
         )
 
     if explanation_requested:
@@ -637,10 +669,7 @@ def analyze_message(
             safe_context={
                 **context,
                 "question_type": "explanation",
-                "message_to_user": (
-                    f"{service.name} — {service.short_description} "
-                    "Детали уточнит специалист."
-                )
+                "message_to_user": _service_explanation_message(service),
             },
             quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать оператора"),
         )

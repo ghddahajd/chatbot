@@ -144,6 +144,19 @@ class OpenAIClient(BaseLLMClient):
                 lines.append(f"Услуга: {service['name']}")
             if service.get("short_description"):
                 lines.append(f"Описание: {service['short_description']}")
+            variants = service.get("variants")
+            if isinstance(variants, list) and variants:
+                lines.append(f"Количество вариантов в прайсе по направлению: {len(variants)}")
+                example_lines = []
+                for variant in variants[:5]:
+                    if not isinstance(variant, dict):
+                        continue
+                    name = str(variant.get("name") or "").strip()
+                    price_text = str(variant.get("price_text") or "").strip()
+                    if name:
+                        example_lines.append(f"{name} — {price_text}" if price_text else name)
+                if example_lines:
+                    lines.append("Примеры позиций: " + "; ".join(example_lines))
             lines.append("Тип вопроса: explanation")
             return "\n".join(lines) or "Нет описания услуги."
 
@@ -151,10 +164,17 @@ class OpenAIClient(BaseLLMClient):
             lines.append(f"Услуга: {service['name']}")
         if service.get("short_description"):
             lines.append(f"Описание: {service['short_description']}")
+        if service.get("price_range_text"):
+            lines.append(f"Диапазон стоимости направления: {service['price_range_text']}")
+        variants = service.get("variants")
+        if isinstance(variants, list) and variants:
+            lines.append(f"Количество вариантов в прайсе по направлению: {len(variants)}")
         if price.get("price_text"):
             lines.append(f"Стоимость: {price['price_text']}")
         if service.get("duration"):
             lines.append(f"Длительность: {service['duration']}")
+        if service.get("page_url"):
+            lines.append(f"Страница услуги: {service['page_url']}")
         if company.get("working_hours"):
             lines.append(f"Режим работы: {company['working_hours']}")
         if company.get("address"):

@@ -139,6 +139,25 @@ def service_consultation_template(
     return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
 
 
+def _variant_examples(service: dict[str, Any], *, limit: int = 4) -> list[str]:
+    variants = service.get("variants")
+    if not isinstance(variants, list):
+        return []
+
+    examples: list[str] = []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        name = str(variant.get("name") or "").strip()
+        price_text = str(variant.get("price_text") or "").strip()
+        if not name:
+            continue
+        examples.append(f"{name} — {price_text}" if price_text else name)
+        if len(examples) >= limit:
+            break
+    return examples
+
+
 def medical_risk_template(user_message: str) -> str:
     normalized_message = normalize_text(user_message)
     medical_markers = {
@@ -236,17 +255,30 @@ class MockLLMClient(BaseLLMClient):
         service_name = service.get("name")
         short_description = service.get("short_description")
         duration = service.get("duration")
+        variants_count = len(service.get("variants")) if isinstance(service.get("variants"), list) else 0
+        variant_examples = _variant_examples(service)
 
         parts: list[str] = []
         if service_name:
-            parts.append(f"{service_name} — {short_description}")
+            if variants_count:
+                parts.append(f"{service_name} — направление с {variants_count} вариантами в прайсе.")
+            else:
+                parts.append(f"{service_name} — {short_description}")
         if question_type == "duration":
             if duration:
                 parts.append(f"Длительность: {duration}. {price_disclaimer}")
             else:
                 parts.append("Точную длительность уточнит специалист.")
+        elif question_type == "explanation" and variant_examples:
+            parts.append("Примеры позиций: " + "; ".join(variant_examples) + ".")
+            parts.append("Точный вариант и стоимость лучше подтвердить со специалистом.")
         elif price.get("price_text"):
-            parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
+            if variants_count:
+                parts.append(
+                    f"Стоимость зависит от параметров услуги: {price['price_text']}. {price_disclaimer}"
+                )
+            else:
+                parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
         elif service_name:
             parts.append("Точные детали по стоимости и длительности уточнит специалист.")
 

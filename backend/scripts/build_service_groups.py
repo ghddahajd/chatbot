@@ -135,7 +135,7 @@ def _build_groups(company_id: str, services: list[dict[str, Any]], prices: list[
                 "name": category,
                 "category": category,
                 "synonyms": SYNONYM_HINTS.get(category, []),
-                "short_description": f"Направление «{category}». В прайсе {len(variants)} позиций.",
+                "short_description": f"Направление «{category}». В прайсе {len(variants)} вариантов.",
                 "price_from": minimum,
                 "price_to": maximum,
                 "price_range_text": range_text,
@@ -159,7 +159,7 @@ def _build_report(groups: list[dict[str, Any]]) -> str:
     ]
     for group in groups:
         lines.append(
-            f"- {group['name']}: {len(group['variants'])} позиций, {group.get('price_range_text') or 'цена не указана'}"
+            f"- {group['name']}: {len(group['variants'])} вариантов, {group.get('price_range_text') or 'цена не указана'}"
         )
     lines.extend(
         [

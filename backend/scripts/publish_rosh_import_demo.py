@@ -58,7 +58,7 @@ def _price_comment(group: dict[str, Any]) -> str:
     variants_count = len(group.get("variants") if isinstance(group.get("variants"), list) else [])
     if variants_count > 1:
         return (
-            f"В направлении {variants_count} позиций прайса. "
+            f"В направлении {variants_count} вариантов из прайса. "
             "Стоимость зависит от зоны/объема/препарата, точную сумму подтвердит специалист."
         )
     return "Стоимость из прайс-листа 25.05.2026. Точную сумму подтвердит специалист."
@@ -143,7 +143,7 @@ def _config_yaml() -> dict[str, Any]:
         "phrasebook": {
             "company_type": "медицинский центр",
             "specialist_name": "специалист",
-            "price_disclaimer": "Предварительно так, точнее подскажет специалист после уточнения деталей.",
+            "price_disclaimer": "Предварительно; точнее подскажет специалист после уточнения деталей.",
             "unknown_service": "В базе такой услуги не вижу. Могу показать список услуг или передать вопрос специалисту.",
             "contact_prompt": "Оставьте имя и телефон, и специалист сможет связаться с вами позже.",
         },

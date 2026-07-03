@@ -35,3 +35,6 @@ tasks/
 # Local research / AI drafts
 new/
 test-sites/
+
+# Local client intake materials
+client-input/

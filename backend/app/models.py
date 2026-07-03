@@ -99,9 +99,13 @@ class Service(BaseModel):
     synonyms: list[str] = Field(default_factory=list)
     short_description: str
     price_from: Optional[int] = None
+    price_to: Optional[int] = None
+    price_range_text: Optional[str] = None
     duration: Optional[str] = None
     requires_specialist: bool = True
     source_note: Optional[str] = None
+    page_url: Optional[str] = None
+    variants: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CompanyConfig(BaseModel):

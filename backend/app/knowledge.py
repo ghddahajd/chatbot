@@ -164,6 +164,7 @@ class KnowledgeBase:
         faq_markdown: str,
         phrasebook: Optional[dict[str, str]] = None,
         domain_profile: Optional[dict[str, object]] = None,
+        config_payload: Optional[dict[str, object]] = None,
     ) -> None:
         self.company = company
         self.services = services
@@ -171,6 +172,7 @@ class KnowledgeBase:
         self.faq_markdown = faq_markdown
         self.phrasebook = phrasebook or dict(DEFAULT_PHRASEBOOK)
         self.domain_profile = domain_profile or _default_domain_profile()
+        self.config_payload = config_payload or {}
 
         self._services_by_id = {service.id: service for service in services}
         self._prices_by_service_id = {price.service_id: price for price in prices}
@@ -196,6 +198,9 @@ class KnowledgeBase:
             for item in json.loads((data_dir / "prices.json").read_text(encoding="utf-8"))
         ]
         faq_markdown = (data_dir / "faq.md").read_text(encoding="utf-8")
+        config_path = data_dir / "config.yaml"
+        config_payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+        config_payload = config_payload or {}
         domain_profile = _domain_profile_from_payload(company_payload)
         return cls(
             company=company,
@@ -203,6 +208,7 @@ class KnowledgeBase:
             prices=prices,
             faq_markdown=faq_markdown,
             domain_profile=domain_profile,
+            config_payload=config_payload if isinstance(config_payload, dict) else {},
         )
 
     def _build_search_index(self, services: list[Service]) -> dict[str, str]:

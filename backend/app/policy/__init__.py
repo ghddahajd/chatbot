@@ -50,6 +50,86 @@ def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
     return str(value).strip() if value else ""
 
 
+def _service_link_action(service) -> dict[str, str] | None:
+    page_url = str(getattr(service, "page_url", "") or "").strip()
+    if not page_url:
+        return None
+    return {"label": "Перейти к услуге", "type": "link", "value": page_url}
+
+
+def _service_quick_actions(service, *labels: str) -> list[object]:
+    actions: list[object] = []
+    link_action = _service_link_action(service)
+    if link_action is not None:
+        actions.append(link_action)
+    actions.extend(labels)
+    return actions
+
+
+def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
+    config = getattr(knowledge_base, "config_payload", {})
+    fact_guards = config.get("fact_guards") if isinstance(config, dict) else None
+    if not isinstance(fact_guards, list):
+        return None
+
+    normalized_message = normalize_text(message)
+    for guard in fact_guards:
+        if not isinstance(guard, dict):
+            continue
+
+        topic = str(guard.get("topic") or "").strip()
+        service_id = str(guard.get("service_id") or "").strip() or None
+        known_values = [
+            str(value).strip()
+            for value in guard.get("known_values", [])
+            if str(value).strip()
+        ]
+        blocked_values = [
+            str(value).strip()
+            for value in guard.get("blocked_values", [])
+            if str(value).strip()
+        ]
+        matched_blocked = [
+            value
+            for value in blocked_values
+            if normalize_text(value) and normalize_text(value) in normalized_message
+        ]
+        if not matched_blocked:
+            continue
+
+        service = knowledge_base.find_service_by_id(service_id)
+        allowed_text = ", ".join(known_values) if known_values else "только позиции из базы центра"
+        blocked_text = ", ".join(matched_blocked)
+        message_to_user = str(guard.get("message_to_user") or "").strip()
+        if not message_to_user:
+            topic_label = topic or (service.name if service else "услуга")
+            message_to_user = (
+                f"В базе центра {blocked_text} не указан. "
+                f"По теме «{topic_label}» в базе есть: {allowed_text}. "
+                "Могу показать страницу услуги или передать вопрос специалисту."
+            )
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.UNKNOWN_SERVICE,
+            service_id=service.id if service else service_id,
+            confidence=0.96,
+            safe_context={
+                "message_to_user": message_to_user,
+                "service": service.model_dump() if service else None,
+                "fact_guard": {
+                    "topic": topic,
+                    "matched_blocked": matched_blocked,
+                    "known_values": known_values,
+                },
+            },
+            quick_actions=_service_quick_actions(service, "Позвать оператора", "Посмотреть услуги")
+            if service
+            else ["Позвать оператора", "Посмотреть услуги"],
+        )
+
+    return None
+
+
 def analyze_message(
     message: str,
     session: Session,
@@ -317,6 +397,10 @@ def analyze_message(
                 + ["Позвать оператора"],
             )
 
+    fact_guard_result = _fact_guard_result(message, knowledge_base)
+    if fact_guard_result is not None:
+        return fact_guard_result
+
     if intent == "unknown_service":
         similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.78)
         if similar_result is not None:
@@ -525,7 +609,7 @@ def analyze_message(
             service_id=service.id,
             confidence=0.95,
             safe_context={**context, "question_type": "price"},
-            quick_actions=["Уточнить цену", "Оставить телефон"],
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
         )
 
     if explanation_requested:
@@ -558,7 +642,7 @@ def analyze_message(
                     "Детали уточнит специалист."
                 )
             },
-            quick_actions=["Уточнить цену", "Позвать оператора"],
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать оператора"),
         )
 
     if duration_requested:
@@ -589,7 +673,7 @@ def analyze_message(
             service_id=service.id,
             confidence=0.88,
             safe_context=knowledge_base.get_service_context(service),
-            quick_actions=["Уточнить цену", "Позвать оператора"],
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать оператора"),
         )
 
     if session.status.value != "AI_ACTIVE":

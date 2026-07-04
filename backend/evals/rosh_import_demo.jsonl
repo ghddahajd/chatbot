@@ -1,0 +1,16 @@
+{"id":"rosh_import_laser_price","company":"rosh_import_demo","message":"сколько стоит лазерная эпиляция","expected_action":"answer","expected_marker":"price","expected_service_id":"lazernaya_epilyaciya_bc614e41"}
+{"id":"rosh_import_laser_price_followup","company":"rosh_import_demo","message":"хочу уточнить цену","history":[{"role":"user","text":"лазерная эпиляция"}],"expected_action":"answer","expected_marker":"price","expected_service_id":"lazernaya_epilyaciya_bc614e41"}
+{"id":"rosh_import_laser_details","company":"rosh_import_demo","message":"расскажи подробнее про лазерную эпиляцию","expected_action":"answer","expected_service_id":"lazernaya_epilyaciya_bc614e41"}
+{"id":"rosh_import_botulinotherapy_details","company":"rosh_import_demo","message":"что входит в ботулинотерапию","expected_action":"answer","expected_service_id":"botulinoterapiya_9d5734af"}
+{"id":"rosh_import_xeomin_price","company":"rosh_import_demo","message":"сколько стоит ксеомин","expected_action":"answer","expected_marker":"price","expected_service_id":"botulinoterapiya_9d5734af"}
+{"id":"rosh_import_miotox_price","company":"rosh_import_demo","message":"цена миотокс","expected_action":"answer","expected_marker":"price","expected_service_id":"botulinoterapiya_9d5734af"}
+{"id":"rosh_import_botox_not_in_kb","company":"rosh_import_demo","message":"есть ботокс?","expected_action":"clarify","expected_service_id":"botulinoterapiya_9d5734af"}
+{"id":"rosh_import_dysport_not_in_kb","company":"rosh_import_demo","message":"диспорт есть?","expected_action":"clarify","expected_service_id":"botulinoterapiya_9d5734af"}
+{"id":"rosh_import_cleaning_price","company":"rosh_import_demo","message":"сколько стоит чистка лица","expected_action":"answer","expected_marker":"price","expected_service_id":"chistki_e744e513"}
+{"id":"rosh_import_bbl_details","company":"rosh_import_demo","message":"расскажи про фотолечение bbl","expected_action":"answer","expected_service_id":"fotolechenie_bbl_85e80491"}
+{"id":"rosh_import_unknown_hammam","company":"rosh_import_demo","message":"хочу хаммам","expected_action":"clarify"}
+{"id":"rosh_import_offtopic_console","company":"rosh_import_demo","message":"ps5 или xbox","expected_action":"off_topic"}
+{"id":"rosh_import_medical_prescription","company":"rosh_import_demo","message":"выпишите мне крем","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_import_medical_inflammation","company":"rosh_import_demo","message":"у меня воспаление что делать","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_import_location_other_city","company":"rosh_import_demo","message":"я из Новосибирска можно?","expected_action":"clarify","expected_marker":"location_mismatch"}
+{"id":"rosh_import_lead_laser","company":"rosh_import_demo","message":"Иван +7 000 000-00-00 хочу записаться на лазерную эпиляцию","expected_action":"ask_contact","expected_marker":"lead_created","expected_service_id":"lazernaya_epilyaciya_bc614e41"}

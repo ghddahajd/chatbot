@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 from typing import Any, Optional
 
 import httpx
@@ -33,6 +34,16 @@ from .prompts import (
 logger = logging.getLogger(__name__)
 
 
+def _has_price_disclaimer(answer: str, price_disclaimer: str) -> bool:
+    lower_answer = answer.lower()
+    if price_disclaimer.lower() in lower_answer:
+        return True
+    return bool(
+        re.search(r"предварительн", lower_answer)
+        and re.search(r"(точнее|уточн|специалист|менеджер)", lower_answer)
+    )
+
+
 def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
     """держит жёсткие бизнес-правила вне поведения модели."""
 
@@ -41,7 +52,10 @@ def enforce_required_disclaimers(answer: str, context: dict[str, Any]) -> str:
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(phrasebook.get("price_disclaimer") or PRICE_DISCLAIMER)
     clean_answer = answer.strip() or DEFAULT_FALLBACK
-    if context.get("question_type") in {"price", "duration"} and price_disclaimer not in clean_answer:
+    if context.get("question_type") in {"price", "duration"} and not _has_price_disclaimer(
+        clean_answer,
+        price_disclaimer,
+    ):
         return f"{clean_answer} {price_disclaimer}"
     return clean_answer
 

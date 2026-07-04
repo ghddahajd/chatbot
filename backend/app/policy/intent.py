@@ -125,11 +125,11 @@ def classify_and_extract(
         return {"intent": "off_topic", "service_id": None, "confidence": 0.96}
     if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS):
         return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
-    if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS):
-        return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
 
     has_off_topic_keyword = contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS)
     service_id = _local_service_id(message, known_services, allow_fuzzy=not has_off_topic_keyword)
+    if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS) and service_id is None:
+        return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
     if has_off_topic_keyword and service_id is None:
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
     if service_id is None:

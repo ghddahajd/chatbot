@@ -98,6 +98,51 @@ def _service_explanation_message(service) -> str:
     return f"{service.name} — {service.short_description} Детали уточнит специалист."
 
 
+HARD_RESTRICTED_KEYWORDS = {
+    "диагноз",
+    "лечить",
+    "что делать",
+    "назначить",
+    "назначьте",
+    "выпишите",
+    "таблет",
+    "мазь",
+    "антибиотик",
+    "воспаление",
+    "кровит",
+    "кровоточ",
+    "родинка",
+    "опасно",
+    "аллергия",
+    "зуд",
+    "раздражение",
+    "беремен",
+    "покраснение",
+    "припухлость",
+    "отек",
+    "отёк",
+    "инфекция",
+    "осложнение",
+    "после процедуры",
+    "болит",
+    "боль",
+    "температура",
+    "симптом",
+}
+SAFE_SERVICE_REQUEST_INTENTS = {
+    "medical_advice",
+    "regulated_advice",
+    "price_question",
+    "service_mention",
+}
+
+
+def _looks_like_safe_known_service_request(intent: str, normalized_message: str, service) -> bool:
+    if service is None or intent not in SAFE_SERVICE_REQUEST_INTENTS:
+        return False
+    return not contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS)
+
+
 def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
     config = getattr(knowledge_base, "config_payload", {})
     fact_guards = config.get("fact_guards") if isinstance(config, dict) else None
@@ -196,6 +241,8 @@ def analyze_message(
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
+    if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):
+        medical_requested = False
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
 

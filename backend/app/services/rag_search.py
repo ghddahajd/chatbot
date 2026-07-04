@@ -1,0 +1,177 @@
+"""Read-only lexical search over staged RAG chunks.
+
+This is a debug helper for article corpus review before pgvector is wired in.
+It does not affect runtime chat flow.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_CHUNKS_PATH = (
+    REPO_ROOT
+    / "client-input"
+    / "normalized"
+    / "rosh_articles"
+    / "crawl"
+    / "chunks.corpus.jsonl"
+)
+
+STOP_WORDS = {
+    "а",
+    "без",
+    "в",
+    "во",
+    "для",
+    "до",
+    "если",
+    "и",
+    "или",
+    "как",
+    "на",
+    "не",
+    "о",
+    "об",
+    "от",
+    "по",
+    "после",
+    "при",
+    "про",
+    "с",
+    "со",
+    "что",
+    "это",
+}
+
+
+def default_rag_chunks_path() -> Path:
+    """Return configured chunks path, falling back to local staging corpus."""
+
+    configured = os.getenv("RAG_CHUNKS_FILE")
+    return Path(configured).expanduser() if configured else DEFAULT_CHUNKS_PATH
+
+
+def normalize_text(value: str) -> str:
+    value = value.lower().replace("ё", "е")
+    value = re.sub(r"[^a-zа-я0-9\s-]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def tokenize(value: str) -> list[str]:
+    return [
+        token
+        for token in normalize_text(value).split()
+        if len(token) >= 3 and token not in STOP_WORDS
+    ]
+
+
+def load_chunks(path: Path | None = None) -> list[dict[str, Any]]:
+    chunks_path = path or default_rag_chunks_path()
+    chunks: list[dict[str, Any]] = []
+    for line_number, line in enumerate(chunks_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict):
+            raise ValueError(f"{chunks_path}:{line_number}: expected object")
+        chunks.append(payload)
+    return chunks
+
+
+def _document_frequencies(chunks: list[dict[str, Any]]) -> Counter[str]:
+    frequencies: Counter[str] = Counter()
+    for chunk in chunks:
+        text = f"{chunk.get('title') or ''} {chunk.get('text') or ''}"
+        frequencies.update(set(tokenize(text)))
+    return frequencies
+
+
+def _snippet(text: str, query_tokens: list[str], size: int = 420) -> str:
+    normalized_text = normalize_text(text)
+    first_match = len(text) // 3
+    for token in query_tokens:
+        index = normalized_text.find(token)
+        if index >= 0:
+            first_match = index
+            break
+    start = max(0, first_match - size // 3)
+    end = min(len(text), start + size)
+    snippet = re.sub(r"\s+", " ", text[start:end]).strip()
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet += "..."
+    return snippet
+
+
+def _score_chunk(
+    chunk: dict[str, Any],
+    query: str,
+    query_tokens: list[str],
+    document_frequencies: Counter[str],
+    total_chunks: int,
+) -> float:
+    text = str(chunk.get("text") or "")
+    title = str(chunk.get("title") or "")
+    normalized_text = normalize_text(text)
+    normalized_title = normalize_text(title)
+    chunk_tokens = Counter(tokenize(text))
+
+    score = 0.0
+    for token in query_tokens:
+        tf = chunk_tokens[token]
+        if tf <= 0:
+            continue
+        idf = math.log((total_chunks + 1) / (document_frequencies[token] + 1)) + 1
+        score += (1 + math.log(tf)) * idf
+        if token in normalized_title:
+            score += 2.5
+
+    normalized_query = normalize_text(query)
+    if normalized_query and normalized_query in normalized_text:
+        score += 6.0
+    if query_tokens and all(token in normalized_text for token in query_tokens):
+        score += 3.0
+    return round(score, 4)
+
+
+def search_rag_chunks(query: str, top_k: int = 5, path: Path | None = None) -> dict[str, Any]:
+    chunks_path = path or default_rag_chunks_path()
+    chunks = load_chunks(chunks_path)
+    query_tokens = tokenize(query)
+    document_frequencies = _document_frequencies(chunks)
+
+    matches: list[dict[str, Any]] = []
+    for chunk in chunks:
+        score = _score_chunk(chunk, query, query_tokens, document_frequencies, len(chunks))
+        if score <= 0:
+            continue
+        matches.append(
+            {
+                "score": score,
+                "chunk_id": chunk.get("chunk_id"),
+                "document_id": chunk.get("document_id"),
+                "title": chunk.get("title"),
+                "url": chunk.get("url"),
+                "chunk_index": chunk.get("chunk_index"),
+                "source_type": chunk.get("source_type"),
+                "snippet": _snippet(str(chunk.get("text") or ""), query_tokens),
+            }
+        )
+
+    matches.sort(key=lambda item: item["score"], reverse=True)
+    return {
+        "query": query,
+        "tokens": query_tokens,
+        "chunks_file": str(chunks_path),
+        "total_chunks": len(chunks),
+        "matches": matches[:top_k],
+    }

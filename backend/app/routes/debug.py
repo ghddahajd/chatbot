@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -13,6 +14,7 @@ from ..auth import verify_operator_token
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, Session
 from ..policy import classify_and_extract
 from ..policy.restricted import is_restricted_question
+from ..services.rag_search import default_rag_chunks_path, search_rag_chunks
 from .chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
     classify_consultation_risk,
@@ -32,6 +34,11 @@ router = APIRouter(tags=["debug"])
 class DebugTraceRequest(BaseModel):
     company_id: str
     message: str = Field(min_length=1)
+
+
+class RagSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
 
 
 async def _final_answer_for_policy(
@@ -289,6 +296,31 @@ async def debug_trace(
         ],
         "total_time_ms": round((time.perf_counter() - started_at) * 1000, 1),
     }
+
+
+@router.post("/api/debug/rag-search")
+async def debug_rag_search(
+    payload: RagSearchRequest,
+    request: Request,
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    verify_operator_token(request, x_operator_token)
+    query = payload.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is empty")
+
+    try:
+        return search_rag_chunks(query=query, top_k=payload.top_k)
+    except FileNotFoundError as error:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "RAG chunks corpus not found. Run crawl_article_batch.py first "
+                f"or set RAG_CHUNKS_FILE. Expected: {default_rag_chunks_path()}"
+            ),
+        ) from error
+    except (json.JSONDecodeError, ValueError) as error:
+        raise HTTPException(status_code=500, detail=f"Invalid RAG chunks corpus: {error}") from error
 
 
 @router.get("/debug", response_class=HTMLResponse)
@@ -562,6 +594,203 @@ async def debug_page(request: Request) -> str:
       button.onclick = () => {
         document.getElementById("message").value = button.textContent || "";
       };
+    });
+  </script>
+</body>
+</html>
+"""
+
+
+@router.get("/debug/rag", response_class=HTMLResponse)
+async def rag_debug_page(request: Request) -> str:
+    verify_operator_token(request, None)
+    return """
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>RAG debug search</title>
+  <style>
+    :root {
+      --bg: #f7f4ee;
+      --card: #fffdf9;
+      --ink: #202821;
+      --muted: #68746d;
+      --line: #e2dbd0;
+      --accent: #1f7a5c;
+      --danger: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, rgba(31, 122, 92, .12), transparent 34rem), var(--bg);
+      color: var(--ink);
+    }
+    main { max-width: 1060px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.04em; }
+    p { margin: 0; color: var(--muted); }
+    .panel, .match, .meta {
+      background: rgba(255, 253, 249, .92);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 14px 36px rgba(45, 95, 79, .08);
+    }
+    .panel { margin-top: 22px; padding: 18px; }
+    label { display: block; margin: 0 0 8px; font-weight: 800; }
+    textarea, input, button { font: inherit; }
+    textarea, input {
+      width: 100%;
+      border: 1px solid #d8d0c4;
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: white;
+      color: var(--ink);
+    }
+    textarea { min-height: 86px; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 120px auto; gap: 12px; align-items: end; }
+    button {
+      border: 0;
+      border-radius: 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 850;
+      padding: 12px 18px;
+      cursor: pointer;
+    }
+    .samples { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .sample {
+      background: #eef6f2;
+      color: var(--accent);
+      border: 1px solid #d7e8df;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    #output { display: grid; gap: 12px; margin-top: 18px; }
+    .meta { padding: 14px 16px; color: var(--muted); font-size: 14px; }
+    .match { padding: 16px; }
+    .match h2 { margin: 0 0 8px; font-size: 18px; }
+    .match a { color: var(--accent); overflow-wrap: anywhere; }
+    .badge {
+      display: inline-flex;
+      margin: 0 8px 10px 0;
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: #eef6f2;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 750;
+    }
+    blockquote {
+      margin: 10px 0 0;
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      background: white;
+      border-radius: 10px;
+      line-height: 1.5;
+    }
+    .empty, .error {
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: 18px;
+      color: var(--muted);
+      background: rgba(255,255,255,.6);
+    }
+    .error { color: var(--danger); border-color: rgba(180, 83, 9, .35); }
+    @media (max-width: 760px) { .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>RAG debug search</h1>
+    <p>Read-only lexical поиск по staged article chunks. Это проверка источников до pgvector/embeddings.</p>
+
+    <section class="panel">
+      <div class="row">
+        <div>
+          <label for="query">Вопрос</label>
+          <textarea id="query">как проходит кольпоскопия</textarea>
+        </div>
+        <div>
+          <label for="topK">top_k</label>
+          <input id="topK" type="number" min="1" max="20" value="5" />
+        </div>
+        <button id="run">Искать</button>
+      </div>
+      <div class="samples">
+        <button class="sample" type="button">как проходит кольпоскопия</button>
+        <button class="sample" type="button">что нельзя после лазерной шлифовки</button>
+        <button class="sample" type="button">ботулинотерапия при мигрени</button>
+        <button class="sample" type="button">подбор контрацептивов обследования</button>
+        <button class="sample" type="button">филлеры в гинекологии</button>
+      </div>
+    </section>
+
+    <section id="output">
+      <div class="empty">Введите вопрос и нажмите «Искать».</div>
+    </section>
+  </main>
+
+  <script>
+    const token = new URLSearchParams(location.search).get("token") || "";
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function render(payload) {
+      const matches = Array.isArray(payload.matches) ? payload.matches : [];
+      const meta = `
+        <div class="meta">
+          chunks: ${escapeHtml(payload.total_chunks || 0)}
+          · tokens: ${escapeHtml((payload.tokens || []).join(", ") || "—")}
+          · file: ${escapeHtml(payload.chunks_file || "—")}
+        </div>
+      `;
+      if (!matches.length) {
+        return meta + '<div class="empty">Совпадений нет.</div>';
+      }
+      return meta + matches.map((match, index) => `
+        <article class="match">
+          <h2>${index + 1}. ${escapeHtml(match.title || "Без заголовка")}</h2>
+          <span class="badge">score ${escapeHtml(match.score)}</span>
+          <span class="badge">chunk ${escapeHtml(match.chunk_index)}</span>
+          <span class="badge">${escapeHtml(match.source_type || "article")}</span>
+          <div><a href="${escapeHtml(match.url || "#")}" target="_blank" rel="noreferrer">${escapeHtml(match.url || "—")}</a></div>
+          <blockquote>${escapeHtml(match.snippet || "")}</blockquote>
+        </article>
+      `).join("");
+    }
+
+    document.getElementById("run").onclick = async () => {
+      const output = document.getElementById("output");
+      output.innerHTML = '<div class="empty">Поиск...</div>';
+      try {
+        const response = await fetch(`/api/debug/rag-search?token=${encodeURIComponent(token)}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            query: document.getElementById("query").value,
+            top_k: Number(document.getElementById("topK").value || 5)
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          output.innerHTML = `<div class="error">${escapeHtml(payload.detail || response.statusText)}</div>`;
+          return;
+        }
+        output.innerHTML = render(payload);
+      } catch (error) {
+        output.innerHTML = `<div class="error">${escapeHtml(error.message || error)}</div>`;
+      }
+    };
+
+    document.querySelectorAll(".sample").forEach((button) => {
+      button.onclick = () => { document.getElementById("query").value = button.textContent || ""; };
     });
   </script>
 </body>

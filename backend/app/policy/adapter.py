@@ -76,6 +76,12 @@ def merge_policy_classifications(
         return local_result
     if local_intent == "service_mention" and local_service_id and model_intent == "list_services":
         return local_result
+    if model_intent == "faq_question" and model_confidence >= 0.6:
+        return {
+            "intent": "faq_question",
+            "service_id": model_service_id or local_service_id,
+            "confidence": model_confidence,
+        }
     if local_service_id and not model_service_id:
         return local_result
     if model_intent in MODEL_RISK_INTENTS and local_confidence >= 0.75:

@@ -505,8 +505,9 @@ def analyze_message(
     if fact_guard_result is not None:
         return fact_guard_result
 
-    if intent == "faq_question" and service is None:
-        article_matches = _retrieve_article_context_safe(message)
+    if intent == "faq_question" and not price_requested and not duration_requested:
+        article_query = f"{service.name} {message}" if service is not None else message
+        article_matches = _retrieve_article_context_safe(article_query)
         if not article_matches:
             return PolicyResult(
                 action=PolicyAction.CLARIFY,

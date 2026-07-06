@@ -119,6 +119,10 @@ def classify_and_extract(
         return {"intent": "clarify", "service_id": None, "confidence": 0.7}
     if is_location_mismatch(message, normalized_message, company_city):
         return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
+    has_off_topic_keyword = contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS)
+    service_id = _local_service_id(message, known_services, allow_fuzzy=not has_off_topic_keyword)
+    if has_off_topic_keyword and service_id is None:
+        return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
     if mentions_company_city(normalized_message, company_city):
         return {"intent": "clarify", "service_id": None, "confidence": 0.78}
     if contains_keyword(normalized_message, PROMPT_INJECTION_KEYWORDS):
@@ -126,12 +130,8 @@ def classify_and_extract(
     if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS):
         return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
 
-    has_off_topic_keyword = contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS)
-    service_id = _local_service_id(message, known_services, allow_fuzzy=not has_off_topic_keyword)
     if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS) and service_id is None:
         return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
-    if has_off_topic_keyword and service_id is None:
-        return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
     if service_id is None:
         service_id = _local_service_id(message, known_services)
     if normalized_message in SERVICE_LIST_FAST_MESSAGES or contains_keyword(

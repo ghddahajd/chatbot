@@ -56,6 +56,11 @@ def test_debug_trace_includes_rag_retrieval_matches(test_client, tmp_path: Path,
     _write_rag_chunks(chunks_file)
     monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
 
+    async def fake_resolve_classification(*_args, **_kwargs):
+        return {"intent": "faq_question", "service_id": None, "confidence": 0.9}
+
+    monkeypatch.setattr("app.routes.debug.resolve_classification", fake_resolve_classification)
+
     response = test_client.post(
         "/api/debug/trace?token=demo-operator-token",
         json={"company_id": "rosh_demo", "message": "как проходит кольпоскопия"},
@@ -65,6 +70,26 @@ def test_debug_trace_includes_rag_retrieval_matches(test_client, tmp_path: Path,
     rag_step = next(step for step in response.json()["steps"] if step["step"] == "rag_retrieval")
     assert rag_step["result"]["triggered"] is True
     assert rag_step["result"]["matches"]
+
+
+def test_debug_trace_does_not_trigger_rag_without_faq_intent(
+    test_client,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    response = test_client.post(
+        "/api/debug/trace?token=demo-operator-token",
+        json={"company_id": "rosh_demo", "message": "какая погода в москве"},
+    )
+
+    assert response.status_code == 200
+    rag_step = next(step for step in response.json()["steps"] if step["step"] == "rag_retrieval")
+    assert rag_step["result"]["triggered"] is False
+    assert rag_step["result"]["matches"] == []
 
 
 def test_debug_trace_unknown_company_404(test_client) -> None:

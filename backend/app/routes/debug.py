@@ -11,8 +11,11 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from ..auth import verify_operator_token
+from ..knowledge import normalize_text
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, Session
 from ..policy import classify_and_extract
+from ..policy.constants import DURATION_KEYWORDS, PRICE_KEYWORDS
+from ..policy.extractors import contains_keyword
 from ..policy.restricted import is_restricted_question
 from ..services.rag_search import default_rag_chunks_path, retrieve_article_context, search_rag_chunks
 from .chat_utils import (
@@ -238,9 +241,20 @@ async def debug_trace(
     rag_started_at = time.perf_counter()
     rag_error = None
     article_matches: list[dict[str, Any]] = []
-    if service is None:
+    normalized_message = normalize_text(message)
+    price_requested = classification.get("intent") == "price_question" or contains_keyword(
+        normalized_message, PRICE_KEYWORDS
+    )
+    duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
+    rag_triggered = (
+        classification.get("intent") == "faq_question"
+        and not price_requested
+        and not duration_requested
+    )
+    if rag_triggered:
+        rag_query = f"{service.name} {message}" if service is not None else message
         try:
-            article_matches = retrieve_article_context(message)
+            article_matches = retrieve_article_context(rag_query)
         except FileNotFoundError:
             rag_error = f"corpus_not_found: {default_rag_chunks_path()}"
         except (json.JSONDecodeError, ValueError) as error:
@@ -250,7 +264,7 @@ async def debug_trace(
             "step": "rag_retrieval",
             "duration_ms": round((time.perf_counter() - rag_started_at) * 1000, 1),
             "result": {
-                "triggered": service is None,
+                "triggered": rag_triggered,
                 "matches": article_matches,
                 "error": rag_error,
             },

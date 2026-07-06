@@ -12,6 +12,8 @@ from .constants import (
     CLARIFY_SHORT_MESSAGES,
     COSMETIC_CONCERN_KEYWORDS,
     CONTACT_LINK_KEYWORDS,
+    DURATION_KEYWORDS,
+    FAQ_QUESTION_KEYWORDS,
     LEAD_REQUEST_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
     OPERATOR_REQUEST_KEYWORDS,
@@ -130,6 +132,12 @@ def classify_and_extract(
     if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS):
         return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
 
+    if (
+        contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS)
+        and not contains_keyword(normalized_message, PRICE_KEYWORDS)
+        and not contains_keyword(normalized_message, DURATION_KEYWORDS)
+    ):
+        return {"intent": "faq_question", "service_id": service_id, "confidence": 0.84}
     if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS) and service_id is None:
         return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
     if service_id is None:

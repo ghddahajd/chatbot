@@ -282,6 +282,31 @@ def test_telegram_formatter_uses_event_specific_text() -> None:
     assert "http://localhost:8000/operator" in operator_text
 
 
+def test_telegram_lead_text_includes_reason_service_and_dialog_link() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={
+            "name": "Иван",
+            "phone": "+7999",
+            "summary": "Хочу узнать про эпиляцию",
+            "reason": "price_question",
+            "recent_messages": [
+                {"role": "user", "text": "сколько стоит эпиляция"},
+                {"role": "assistant", "text": "от 3000 рублей"},
+            ],
+            "operator_url": "http://localhost:8000/operator?session_id=abc",
+        },
+        service_name="Лазерная эпиляция",
+    )
+
+    assert "Услуга: Лазерная эпиляция" in text
+    assert "Тип запроса: Цена" in text
+    assert "Последнее сообщение: сколько стоит эпиляция" in text
+    assert "Открыть диалог: http://localhost:8000/operator?session_id=abc" in text
+
+
 def test_webhook_payload_wraps_event_metadata() -> None:
     record = {
         "event_type": "operator_requested",

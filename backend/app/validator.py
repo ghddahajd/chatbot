@@ -31,6 +31,13 @@ UNSUPPORTED_DETAIL_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+UNSUPPORTED_EQUIPMENT_PATTERNS = (
+    re.compile(
+        r"(?:nd[\s:-]?yag|alexandrite|александритов|диодны[йе]|рубиновы[йе]|"
+        r"ipl-?лазер|неодимов|эрбиев)",
+        re.IGNORECASE,
+    ),
+)
 CONSULTATION_FORBIDDEN_PATTERNS = (
     *RAW_CONTEXT_PATTERNS,
     re.compile(r"\d"),
@@ -106,7 +113,7 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
             return False
 
     if question_type == "faq_question":
-        if re.search(r"\d|₽|руб", answer, re.IGNORECASE):
+        if re.search(r"₽|руб(?:л|\.)", answer, re.IGNORECASE):
             return False
         article_context = context.get("article_context")
         snippets_text = ""
@@ -148,6 +155,8 @@ def validate_consultation_response(answer: str, context: dict[str, Any] | None =
     if not answer.strip():
         return False
     if any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS):
+        return False
+    if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
         return False
     if _context_has_medical_restrictions(context):
         return not any(pattern.search(answer) for pattern in MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS)

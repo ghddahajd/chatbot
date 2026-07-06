@@ -6,7 +6,7 @@ import re
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from ..leads import build_lead_from_contact
+from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
 from ..knowledge import normalize_text
 from ..models import (
     ChatMessageResponse,
@@ -36,6 +36,7 @@ from ..routes.chat_utils import (
     service_classifier_payload,
     should_use_consultation_llm,
 )
+from .session_summarizer import summarize_session
 
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,9 @@ class ChatService:
             return str(self.request.url_for("operator_page"))
         except Exception:
             return "/operator"
+
+    def _operator_session_url(self, session_id: str) -> str:
+        return f"{self._operator_url()}?session_id={session_id}"
 
     def _looks_like_partial_phone(self, message: str) -> bool:
         digits = re.sub(r"\D", "", message)
@@ -100,6 +104,12 @@ class ChatService:
         if prior_message:
             return f"{prefix}{prior_message} | Контакт: {message}"
         return f"{prefix}{message}"
+
+    async def _finalize_lead_summary(self, session, lead) -> None:
+        llm_client = getattr(self.request.app.state, "llm_client", None)
+        if llm_client is None:
+            return
+        lead.summary = await summarize_session(llm_client, session=session, lead=lead)
 
     async def _clear_contact_state(self, session_store, session_id: str) -> None:
         await session_store.set_pending_action(session_id, None)
@@ -162,7 +172,16 @@ class ChatService:
             contact=contact,
             summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
             service_id=session.last_service_id,
+            reason=classify_lead_reason(last_intent=session.last_intent, is_booking_request=is_booking_request),
+            needs_operator=session.operator_requested,
+            lead_trigger=lead_trigger_for(
+                is_booking_request=is_booking_request,
+                is_operator_flow=session.operator_requested,
+            ),
+            recent_messages=recent_messages_for(session),
+            operator_url=self._operator_session_url(session.session_id),
         )
+        await self._finalize_lead_summary(session, lead)
         await lead_service.save(
             lead,
             event_type="booking_created" if is_booking_request else "lead_created",
@@ -356,7 +375,13 @@ class ChatService:
                     contact=contact,
                     summary=self._lead_summary(session, message, is_booking_request=False),
                     service_id=waiting_policy_result.service_id,
+                    reason=classify_lead_reason(last_intent=session.last_intent, is_booking_request=False),
+                    needs_operator=True,
+                    lead_trigger=lead_trigger_for(is_booking_request=False, is_operator_flow=True),
+                    recent_messages=recent_messages_for(session),
+                    operator_url=self._operator_session_url(session.session_id),
                 )
+                await self._finalize_lead_summary(session, lead)
                 await lead_service.save(lead)
                 await session_store.set_lead_requested(session.session_id, True)
                 answer = self._phrase(
@@ -411,6 +436,7 @@ class ChatService:
             message=message,
             policy_result=policy_result,
         )
+        prior_last_intent = session.last_intent
         await self._remember_policy_context(session_store, session, policy_result)
 
         lead_created = False
@@ -427,8 +453,17 @@ class ChatService:
                     session_id=session.session_id,
                     contact=contact,
                     summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
-                    service_id=policy_result.service_id,
+                    service_id=policy_result.service_id or session.last_service_id,
+                    reason=classify_lead_reason(last_intent=prior_last_intent, is_booking_request=is_booking_request),
+                    needs_operator=session.operator_requested,
+                    lead_trigger=lead_trigger_for(
+                        is_booking_request=is_booking_request,
+                        is_operator_flow=session.operator_requested,
+                    ),
+                    recent_messages=recent_messages_for(session),
+                    operator_url=self._operator_session_url(session.session_id),
                 )
+                await self._finalize_lead_summary(session, lead)
                 await lead_service.save(
                     lead,
                     event_type="booking_created" if is_booking_request else "lead_created",

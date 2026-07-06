@@ -635,7 +635,12 @@ def render_operator_panel() -> str:
         }
       });
       updateControls();
-      loadSessions();
+      loadSessions().then(() => {
+        const deepLinkSessionId = new URLSearchParams(window.location.search).get("session_id");
+        if (deepLinkSessionId) {
+          loadSession(deepLinkSessionId);
+        }
+      });
     </script>
   </body>
 </html>

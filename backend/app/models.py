@@ -85,6 +85,11 @@ class Lead(BaseModel):
     phone: str
     summary: str
     service_id: Optional[str] = None
+    reason: str = "commercial_interest"
+    needs_operator: bool = False
+    lead_trigger: str = "ask_contact"
+    recent_messages: list[dict[str, str]] = Field(default_factory=list)
+    operator_url: str = ""
 
 
 class PriceEntry(BaseModel):

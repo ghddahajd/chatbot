@@ -144,6 +144,30 @@ def test_pending_contact_lead_summary_keeps_prior_user_request(test_client, mana
     assert "Контакт: Иван +79991234567" in lead["summary"]
 
 
+def test_direct_phone_after_price_question_keeps_prior_reason_and_service(test_client, managed_env) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "сколько стоит чистка лица"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +79991234567",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["reason"] == "price_question"
+    assert lead["service_id"] == "facial_cleansing"
+
+
 def test_contact_request_with_phone_in_same_message_creates_lead(test_client, managed_env) -> None:
     response = test_client.post(
         "/api/chat/message",

@@ -100,6 +100,26 @@ def test_merge_keeps_local_price_over_model_faq_question() -> None:
     assert result["service_id"] == "laser_epilation"
 
 
+def test_merge_keeps_local_faq_question_over_model_service_mention() -> None:
+    result = merge_policy_classifications(
+        {"intent": "faq_question", "service_id": "laser_epilation", "confidence": 0.84},
+        {"intent": "service_mention", "service_id": "laser_epilation", "confidence": 0.91},
+    )
+
+    assert result["intent"] == "faq_question"
+    assert result["service_id"] == "laser_epilation"
+
+
+def test_merge_keeps_local_faq_question_over_model_cosmetic_concern() -> None:
+    result = merge_policy_classifications(
+        {"intent": "faq_question", "service_id": "laser_resurfacing", "confidence": 0.84},
+        {"intent": "cosmetic_concern", "service_id": "laser_resurfacing", "confidence": 0.95},
+    )
+
+    assert result["intent"] == "faq_question"
+    assert result["service_id"] == "laser_resurfacing"
+
+
 def test_merge_keeps_local_medical_over_model_answer() -> None:
     result = merge_policy_classifications(
         {"intent": "medical_advice", "service_id": None, "confidence": 0.86},

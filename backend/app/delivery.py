@@ -14,7 +14,7 @@ from uuid import uuid4
 import httpx
 
 from .knowledge import KnowledgeBaseResolver
-from .leads import lead_to_payload
+from .leads import REASON_LABELS, lead_to_payload
 from .models import Lead
 from .utils.jsonl import read_jsonl
 
@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 MAX_DELIVERY_ATTEMPTS = 5
 BASE_BACKOFF_SECONDS = 60
 DELIVERY_TIMEOUT_SECONDS = 5.0
+
+
+def _last_user_message_text(payload: dict[str, Any]) -> str:
+    recent_messages = payload.get("recent_messages")
+    if not isinstance(recent_messages, list):
+        return ""
+    for item in reversed(recent_messages):
+        if isinstance(item, dict) and item.get("role") == "user":
+            return str(item.get("text") or "").strip()
+    return ""
 
 
 def _utcnow() -> datetime:
@@ -76,12 +86,21 @@ def _telegram_text(
             f"{operator_line}"
         )
 
+    reason_line = REASON_LABELS.get(str(payload.get("reason") or ""), "Оператор/контакт")
+    service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else "✂️ Услуга: не указана\n"
+    last_message = _last_user_message_text(payload)
+    operator_url = str(payload.get("operator_url") or "").strip()
+    dialog_line = f"\n\n🔗 Открыть диалог: {operator_url}" if operator_url else ""
     return (
         f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
-        f"👤 {_text_value(payload.get('name'))}\n"
-        f"📞 {_text_value(payload.get('phone'))}\n"
-        f"💬 {_text_value(payload.get('summary'))}\n"
+        f"👤 Имя: {_text_value(payload.get('name'))}\n"
+        f"📞 Телефон: {_text_value(payload.get('phone'))}\n"
+        f"{service_line}"
+        f"🏷 Тип запроса: {reason_line}\n"
+        f"💬 Саммари: {_text_value(payload.get('summary'))}\n"
+        f"🗨 Последнее сообщение: {_text_value(last_message)}\n"
         f"🕐 {_text_value(timestamp)}"
+        f"{dialog_line}"
     )
 
 

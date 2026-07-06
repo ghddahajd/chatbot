@@ -184,6 +184,13 @@ def test_company_city_statement_is_not_off_topic(policy_session, knowledge_base)
     assert result.reason == PolicyReason.OK
 
 
+def test_local_classifier_marks_explicit_faq_question(policy_session, knowledge_base) -> None:
+    classification = _classification("что нельзя после чистки лица?", knowledge_base)
+
+    assert classification["intent"] == "faq_question"
+    assert classification["service_id"] == "facial_cleansing"
+
+
 def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_base) -> None:
     result = _analyze("что входит в компьютерная диагностика", policy_session, knowledge_base)
 

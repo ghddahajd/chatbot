@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import httpx
 
-from ..models import Message
+from ..models import Lead, Message, Session
 from ..validator import fallback_after_invalid_response, validate_consultation_response, validate_response
 from .base import BaseLLMClient
 from .classification import (
@@ -596,3 +596,38 @@ class OpenAIClient(BaseLLMClient):
 
     async def medical_handoff(self, user_message: str) -> str:
         return await self.restricted_handoff(user_message)
+
+    async def summarize_session(self, session: Session, lead: Lead) -> str:
+        history_lines = "\n".join(
+            f"{message.role.value}: {message.text}" for message in session.messages[-10:]
+        )
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Сформулируй 1-2 предложения о том, что хочет клиент, только по истории "
+                        "диалога ниже. Не придумывай факты, которых нет в истории. Не указывай "
+                        "цены, диагнозы или гарантии, если их не называл сам клиент. Ответь только "
+                        "текстом саммари, без вступлений и списков."
+                    ),
+                },
+                {"role": "user", "content": f"История диалога:\n{history_lines}"},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 120,
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        response = await self._post_chat_completions(payload, headers)
+        data = response.json()
+        answer = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        if not answer or not validate_response(answer):
+            return lead.summary
+        return answer

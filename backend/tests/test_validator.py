@@ -21,6 +21,15 @@ def test_consultation_validator_blocks_raw_context_for_any_profile() -> None:
     assert not validate_consultation_response("service_id: oil_change", context)
 
 
+def test_consultation_validator_blocks_unsupported_equipment_brands() -> None:
+    context = {"domain_profile": {"type": "medical", "restricted_advice": ["medical_treatment"]}}
+
+    assert not validate_consultation_response(
+        "Для эпиляции обычно используют Nd:YAG или Alexandrite лазеры.",
+        context,
+    )
+
+
 def test_faq_validator_allows_answer_grounded_in_article_context() -> None:
     context = {
         "question_type": "faq_question",
@@ -35,7 +44,21 @@ def test_faq_validator_allows_answer_grounded_in_article_context() -> None:
     assert validate_response("Кольпоскопия помогает осмотреть шейку матки и выявить изменения тканей.", context)
 
 
-def test_faq_validator_blocks_prices_and_digits() -> None:
+def test_faq_validator_allows_non_price_numbers_grounded_in_article_context() -> None:
+    context = {
+        "question_type": "faq_question",
+        "article_context": [
+            {
+                "title": "Уход после шлифовки",
+                "snippet": "После процедуры важно использовать SPF 30 и избегать активного ухода 24 часа.",
+            }
+        ],
+    }
+
+    assert validate_response("После процедуры важно использовать SPF 30 и избегать активного ухода 24 часа.", context)
+
+
+def test_faq_validator_blocks_prices() -> None:
     context = {
         "question_type": "faq_question",
         "article_context": [{"title": "Кольпоскопия", "snippet": "Кольпоскопия помогает врачу."}],

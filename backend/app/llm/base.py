@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from ..models import Message
+from ..models import Lead, Message, Session
 from .classification import IntentClassification
 
 
@@ -78,6 +78,12 @@ class BaseLLMClient(ABC):
         """legacy alias для старого medical-oriented API."""
 
         return await self.classify_restricted_risk(user_message)
+
+    async def summarize_session(self, session: Session, lead: Lead) -> str:
+        """возвращает краткое саммари диалога для оператора; по умолчанию — без изменений."""
+
+        del session
+        return lead.summary
 
     async def medical_handoff(self, user_message: str) -> str:
         """legacy alias для старого medical-oriented API."""

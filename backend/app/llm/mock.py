@@ -7,7 +7,8 @@ import re
 from typing import Any, Optional
 
 from ..knowledge import normalize_text
-from ..models import Message
+from ..leads import REASON_LABELS
+from ..models import Lead, Message, Session
 from .base import BaseLLMClient
 from .classification import IntentClassification, normalize_intent_classification
 from .prompts import (
@@ -131,7 +132,7 @@ def service_consultation_template(
     seed = "|".join([service_name, user_message, *recent_user_messages])
     if service_name:
         variants = [
-            f"Понял, вы про «{service_name}». Могу подсказать стоимость или позвать специалиста.",
+            f"По услуге «{service_name}» могу подсказать стоимость или позвать специалиста.",
             f"Да, «{service_name}» есть в базе центра. Могу сориентировать по цене или передать вопрос специалисту.",
             f"По услуге «{service_name}» могу помочь в рамках информации центра. Если нужно, уточним стоимость или позовём специалиста.",
             f"Могу коротко сориентировать по «{service_name}»: дальше удобнее уточнить цену или передать вопрос специалисту.",
@@ -348,6 +349,18 @@ class MockLLMClient(BaseLLMClient):
 
     async def medical_handoff(self, user_message: str) -> str:
         return await self.restricted_handoff(user_message)
+
+    async def summarize_session(self, session: Session, lead: Lead) -> str:
+        last_user_text = ""
+        for message in reversed(session.messages):
+            if message.role.value == "user" and message.text.strip():
+                last_user_text = message.text.strip()
+                break
+
+        reason_label = REASON_LABELS.get(lead.reason, "Оператор/контакт")
+        if last_user_text and last_user_text not in lead.summary:
+            return f"{reason_label}: {lead.summary} Последний вопрос: {last_user_text}"
+        return f"{reason_label}: {lead.summary}"
 
     async def classify_and_extract(
         self,

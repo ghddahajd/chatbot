@@ -83,6 +83,28 @@ def test_mock_structured_classifier_maps_medical_to_regulated_risk() -> None:
     assert result.risk == "regulated_advice"
 
 
+def test_mock_complete_varies_default_price_disclaimer() -> None:
+    client = MockLLMClient()
+    context = {
+        "question_type": "price",
+        "service": {"name": "Чистка лица", "short_description": "Описание услуги"},
+        "price": {"price_text": "от 4 500 ₽"},
+    }
+
+    answers = {
+        asyncio.run(client.complete("", context, message, []))
+        for message in [
+            "сколько стоит чистка лица",
+            "цена чистки лица",
+            "сколько по стоимости чистка лица",
+            "подскажите стоимость чистки лица",
+            "сколько будет чистка лица",
+        ]
+    }
+
+    assert len(answers) > 1
+
+
 def test_openai_structured_classifier_uses_json_schema_response_format() -> None:
     client = _RecordingOpenAIClient(
         {

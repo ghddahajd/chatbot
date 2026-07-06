@@ -30,6 +30,19 @@ def _clean_article_sentence(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _price_disclaimer_variant(seed: str, phrasebook_disclaimer: str) -> str:
+    if phrasebook_disclaimer and phrasebook_disclaimer != PRICE_DISCLAIMER:
+        return phrasebook_disclaimer
+    return _choose_stable_variant(
+        seed,
+        [
+            PRICE_DISCLAIMER,
+            "Это предварительная стоимость, точнее подскажет специалист.",
+            "Окончательную стоимость специалист уточнит после деталей.",
+        ],
+    )
+
+
 def small_talk_template(user_message: str) -> str:
     normalized_message = normalize_text(user_message)
 
@@ -223,7 +236,7 @@ class MockLLMClient(BaseLLMClient):
         user_message: str,
         history: list[Message],
     ) -> str:
-        del system_prompt, user_message, history
+        del system_prompt, history
 
         message_to_user = context.get("message_to_user")
         if isinstance(message_to_user, str) and message_to_user.strip():
@@ -232,7 +245,6 @@ class MockLLMClient(BaseLLMClient):
         service = context.get("service") or {}
         price = context.get("price") or {}
         phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
-        price_disclaimer = str(phrasebook.get("price_disclaimer") or PRICE_DISCLAIMER)
         question_type = context.get("question_type")
         all_services = context.get("all_services")
         suggested_services = context.get("suggested_services")
@@ -276,6 +288,10 @@ class MockLLMClient(BaseLLMClient):
         service_name = service.get("name")
         short_description = service.get("short_description")
         duration = service.get("duration")
+        price_disclaimer = _price_disclaimer_variant(
+            f"{question_type}:{service_name}:{user_message}",
+            str(phrasebook.get("price_disclaimer") or ""),
+        )
         variants_count = len(service.get("variants")) if isinstance(service.get("variants"), list) else 0
         variant_examples = _variant_examples(service)
 

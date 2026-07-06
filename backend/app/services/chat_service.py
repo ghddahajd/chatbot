@@ -79,6 +79,28 @@ class ChatService:
             return f"{name}, напишите, пожалуйста, телефон — передам заявку менеджеру."
         return "Напишите, пожалуйста, телефон. Можно просто номер и имя одним сообщением."
 
+    def _last_user_message_before_current(self, session, current_message: str) -> str | None:
+        user_messages = [
+            str(stored_message.text or "").strip()
+            for stored_message in session.messages
+            if stored_message.role == MessageRole.USER and str(stored_message.text or "").strip()
+        ]
+        if len(user_messages) < 2:
+            return None
+        prior_message = user_messages[-2]
+        if not prior_message or prior_message == current_message.strip():
+            return None
+        if extract_phone(prior_message):
+            return None
+        return prior_message
+
+    def _lead_summary(self, session, message: str, *, is_booking_request: bool) -> str:
+        prefix = "Заявка на запись: " if is_booking_request else ""
+        prior_message = self._last_user_message_before_current(session, message)
+        if prior_message:
+            return f"{prefix}{prior_message} | Контакт: {message}"
+        return f"{prefix}{message}"
+
     async def _clear_contact_state(self, session_store, session_id: str) -> None:
         await session_store.set_pending_action(session_id, None)
         await session_store.update_contact_draft(session_id, clear=True)
@@ -138,7 +160,7 @@ class ChatService:
             company_id=session.company_id,
             session_id=session.session_id,
             contact=contact,
-            summary=("Заявка на запись: " + message) if is_booking_request else message,
+            summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
             service_id=session.last_service_id,
         )
         await lead_service.save(
@@ -332,7 +354,7 @@ class ChatService:
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
-                    summary=message,
+                    summary=self._lead_summary(session, message, is_booking_request=False),
                     service_id=waiting_policy_result.service_id,
                 )
                 await lead_service.save(lead)
@@ -404,7 +426,7 @@ class ChatService:
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
-                    summary=("Заявка на запись: " + message) if is_booking_request else message,
+                    summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
                     service_id=policy_result.service_id,
                 )
                 await lead_service.save(

@@ -1,0 +1,3 @@
+{"id":"bug002_unknown_service_then_phone","company":"rosh_demo","history":[{"role":"user","text":"хочу татуаж"}],"message":"Иван +79991234567","expected_marker":"lead_created","expected_service_id":null}
+{"id":"bug003_price_question_no_premature_contact","company":"rosh_demo","message":"сколько стоит чистка лица","expected_action":"answer"}
+{"id":"bug003_explanation_no_premature_contact","company":"rosh_demo","message":"расскажи подробнее про лазерную эпиляцию","expected_action":"answer"}

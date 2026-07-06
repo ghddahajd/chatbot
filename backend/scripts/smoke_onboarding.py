@@ -95,6 +95,7 @@ def _run_api_checks(runner: SmokeRunner, temp_dir: Path, clients_dir: Path) -> N
                 "operator": True,
                 "lead_capture": True,
                 "analytics": False,
+                "voice_input": True,
             },
         )
 

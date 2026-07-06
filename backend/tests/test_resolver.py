@@ -100,6 +100,24 @@ def test_phrasebook_defaults(resolver) -> None:
     assert "менеджер" in phrasebook["unknown_service"]
 
 
+def test_widget_features_voice_input_default_and_override(resolver, managed_env) -> None:
+    assert resolver.widget_features("rosh_demo")["voice_input"] is True
+
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "features:",
+                "  voice_input: false",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert resolver.widget_features("rosh_demo")["voice_input"] is False
+
+
 def test_phrasebook_from_client_config(resolver, managed_env) -> None:
     config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
     config_path.write_text(

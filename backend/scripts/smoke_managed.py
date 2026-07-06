@@ -164,7 +164,12 @@ def main() -> int:
                     headers={"origin": "http://localhost:5500"},
                 ).json()
                 .get("features")
-                == {"operator": True, "lead_capture": True, "analytics": False},
+                == {
+                    "operator": True,
+                    "lead_capture": True,
+                    "analytics": False,
+                    "voice_input": True,
+                },
             )
             runner.check(
                 "bootstrap autodetect",

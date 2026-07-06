@@ -22,6 +22,7 @@ DEFAULT_WIDGET_FEATURES = {
     "operator": True,
     "lead_capture": True,
     "analytics": False,
+    "voice_input": True,
 }
 DEFAULT_WIDGET_CONFIG = {
     "primary_color": "#1F7A5C",

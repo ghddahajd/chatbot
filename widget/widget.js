@@ -458,6 +458,32 @@
       .send-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(31,122,92,.3); }
       .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
+      .mic-btn {
+        height: 44px;
+        width: 44px;
+        flex-shrink: 0;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        background: var(--bg-page);
+        color: var(--text-muted);
+        font: inherit;
+        font-size: 18px;
+        cursor: pointer;
+        transition: background .15s, color .15s, border-color .15s, opacity .15s;
+      }
+      .mic-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+      .mic-btn.listening {
+        background: var(--accent-soft);
+        border-color: var(--accent-border);
+        color: var(--accent-dark);
+        animation: mic-pulse 1.2s ease-in-out infinite;
+      }
+      .mic-btn:disabled { opacity: .4; cursor: not-allowed; }
+      @keyframes mic-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(31,122,92,.25); }
+        50% { box-shadow: 0 0 0 6px rgba(31,122,92,0); }
+      }
+
       /* ── Closed reset ── */
       .closed-note {
         display: none;
@@ -493,6 +519,7 @@
           border-radius: 18px;
         }
         .composer { flex-direction: column; align-items: stretch; }
+        .composer .mic-btn { align-self: center; }
         .send-btn { width: 100%; }
       }
     </style>
@@ -524,6 +551,7 @@
 
         <div class="composer">
           <input class="inp" type="text" placeholder="Напишите вопрос…" />
+          <button class="mic-btn" type="button" aria-label="Голосовой ввод" hidden>🎤</button>
           <button class="send-btn" type="button">Отправить</button>
         </div>
         <div class="closed-note">
@@ -545,6 +573,8 @@
         ws: null,
         typingNode: null,
         typingStartedAt: 0,
+        voiceEnabled: false,
+        recognition: null,
         widgetConfig: {
           primary_color: "#1F7A5C",
           button_color: "#1F7A5C",
@@ -570,6 +600,7 @@
         close: this.$(".close-btn"),
         messages: this.$(".messages"),
         inp: this.$(".inp"),
+        mic: this.$(".mic-btn"),
         send: this.$(".send-btn"),
         composer: this.$(".composer"),
         closedNote: this.$(".closed-note"),
@@ -624,10 +655,79 @@
         this.state.companyId = data.company_id || EMBED_COMPANY_ID;
         if (!this.state.companyId) throw new Error("company not resolved");
         this.applyConfig(data.widget_config || {});
+        const voiceFeatureEnabled = Boolean(data.features && data.features.voice_input !== false);
+        this.state.voiceEnabled = voiceFeatureEnabled && this.setupVoiceInput();
         await this.restoreSession();
       } catch (err) {
         this.markUnavailable(err);
       }
+    }
+
+    setupVoiceInput() {
+      if (!this.el.mic) return false;
+      const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognitionImpl) return false;
+      this.SpeechRecognitionImpl = SpeechRecognitionImpl;
+      this.el.mic.hidden = false;
+      this.el.mic.addEventListener("click", () => this.toggleVoiceInput());
+      return true;
+    }
+
+    toggleVoiceInput() {
+      if (this.state.recognition) {
+        this.state.recognition.stop();
+        return;
+      }
+      this.startVoiceInput();
+    }
+
+    startVoiceInput() {
+      if (!this.SpeechRecognitionImpl || !this.el.mic || this.el.inp.disabled) return;
+      const recognition = new this.SpeechRecognitionImpl();
+      recognition.lang = "ru-RU";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        this.state.recognition = recognition;
+        this.el.mic.classList.add("listening");
+      };
+      recognition.onresult = (event) => {
+        const transcript = event.results && event.results[0] && event.results[0][0]
+          ? event.results[0][0].transcript
+          : "";
+        const text = String(transcript || "").trim();
+        if (text) {
+          this.el.inp.value = (this.el.inp.value ? this.el.inp.value + " " : "") + text;
+          this.el.inp.focus();
+        }
+      };
+      recognition.onerror = (event) => {
+        this.handleVoiceError(event.error);
+      };
+      recognition.onend = () => {
+        this.state.recognition = null;
+        this.el.mic.classList.remove("listening");
+      };
+
+      try {
+        recognition.start();
+      } catch (_) {
+        this.state.recognition = null;
+        this.el.mic.classList.remove("listening");
+      }
+    }
+
+    handleVoiceError(errorCode) {
+      this.state.recognition = null;
+      if (this.el.mic) this.el.mic.classList.remove("listening");
+      const messages = {
+        "not-allowed": "Доступ к микрофону запрещён в браузере.",
+        "no-speech": "Не расслышал, попробуйте ещё раз.",
+        "audio-capture": "Микрофон не найден.",
+      };
+      const text = messages[errorCode];
+      if (text) this.addMsg("system", text);
     }
 
     async buildBootstrapError(res) {
@@ -812,11 +912,13 @@
       this.el.closedNote.classList.toggle("visible", isClosed);
       this.el.inp.disabled = isClosed || isUnavail;
       this.el.send.disabled = isClosed || isUnavail;
+      if (this.el.mic) this.el.mic.disabled = isClosed || isUnavail;
     }
 
     async submit() {
       const text = this.el.inp.value.trim();
       if (!text) return;
+      if (this.state.recognition) this.state.recognition.stop();
       this.sendText(text);
     }
 

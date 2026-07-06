@@ -13,6 +13,7 @@ def test_explicit_company_id_200(test_client) -> None:
         "operator": True,
         "lead_capture": True,
         "analytics": False,
+        "voice_input": True,
     }
     assert response.json()["widget_config"]["primary_color"] == "#1F7A5C"
     assert response.json()["widget_config"]["position"] == "bottom-right"
@@ -64,6 +65,7 @@ def test_widget_config_from_client_config(test_client, managed_env) -> None:
                 "  operator: true",
                 "  lead_capture: true",
                 "  analytics: false",
+                "  voice_input: false",
                 "widget:",
                 '  primary_color: "#B85C38"',
                 '  button_color: "#7A1F1F"',
@@ -83,6 +85,7 @@ def test_widget_config_from_client_config(test_client, managed_env) -> None:
     )
 
     assert response.status_code == 200
+    assert response.json()["features"]["voice_input"] is False
     assert response.json()["widget_config"] == {
         "primary_color": "#B85C38",
         "button_color": "#7A1F1F",

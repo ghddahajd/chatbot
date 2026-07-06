@@ -93,7 +93,9 @@ def test_transfer_operator_enqueues_operator_requested_event(test_client, monkey
     assert payload["action"] == "transfer_operator"
     assert events[-1]["event_type"] == "operator_requested"
     assert events[-1]["payload"]["last_message"] == "у меня воспаление что делать"
-    assert events[-1]["payload"]["operator_url"].endswith("/operator")
+    operator_url = events[-1]["payload"]["operator_url"]
+    assert "/operator?token=" in operator_url
+    assert "demo-operator-token" in operator_url
 
 
 def test_pending_contact_accepts_messy_phone_and_name(test_client) -> None:

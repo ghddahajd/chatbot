@@ -57,12 +57,14 @@ class ChatService:
 
     def _operator_url(self) -> str:
         try:
-            return str(self.request.url_for("operator_page"))
+            base_url = str(self.request.url_for("operator_page"))
         except Exception:
-            return "/operator"
+            base_url = "/operator"
+        token = getattr(self.request.app.state.settings, "operator_token", "")
+        return f"{base_url}?token={token}"
 
     def _operator_session_url(self, session_id: str) -> str:
-        return f"{self._operator_url()}?session_id={session_id}"
+        return f"{self._operator_url()}&session_id={session_id}"
 
     def _looks_like_partial_phone(self, message: str) -> bool:
         digits = re.sub(r"\D", "", message)

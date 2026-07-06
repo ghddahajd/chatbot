@@ -6,7 +6,6 @@ from pathlib import Path
 
 from app.models import Message, MessageRole, PolicyAction, PolicyReason
 from app.policy import analyze_message, classify_and_extract
-from app.policy.constants import OPERATOR_SOFT_OFFER_MESSAGE
 
 
 def _classification(message: str, knowledge_base) -> dict[str, object]:
@@ -113,9 +112,19 @@ def test_operator_request_soft_redirect(policy_session, knowledge_base) -> None:
 
 
 def test_operator_request_second_time_hard_transfer(policy_session, knowledge_base) -> None:
+    """regression: has_operator_soft_offer() раньше сравнивал текст ответа с константой
+    OPERATOR_SOFT_OFFER_MESSAGE, которая не совпадала с реальным DEFAULT_PHRASEBOOK/client
+    config.yaml текстом, из-за чего повторный запрос оператора никогда не приводил
+    к TRANSFER_OPERATOR — бот бесконечно повторял мягкое предложение."""
+    first_result = _analyze("хочу оператора", policy_session, knowledge_base)
+    assert first_result.action == PolicyAction.CLARIFY
     policy_session.messages.append(
-        Message(role=MessageRole.ASSISTANT, text=OPERATOR_SOFT_OFFER_MESSAGE)
+        Message(
+            role=MessageRole.ASSISTANT,
+            text=str(first_result.safe_context.get("message_to_user")),
+        )
     )
+
     result = _analyze("хочу оператора", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.TRANSFER_OPERATOR
@@ -460,6 +469,32 @@ def test_fact_guard_stays_before_cosmetic_concern(
     assert result.reason == PolicyReason.UNKNOWN_SERVICE
     assert "fact_guard" in result.safe_context
     assert result.safe_context["fact_guard"]["matched_blocked"] == ["Келост"]
+
+
+def test_medical_symptom_beats_fact_guard(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """regression: MEDICAL_KEYWORD_PRECISION_PLAN сдвинул fact_guard-проверки выше
+    if medical_requested в файле, из-за чего сообщение с реальным симптомом
+    ("кровит и аллергия") и упоминанием запрещённого препарата ("ботокс" по теме
+    ботулинотерапии) отвечало про бренд препарата вместо эскалации к оператору.
+    Медицинская безопасность должна всегда оставаться выше fact_guard/known_values."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "у меня кровит и аллергия после того как кольнули ботокс, что делать?",
+        policy_session,
+        knowledge_base,
+        {"intent": "medical_advice", "service_id": "botulinoterapiya_9d5734af", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
 def test_fact_guard_stays_before_contact_link(

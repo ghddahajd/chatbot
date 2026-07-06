@@ -176,9 +176,11 @@ def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -
     return None
 
 
-def has_operator_soft_offer(session: Session) -> bool:
+def has_operator_soft_offer(session: Session, knowledge_base: KnowledgeBase) -> bool:
+    phrasebook_text = str(getattr(knowledge_base, "phrasebook", {}).get("operator_soft_offer") or "").strip()
+    expected_text = phrasebook_text or OPERATOR_SOFT_OFFER_MESSAGE
     return any(
-        message.role == MessageRole.ASSISTANT and OPERATOR_SOFT_OFFER_MESSAGE in message.text
+        message.role == MessageRole.ASSISTANT and expected_text in message.text
         for message in session.messages
     )
 

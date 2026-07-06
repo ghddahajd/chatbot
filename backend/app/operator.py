@@ -325,6 +325,27 @@ def render_operator_panel() -> str:
         background: linear-gradient(180deg, #8593a8 0%, #6f7d91 100%);
         box-shadow: none;
       }
+      .scope-tabs {
+        display: flex;
+        gap: 8px;
+        margin: 14px 0 12px;
+      }
+      .scope-tab {
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: none;
+      }
+      .scope-tab.active {
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+        border-color: rgba(77, 134, 230, 0.35);
+      }
       button:disabled {
         opacity: 0.55;
         cursor: not-allowed;
@@ -348,6 +369,10 @@ def render_operator_panel() -> str:
           <p class="eyebrow">Operator panel</p>
           <h1>Чаты поддержки</h1>
           <p class="subtle">Сессии со статусами Ждет оператора и Оператор в диалоге.</p>
+          <div class="scope-tabs">
+            <button id="scopeQueue" class="scope-tab active" type="button">Очередь</button>
+            <button id="scopeAll" class="scope-tab" type="button">Все диалоги</button>
+          </div>
           <button id="refreshSessions" class="secondary">Обновить список</button>
         </div>
         <div class="panel sessions-panel">
@@ -386,6 +411,7 @@ def render_operator_panel() -> str:
       let currentStatus = null;
       let currentCompanyId = "";
       let currentCompanyName = "";
+      let currentScope = "queue";
 
       function humanStatus(status) {
         const labels = {
@@ -527,7 +553,7 @@ def render_operator_panel() -> str:
       }
 
       async function loadSessions() {
-        const res = await authFetch("/api/operator/sessions");
+        const res = await authFetch(`/api/operator/sessions?scope=${encodeURIComponent(currentScope)}`);
         if (!res.ok) return;
         const sessions = await res.json();
         const list = document.getElementById("sessions");
@@ -546,6 +572,14 @@ def render_operator_panel() -> str:
           el.onclick = () => loadSession(item.session_id);
           list.appendChild(el);
         }
+      }
+
+      function setScope(scope) {
+        if (scope === currentScope) return;
+        currentScope = scope;
+        document.getElementById("scopeQueue").classList.toggle("active", scope === "queue");
+        document.getElementById("scopeAll").classList.toggle("active", scope === "all");
+        loadSessions();
       }
 
       async function loadSession(sessionId) {
@@ -626,6 +660,8 @@ def render_operator_panel() -> str:
       }
 
       document.getElementById("refreshSessions").onclick = loadSessions;
+      document.getElementById("scopeQueue").onclick = () => setScope("queue");
+      document.getElementById("scopeAll").onclick = () => setScope("all");
       document.getElementById("closeChat").onclick = closeChat;
       document.getElementById("sendMessage").onclick = sendMessage;
       document.getElementById("messageInput").addEventListener("keydown", (event) => {

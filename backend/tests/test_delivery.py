@@ -304,7 +304,36 @@ def test_telegram_lead_text_includes_reason_service_and_dialog_link() -> None:
     assert "Услуга: Лазерная эпиляция" in text
     assert "Тип запроса: Цена" in text
     assert "Последнее сообщение: сколько стоит эпиляция" in text
-    assert "Открыть диалог: http://localhost:8000/operator?session_id=abc" in text
+    # "_" экранирован (см. test_telegram_text_escapes_markdown_special_chars) —
+    # иначе Telegram Markdown падает с 400 "can't parse entities" на голом "session_id="
+    assert "Открыть диалог: http://localhost:8000/operator?session\\_id=abc" in text
+
+
+def test_telegram_text_escapes_unpaired_markdown_chars_in_dynamic_values() -> None:
+    """regression: живой прогон на реальный Telegram API дал 400 "can't parse
+    entities: Can't find end of the entity starting at byte offset 149" — голый "_"
+    в "session_id=" внутри operator_url ломал парсинг Markdown целиком, и уведомление
+    не доставлялось вообще (не просто криво выглядело — падало с ошибкой)."""
+
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={
+            "name": "Ива_н",
+            "phone": "+7999",
+            "summary": "Хочет *скидку* и уточнить `цену`",
+            "operator_url": "http://localhost:8000/operator?session_id=bd647b64-8f87",
+        },
+    )
+
+    # ровно одна НЕэкранированная пара "*" — заголовок "*Новая заявка*". Остальные
+    # звёздочки (из summary) экранированы (\*), иначе непарный "*" тоже ломает Markdown.
+    assert text.count("*Новая заявка*") == 1
+    assert "\\*скидку\\*" in text
+    assert "session\\_id" in text
+    assert "Ива\\_н" in text
+    assert "\\`цену\\`" in text
 
 
 def test_webhook_payload_wraps_event_metadata() -> None:

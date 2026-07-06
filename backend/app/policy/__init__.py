@@ -356,6 +356,20 @@ def analyze_message(
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
 
+    if medical_requested:
+        return PolicyResult(
+            action=PolicyAction.TRANSFER_OPERATOR,
+            reason=PolicyReason.REGULATED_ADVICE,
+            service_id=service.id if service else None,
+            confidence=0.98,
+            safe_context={
+                "message_to_user": knowledge_base.company.safety_disclaimer,
+                "handoff_message": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE,
+                "restricted_category": restricted_category,
+            },
+            quick_actions=["Позвать оператора", "Оставить телефон"],
+        )
+
     if has_contact_prompt(session) and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -562,20 +576,6 @@ def analyze_message(
             quick_actions=["Позвать оператора", "Написать в Telegram"],
         )
 
-    if medical_requested:
-        return PolicyResult(
-            action=PolicyAction.TRANSFER_OPERATOR,
-            reason=PolicyReason.REGULATED_ADVICE,
-            service_id=service.id if service else None,
-            confidence=0.98,
-            safe_context={
-                "message_to_user": knowledge_base.company.safety_disclaimer,
-                "handoff_message": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE,
-                "restricted_category": restricted_category,
-            },
-            quick_actions=["Позвать оператора", "Оставить телефон"],
-        )
-
     if intent == "cosmetic_concern":
         suggested_services = cosmetic_concern_services(message, knowledge_base)
         if suggested_services:
@@ -663,7 +663,7 @@ def analyze_message(
                     "service": service.model_dump() if service else None,
                 },
             )
-        if not has_operator_soft_offer(session):
+        if not has_operator_soft_offer(session, knowledge_base):
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
                 reason=PolicyReason.OPERATOR_REQUESTED,

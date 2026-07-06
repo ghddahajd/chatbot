@@ -34,10 +34,12 @@ async def operator_page(request: Request) -> str:
 
 @router.get("/api/operator/sessions")
 async def list_sessions(
-    request: Request, x_operator_token: Optional[str] = Header(default=None)
+    request: Request,
+    x_operator_token: Optional[str] = Header(default=None),
+    scope: str = "queue",
 ) -> list[dict]:
     verify_operator_token(request, x_operator_token)
-    items = await request.app.state.session_store.list_operator_sessions()
+    items = await request.app.state.session_store.list_operator_sessions(scope=scope)
     payloads = []
     for item in items:
         payload = item.model_dump(mode="json")

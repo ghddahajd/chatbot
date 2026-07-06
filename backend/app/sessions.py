@@ -138,9 +138,17 @@ class SessionStore:
             session.updated_at = datetime.utcnow()
             return session
 
-    async def list_operator_sessions(self) -> list[OperatorSessionSummary]:
+    async def list_operator_sessions(self, scope: str = "queue") -> list[OperatorSessionSummary]:
         async with self._lock:
-            relevant_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}
+            if scope == "all":
+                candidates = list(self._sessions.values())
+            else:
+                relevant_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}
+                candidates = [
+                    session
+                    for session in self._sessions.values()
+                    if session.status in relevant_statuses
+                ]
             sessions = [
                 OperatorSessionSummary(
                     session_id=session.session_id,
@@ -149,7 +157,6 @@ class SessionStore:
                     last_message=session.messages[-1].text if session.messages else None,
                     updated_at=session.updated_at,
                 )
-                for session in self._sessions.values()
-                if session.status in relevant_statuses
+                for session in candidates
             ]
-            return sorted(sessions, key=lambda item: item.updated_at, reverse=True)
+            return sorted(sessions, key=lambda item: item.updated_at, reverse=True)[:200]

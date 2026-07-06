@@ -477,6 +477,10 @@ def analyze_message(
             quick_actions=["Позвать оператора", "Оставить телефон"],
         )
 
+    fact_guard_result = _fact_guard_result(message, knowledge_base)
+    if fact_guard_result is not None:
+        return fact_guard_result
+
     if intent == "cosmetic_concern":
         suggested_services = cosmetic_concern_services(message, knowledge_base)
         if suggested_services:
@@ -500,10 +504,6 @@ def analyze_message(
                 ]
                 + ["Позвать оператора"],
             )
-
-    fact_guard_result = _fact_guard_result(message, knowledge_base)
-    if fact_guard_result is not None:
-        return fact_guard_result
 
     if intent == "faq_question" and not price_requested and not duration_requested:
         article_query = f"{service.name} {message}" if service is not None else message

@@ -375,3 +375,29 @@ def test_fact_guard_stays_before_faq_rag(
     assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.UNKNOWN_SERVICE
     assert "fact_guard" in result.safe_context
+
+
+def test_fact_guard_stays_before_cosmetic_concern(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """regression: cosmetic_concern раньше не пропускал fact_guard дальше по функции,
+    и модель, классифицирующая явно запрещённый продукт как cosmetic_concern, могла
+    его подтвердить вместо блокировки (см. живой прогон 'а колите ли вы келост?')."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "а колите ли вы келост?",
+        policy_session,
+        knowledge_base,
+        {"intent": "cosmetic_concern", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert "fact_guard" in result.safe_context
+    assert result.safe_context["fact_guard"]["matched_blocked"] == ["Келост"]

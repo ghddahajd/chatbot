@@ -71,7 +71,8 @@
         background: linear-gradient(145deg, var(--accent) 0%, var(--accent-dark) 100%);
         color: #fff;
         font-family: inherit;
-        font-size: 24px;
+        font-size: 32px;
+        font-weight: 400;
         cursor: pointer;
         box-shadow: var(--shadow);
         display: grid;
@@ -418,8 +419,17 @@
       }
       .composer.hidden { display: none; }
 
+      .input-wrap {
+        position: relative;
+        flex: 1;
+        display: flex;
+        align-items: center;
+        min-width: 0;
+      }
+
       .inp {
         flex: 1;
+        width: 100%;
         height: 44px;
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
@@ -432,12 +442,21 @@
         transition: border-color .15s, box-shadow .15s;
         resize: none;
       }
+      .inp.has-mic { padding-right: 40px; }
       .inp::placeholder { color: var(--text-muted); }
       .inp:focus {
         border-color: var(--accent-border);
         box-shadow: 0 0 0 3px rgba(31,122,92,.10);
       }
       .inp:disabled { opacity: .55; cursor: not-allowed; }
+
+      .voice-hint {
+        padding: 0 12px 6px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--text-muted);
+      }
+      .voice-hint.hidden { display: none; }
 
       .send-btn {
         height: 44px;
@@ -459,29 +478,35 @@
       .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
       .mic-btn {
-        height: 44px;
-        width: 44px;
+        position: absolute;
+        right: 4px;
+        top: 50%;
+        transform: translateY(-50%);
+        height: 32px;
+        width: 32px;
         flex-shrink: 0;
-        border: 1px solid var(--border);
+        border: 0;
         border-radius: 50%;
-        background: var(--bg-page);
+        background: transparent;
         color: var(--text-muted);
-        font: inherit;
-        font-size: 18px;
+        padding: 0;
         cursor: pointer;
-        transition: background .15s, color .15s, border-color .15s, opacity .15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background .15s, color .15s, opacity .15s;
       }
-      .mic-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+      .mic-btn svg { width: 16px; height: 16px; }
+      .mic-btn:hover { background: var(--accent-soft); color: var(--accent); }
       .mic-btn.listening {
         background: var(--accent-soft);
-        border-color: var(--accent-border);
         color: var(--accent-dark);
         animation: mic-pulse 1.2s ease-in-out infinite;
       }
       .mic-btn:disabled { opacity: .4; cursor: not-allowed; }
       @keyframes mic-pulse {
         0%, 100% { box-shadow: 0 0 0 0 rgba(31,122,92,.25); }
-        50% { box-shadow: 0 0 0 6px rgba(31,122,92,0); }
+        50% { box-shadow: 0 0 0 5px rgba(31,122,92,0); }
       }
 
       /* ── Closed reset ── */
@@ -519,14 +544,14 @@
           border-radius: 18px;
         }
         .composer { flex-direction: column; align-items: stretch; }
-        .composer .mic-btn { align-self: center; }
+        .input-wrap { width: 100%; }
         .send-btn { width: 100%; }
       }
     </style>
 
     <div class="shell">
       <button class="launcher" type="button" aria-label="Открыть чат">
-        <span class="launcher-emoji">💬</span>
+        <span class="launcher-emoji">+</span>
         <span class="unread" aria-hidden="true"></span>
       </button>
 
@@ -549,9 +574,19 @@
 
         <div class="messages"></div>
 
+        <div class="voice-hint hidden"></div>
         <div class="composer">
-          <input class="inp" type="text" placeholder="Напишите вопрос…" />
-          <button class="mic-btn" type="button" aria-label="Голосовой ввод" hidden>🎤</button>
+          <div class="input-wrap">
+            <input class="inp" type="text" placeholder="Напишите вопрос…" />
+            <button class="mic-btn" type="button" aria-label="Голосовой ввод" hidden>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+              </svg>
+            </button>
+          </div>
           <button class="send-btn" type="button">Отправить</button>
         </div>
         <div class="closed-note">
@@ -601,6 +636,7 @@
         messages: this.$(".messages"),
         inp: this.$(".inp"),
         mic: this.$(".mic-btn"),
+        voiceHint: this.$(".voice-hint"),
         send: this.$(".send-btn"),
         composer: this.$(".composer"),
         closedNote: this.$(".closed-note"),
@@ -669,6 +705,7 @@
       if (!SpeechRecognitionImpl) return false;
       this.SpeechRecognitionImpl = SpeechRecognitionImpl;
       this.el.mic.hidden = false;
+      this.el.inp.classList.add("has-mic");
       this.el.mic.addEventListener("click", () => this.toggleVoiceInput());
       return true;
     }
@@ -683,6 +720,10 @@
 
     startVoiceInput() {
       if (!this.SpeechRecognitionImpl || !this.el.mic || this.el.inp.disabled) return;
+      if (this.el.voiceHint) {
+        clearTimeout(this._voiceHintTimer);
+        this.el.voiceHint.classList.add("hidden");
+      }
       const recognition = new this.SpeechRecognitionImpl();
       recognition.lang = "ru-RU";
       recognition.interimResults = false;
@@ -727,7 +768,17 @@
         "audio-capture": "Микрофон не найден.",
       };
       const text = messages[errorCode];
-      if (text) this.addMsg("system", text);
+      if (text) this.showVoiceHint(text);
+    }
+
+    showVoiceHint(text) {
+      if (!this.el.voiceHint) return;
+      clearTimeout(this._voiceHintTimer);
+      this.el.voiceHint.textContent = text;
+      this.el.voiceHint.classList.remove("hidden");
+      this._voiceHintTimer = setTimeout(() => {
+        this.el.voiceHint.classList.add("hidden");
+      }, 3000);
     }
 
     async buildBootstrapError(res) {
@@ -760,7 +811,7 @@
 
       this.el.headerName.textContent = c.header_title;
       this.el.avatarEmoji.textContent = c.avatar_emoji;
-      this.el.launcherEmoji.textContent = c.avatar_emoji;
+      this.el.launcherEmoji.textContent = "+";
       this.el.shell.classList.toggle("pos-left", c.position === "bottom-left");
     }
 

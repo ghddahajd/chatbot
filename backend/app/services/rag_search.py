@@ -1,8 +1,4 @@
-"""Read-only lexical search over staged RAG chunks.
-
-This is a debug helper for article corpus review before pgvector is wired in.
-It does not affect runtime chat flow.
-"""
+"""Lexical search over staged RAG chunks before pgvector is wired in."""
 
 from __future__ import annotations
 
@@ -50,6 +46,7 @@ STOP_WORDS = {
     "что",
     "это",
 }
+MIN_ARTICLE_SCORE = 6.0
 
 
 def default_rag_chunks_path() -> Path:
@@ -175,3 +172,27 @@ def search_rag_chunks(query: str, top_k: int = 5, path: Path | None = None) -> d
         "total_chunks": len(chunks),
         "matches": matches[:top_k],
     }
+
+
+def retrieve_article_context(
+    query: str,
+    top_k: int = 3,
+    min_score: float = MIN_ARTICLE_SCORE,
+) -> list[dict[str, Any]]:
+    """Return confident article matches for safe_context."""
+
+    results = search_rag_chunks(query=query, top_k=top_k)
+    matches = []
+    for match in results.get("matches", []):
+        if float(match.get("score") or 0.0) < min_score:
+            continue
+        matches.append(
+            {
+                "title": match.get("title"),
+                "url": match.get("url"),
+                "snippet": match.get("snippet"),
+                "chunk_id": match.get("chunk_id"),
+                "score": match.get("score"),
+            }
+        )
+    return matches

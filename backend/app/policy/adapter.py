@@ -9,7 +9,6 @@ from ..llm.classification import IntentClassification
 
 LEGACY_INTENT_BY_STRUCTURED_INTENT = {
     "regulated_advice": "regulated_advice",
-    "faq_question": "service_mention",
 }
 LEGACY_INTENT_BY_RISK = {
     "regulated_advice": "regulated_advice",
@@ -31,6 +30,7 @@ PROTECTED_LOCAL_INTENTS = {
     "cosmetic_concern",
 }
 MODEL_RISK_INTENTS = {"off_topic", "location_mismatch"}
+MODEL_TRUSTED_INTENTS = {"off_topic", "unknown_service", "location_mismatch", "faq_question"}
 
 
 def structured_to_policy_classification(
@@ -80,7 +80,7 @@ def merge_policy_classifications(
         return local_result
     if model_intent in MODEL_RISK_INTENTS and local_confidence >= 0.75:
         return local_result
-    if model_intent in {"off_topic", "unknown_service", "location_mismatch"}:
+    if model_intent in MODEL_TRUSTED_INTENTS:
         return model_result
     if local_intent in {"unknown_service", "clarify", "location_mismatch"}:
         return local_result

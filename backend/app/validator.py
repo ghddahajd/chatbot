@@ -105,6 +105,21 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         if safe_words and not (_significant_words(answer) & safe_words):
             return False
 
+    if question_type == "faq_question":
+        if re.search(r"\d|₽|руб", answer, re.IGNORECASE):
+            return False
+        article_context = context.get("article_context")
+        snippets_text = ""
+        if isinstance(article_context, list):
+            snippets_text = " ".join(
+                f"{item.get('title', '')} {item.get('snippet', '')}"
+                for item in article_context
+                if isinstance(item, dict)
+            )
+        safe_words = _significant_words(snippets_text)
+        if safe_words and not (_significant_words(answer) & safe_words):
+            return False
+
     return True
 
 

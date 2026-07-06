@@ -47,6 +47,36 @@ def test_structured_ambiguous_service_does_not_pass_service_id() -> None:
     assert result["service_id"] is None
 
 
+def test_structured_faq_question_passes_to_policy() -> None:
+    classification = normalize_intent_classification(
+        {
+            "intent": "faq_question",
+            "risk": "safe",
+            "service_match_type": "none",
+            "confidence": 0.83,
+            "reason_code": "faq_question",
+        },
+        KNOWN_SERVICES,
+    )
+
+    result = structured_to_policy_classification(classification)
+
+    assert result == {
+        "intent": "faq_question",
+        "service_id": None,
+        "confidence": 0.83,
+    }
+
+
+def test_merge_accepts_model_faq_question_from_generic_local_result() -> None:
+    result = merge_policy_classifications(
+        {"intent": "service_mention", "service_id": None, "confidence": 0.0},
+        {"intent": "faq_question", "service_id": None, "confidence": 0.91},
+    )
+
+    assert result["intent"] == "faq_question"
+
+
 def test_merge_keeps_local_medical_over_model_answer() -> None:
     result = merge_policy_classifications(
         {"intent": "medical_advice", "service_id": None, "confidence": 0.86},

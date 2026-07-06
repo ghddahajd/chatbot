@@ -48,6 +48,7 @@ class PolicyReason(str, Enum):
     CONTACT_PROVIDED = "contact_provided"
     DURATION_QUESTION = "duration_question"
     SERVICE_EXPLANATION = "service_explanation"
+    FAQ_QUESTION = "faq_question"
     BOOKING_REQUEST = "booking_request"
     OUT_OF_SCOPE = "out_of_scope"
     SMALL_TALK = "small_talk"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any, Optional
 
 from ..knowledge import normalize_text
@@ -21,6 +22,12 @@ def _choose_stable_variant(seed: str, variants: list[str]) -> str:
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     index = int(digest[:8], 16) % len(variants)
     return variants[index]
+
+
+def _clean_article_sentence(value: str) -> str:
+    value = re.sub(r"(?:₽|руб(?:лей|ля|ль|\.)?)", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\d+", "", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def small_talk_template(user_message: str) -> str:
@@ -251,6 +258,20 @@ class MockLLMClient(BaseLLMClient):
                     + ", ".join(service_names)
                     + ". Точные рекомендации даст специалист на консультации."
                 )
+
+        if question_type == "faq_question":
+            article_context = context.get("article_context")
+            if isinstance(article_context, list) and article_context:
+                first_match = article_context[0]
+                if isinstance(first_match, dict):
+                    title = _clean_article_sentence(str(first_match.get("title") or "статьи"))
+                    snippet = str(first_match.get("snippet") or "").strip()
+                    if snippet:
+                        first_sentence = _clean_article_sentence(snippet.split(". ")[0])
+                        if first_sentence and not first_sentence.endswith("."):
+                            first_sentence += "."
+                        return f"По данным статьи «{title}»: {first_sentence} Подробности уточнит специалист."
+            return "Точного ответа по этой теме в базе не нашёл. Могу передать вопрос специалисту."
 
         service_name = service.get("name")
         short_description = service.get("short_description")

@@ -14,7 +14,7 @@ from ..auth import verify_operator_token
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, Session
 from ..policy import classify_and_extract
 from ..policy.restricted import is_restricted_question
-from ..services.rag_search import default_rag_chunks_path, search_rag_chunks
+from ..services.rag_search import default_rag_chunks_path, retrieve_article_context, search_rag_chunks
 from .chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
     classify_consultation_risk,
@@ -235,8 +235,32 @@ async def debug_trace(
         }
     )
 
+    rag_started_at = time.perf_counter()
+    rag_error = None
+    article_matches: list[dict[str, Any]] = []
+    if service is None:
+        try:
+            article_matches = retrieve_article_context(message)
+        except FileNotFoundError:
+            rag_error = f"corpus_not_found: {default_rag_chunks_path()}"
+        except (json.JSONDecodeError, ValueError) as error:
+            rag_error = f"invalid_corpus: {type(error).__name__}"
+    steps.append(
+        {
+            "step": "rag_retrieval",
+            "duration_ms": round((time.perf_counter() - rag_started_at) * 1000, 1),
+            "result": {
+                "triggered": service is None,
+                "matches": article_matches,
+                "error": rag_error,
+            },
+        }
+    )
+
     policy_started_at = time.perf_counter()
     policy_result = request.app.state.policy_analyzer(message, session, knowledge_base, classification)
+    rag_step = steps[-1]
+    rag_step["result"]["used"] = policy_result.safe_context.get("question_type") == "faq_question"
     steps.append(
         {
             "step": "policy_decision",

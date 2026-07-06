@@ -150,7 +150,7 @@ def classification_to_legacy_result(classification: IntentClassification) -> dic
         intent = "medical_advice"
     elif classification.risk in {"off_topic", "prompt_injection"}:
         intent = "off_topic"
-    elif intent in {"regulated_advice", "faq_question"}:
+    elif intent == "regulated_advice":
         intent = "service_mention"
 
     service_id = classification.service_id

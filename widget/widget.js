@@ -21,415 +21,513 @@
   const template = document.createElement("template");
   template.innerHTML = `
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
 
       :host {
         all: initial;
-        --bg-primary: #FAF6F0;
-        --bg-primary-deep: #EFE7DA;
-        --bg-secondary: #FFFFFF;
         --accent: #1F7A5C;
-        --accent-strong: #234C3F;
-        --accent-soft: #E8F0EC;
-        --btn-color: #1F7A5C;
-        --btn-color-strong: #234C3F;
-        --text-primary: #1F2922;
-        --text-secondary: #6B7670;
-        --border-subtle: #E5DFD5;
-        --shadow-soft: 0 2px 12px rgba(45, 95, 79, 0.08);
-        --shadow-panel: 0 28px 70px rgba(45, 95, 79, 0.16);
-        --radius-message: 16px;
-        --radius-control: 12px;
+        --accent-dark: #0f4d38;
+        --accent-soft: #e8f5f0;
+        --accent-border: #d1ede4;
+        --bg: #ffffff;
+        --bg-page: #fafaf8;
+        --bg-warm: #f5f3ef;
+        --text: #111111;
+        --text-secondary: #6b7280;
+        --text-muted: #9ca3af;
+        --border: #ede9e3;
+        --border-soft: #f0ede8;
+        --shadow: 0 20px 60px rgba(0,0,0,.11), 0 4px 16px rgba(0,0,0,.06);
+        --radius: 20px;
+        --radius-sm: 12px;
+        --radius-msg: 16px;
+        font-family: "Manrope", system-ui, -apple-system, sans-serif;
       }
+
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
       .shell {
         position: fixed;
         right: 24px;
         bottom: 24px;
         z-index: 2147483647;
-        font-family: "Plus Jakarta Sans", "Work Sans", "Avenir Next", sans-serif;
-        color: var(--text-primary);
-      }
-      .shell.position-left {
-        right: auto;
-        left: 24px;
-      }
-      .launcher {
-        width: 58px;
-        height: 58px;
-        border: 0;
-        border-radius: 20px;
-        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
-        color: #FFFDF8;
-        font: inherit;
-        font-size: 26px;
-        font-weight: 600;
-        cursor: pointer;
-        box-shadow: var(--shadow-panel);
-        display: grid;
-        place-items: center;
-      }
-      .launcher.hidden {
-        display: none;
-      }
-      .panel {
-        width: min(500px, calc(100vw - 32px));
-        height: min(590px, calc(100vh - 96px));
-        display: none;
-        grid-template-rows: auto auto 1fr auto;
-        overflow: hidden;
-        margin-top: 14px;
-        border: 1px solid var(--border-subtle);
-        border-radius: 26px;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(250, 246, 240, 0.98) 100%);
-        box-shadow: var(--shadow-panel);
-        backdrop-filter: blur(10px);
-      }
-      .panel.open { display: grid; }
-      .header {
-        position: relative;
-        padding: 23px 24px 21px;
-        background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-primary-deep) 100%);
-        border-bottom: 1px solid var(--border-subtle);
-      }
-      .close {
-        position: absolute;
-        top: 50%;
-        right: 16px;
-        transform: translateY(-50%);
-        width: 40px;
-        height: 40px;
-        padding: 0;
-        border: 0;
-        border-radius: 999px;
-        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--accent-soft) 100%);
-        color: var(--text-secondary);
-        font: inherit;
-        font-size: 0;
-        line-height: 1;
-        cursor: pointer;
-        display: grid;
-        place-items: center;
-        box-shadow: inset 0 0 0 1px var(--border-subtle);
-      }
-      .close::before {
-        content: "×";
-        display: block;
-        font-size: 24px;
-        font-weight: 500;
-        line-height: 1;
-        transform: translateY(5px);
-      }
-      .eyebrow {
-        display: none;
-      }
-      .title {
-        margin: 0;
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        text-align: center;
-        color: var(--text-primary);
-      }
-      .subtitle {
-        margin: 7px auto 0;
-        max-width: 330px;
-        color: var(--text-secondary);
-        font-size: 13px;
-        font-weight: 500;
-        line-height: 1.45;
-        text-align: center;
-      }
-      .statusbar {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 12px 20px;
-        background: rgba(250, 246, 240, 0.72);
-        border-bottom: 1px solid var(--border-subtle);
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--text-secondary);
-      }
-      .statusbar.status-waiting {
-        color: #8A6B22;
-      }
-      .statusbar.status-human {
-        color: var(--accent);
-      }
-      .statusbar.status-closed {
-        color: var(--text-secondary);
-      }
-      .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 999px;
-        background: var(--accent);
-        box-shadow: 0 0 0 4px rgba(45, 95, 79, 0.12);
-        animation: pulse-ai 2.2s ease-in-out infinite;
-      }
-      .status-waiting .dot {
-        background: #D6A844;
-        box-shadow: 0 0 0 4px rgba(214, 168, 68, 0.14);
-        animation: pulse-waiting 1.4s ease-in-out infinite;
-      }
-      .status-human .dot {
-        background: var(--accent);
-        box-shadow: 0 0 0 4px rgba(45, 95, 79, 0.12);
-        animation: none;
-      }
-      .status-closed .dot {
-        background: #B9B3A8;
-        box-shadow: 0 0 0 4px rgba(185, 179, 168, 0.14);
-        animation: none;
-      }
-      @keyframes pulse-ai {
-        0%, 100% {
-          box-shadow: 0 0 0 4px rgba(45, 95, 79, 0.1);
-        }
-        50% {
-          box-shadow: 0 0 0 7px rgba(45, 95, 79, 0.04);
-        }
-      }
-      @keyframes pulse-waiting {
-        0%, 100% {
-          transform: scale(1);
-          box-shadow: 0 0 0 4px rgba(214, 168, 68, 0.14);
-        }
-        50% {
-          transform: scale(1.12);
-          box-shadow: 0 0 0 7px rgba(214, 168, 68, 0.06);
-        }
-      }
-      .messages {
-        padding: 14px 18px;
-        overflow: auto;
         display: flex;
         flex-direction: column;
+        align-items: flex-end;
         gap: 12px;
-        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
       }
-      .empty {
-        padding: 16px 18px;
-        border-radius: var(--radius-message);
-        background: var(--bg-secondary);
-        border: 1px dashed var(--border-subtle);
-        color: var(--text-secondary);
-        font-size: 14px;
-        line-height: 1.5;
-        box-shadow: var(--shadow-soft);
+      .shell.pos-left {
+        right: auto;
+        left: 24px;
+        align-items: flex-start;
       }
-      .message {
-        max-width: 82%;
-        padding: 14px 15px;
-        border-radius: var(--radius-message);
-        line-height: 1.5;
-        font-size: 15px;
-        font-weight: 400;
-        white-space: pre-wrap;
-        word-break: break-word;
-        box-shadow: var(--shadow-soft);
-      }
-      .message.user {
-        align-self: flex-end;
-        background: var(--accent);
-        color: #FFFDF8;
-        border: 1px solid rgba(45, 95, 79, 0.24);
-        border-bottom-right-radius: 8px;
-      }
-      .message.assistant,
-      .message.system {
-        align-self: flex-start;
-        background: var(--bg-secondary);
-        color: var(--text-primary);
-        border: 1px solid var(--border-subtle);
-        border-bottom-left-radius: 8px;
-        max-width: 68%;
-      }
-      .message.operator {
-        align-self: flex-start;
-        background: var(--accent-soft);
-        color: var(--accent-strong);
-        border: 1px solid rgba(45, 95, 79, 0.14);
-        border-bottom-left-radius: 8px;
-      }
-      .message.typing {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        color: var(--text-secondary);
-      }
-      .typing-dots {
-        display: inline-flex;
-        gap: 4px;
-      }
-      .typing-dots span {
-        width: 5px;
-        height: 5px;
-        border-radius: 999px;
-        background: var(--accent);
-        animation: typing-pulse 1s ease-in-out infinite;
-      }
-      .typing-dots span:nth-child(2) {
-        animation-delay: 0.15s;
-      }
-      .typing-dots span:nth-child(3) {
-        animation-delay: 0.3s;
-      }
-      @keyframes typing-pulse {
-        0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
-        40% { opacity: 1; transform: translateY(-2px); }
-      }
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        margin-bottom: 6px;
-        padding: 3px 7px;
-        border-radius: 999px;
-        background: var(--accent-soft);
-        color: var(--accent);
-        font-size: 10px;
-        font-weight: 700;
-        line-height: 1;
-        text-transform: none;
-        letter-spacing: 0.02em;
-      }
-      .message.system .badge {
-        background: var(--bg-primary);
-        color: var(--text-secondary);
-      }
-      .quick-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: -4px;
-      }
-      .quick-action {
-        border: 1px solid rgba(45, 95, 79, 0.34);
-        border-radius: 999px;
-        background: var(--bg-secondary);
-        color: var(--accent);
+
+      /* ── Launcher ── */
+      .launcher {
+        width: 56px;
+        height: 56px;
+        border: 0;
+        border-radius: 18px;
+        background: linear-gradient(145deg, var(--accent) 0%, var(--accent-dark) 100%);
+        color: #fff;
+        font-family: inherit;
+        font-size: 24px;
         cursor: pointer;
-        font: inherit;
-        font-weight: 600;
-        font-size: 14px;
-        padding: 8px 11px;
-        transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+        box-shadow: var(--shadow);
+        display: grid;
+        place-items: center;
+        transition: transform .18s ease, box-shadow .18s ease;
+        position: relative;
       }
-      .quick-action:hover {
-        background: var(--accent-soft);
-        border-color: var(--accent);
-        transform: translateY(-1px);
+      .launcher:hover { transform: translateY(-2px); box-shadow: 0 24px 64px rgba(0,0,0,.14); }
+      .launcher.hidden { display: none; }
+
+      /* ── Unread badge ── */
+      .unread {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: #ef4444;
+        border: 2px solid #fff;
+        display: none;
       }
-      .composer {
+      .unread.visible { display: block; }
+
+      /* ── Panel ── */
+      .panel {
+        width: min(380px, calc(100vw - 32px));
+        height: min(580px, calc(100vh - 100px));
+        display: none;
+        flex-direction: column;
+        border-radius: var(--radius);
+        background: var(--bg);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        border: 1px solid var(--border-soft);
+      }
+      .panel.open { display: flex; }
+
+      /* ── Header ── */
+      .header {
+        padding: 14px 16px;
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 12px 18px 16px;
-        border-top: 1px solid var(--border-subtle);
-        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+        border-bottom: 1px solid var(--border-soft);
+        background: var(--bg);
+        flex-shrink: 0;
       }
-      .composer.hidden {
-        display: none;
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--radius-sm);
+        background: linear-gradient(145deg, var(--accent) 0%, var(--accent-dark) 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        flex-shrink: 0;
+        box-shadow: 0 4px 12px rgba(31,122,92,.25);
       }
-      .closed-note {
-        display: none;
-        padding: 12px 18px 16px;
-        border-top: 1px solid var(--border-subtle);
-        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+      .header-info { flex: 1; min-width: 0; }
+      .header-name {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -.02em;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      .closed-note.visible {
-        display: block;
+      .header-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 2px;
       }
-      .closed-reset {
-        width: 100%;
-        min-height: 54px;
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #22c55e;
+        flex-shrink: 0;
+        transition: background .3s;
+      }
+      .dot.waiting {
+        background: #f59e0b;
+        animation: blink-dot 1.2s ease-in-out infinite;
+      }
+      .dot.human { background: #22c55e; animation: none; }
+      .dot.closed, .dot.unavailable { background: #d1d5db; animation: none; }
+      @keyframes blink-dot {
+        0%, 100% { opacity: 1; }
+        50% { opacity: .3; }
+      }
+      .status-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        letter-spacing: .01em;
+      }
+      .close-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: var(--bg-warm);
         border: 0;
-        border-radius: var(--radius-control);
-        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
-        color: #FFFDF8;
+        color: var(--text-muted);
+        font: inherit;
+        font-size: 20px;
+        font-weight: 300;
         cursor: pointer;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        transition: background .15s, color .15s;
+        line-height: 1;
+      }
+      .close-btn:hover { background: var(--border); color: var(--text); }
+
+      /* ── AI badge strip ── */
+      .ai-strip {
+        padding: 7px 16px;
+        border-bottom: 1px solid var(--border-soft);
+        display: flex;
+        justify-content: center;
+        background: var(--bg);
+        flex-shrink: 0;
+      }
+      .ai-strip-inner {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: var(--accent-soft);
+        border-radius: 999px;
+        padding: 3px 10px;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--accent-dark);
+        letter-spacing: .02em;
+      }
+
+      /* ── Messages ── */
+      .messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: var(--bg-page);
+        scroll-behavior: smooth;
+      }
+      .messages::-webkit-scrollbar { width: 4px; }
+      .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+      /* ── Empty / special states ── */
+      .empty-state {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 24px;
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .empty-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        background: linear-gradient(145deg, var(--accent-soft), var(--accent-border));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+      }
+      .empty-title {
+        font-size: 16px;
+        font-weight: 800;
+        color: var(--text);
+        letter-spacing: -.02em;
+      }
+      .empty-sub {
+        font-size: 13px;
+        color: var(--text-muted);
+        max-width: 240px;
+      }
+
+      /* ── Message bubbles ── */
+      .msg {
+        max-width: 82%;
+        padding: 10px 13px;
+        border-radius: var(--radius-msg);
+        font-size: 14px;
+        line-height: 1.55;
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+      .msg.user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: #fff;
+        border-bottom-right-radius: 5px;
+      }
+      .msg.assistant {
+        align-self: flex-start;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-bottom-left-radius: 5px;
+        max-width: 86%;
+      }
+      .msg.operator {
+        align-self: flex-start;
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+        border: 1px solid var(--accent-border);
+        border-bottom-left-radius: 5px;
+      }
+      .msg.system {
+        align-self: center;
+        background: var(--bg-warm);
+        color: var(--text-muted);
+        border: 1px solid var(--border-soft);
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        max-width: 90%;
+        text-align: center;
+        padding: 7px 12px;
+      }
+      .msg-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+        opacity: .55;
+        margin-bottom: 4px;
+      }
+      .msg.assistant .msg-label { color: var(--accent-dark); }
+      .msg.operator .msg-label { color: var(--accent-dark); }
+
+      /* ── Typing indicator ── */
+      .typing-bubble {
+        align-self: flex-start;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-msg);
+        border-bottom-left-radius: 5px;
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .typing-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: typing-bounce 1s ease-in-out infinite;
+      }
+      .typing-dot:nth-child(2) { animation-delay: .15s; }
+      .typing-dot:nth-child(3) { animation-delay: .3s; }
+      @keyframes typing-bounce {
+        0%, 80%, 100% { transform: translateY(0); opacity: .4; }
+        40% { transform: translateY(-4px); opacity: 1; }
+      }
+
+      /* ── Quick actions ── */
+      .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 0 0 2px;
+      }
+      .quick-btn {
+        background: var(--bg);
+        border: 1px solid var(--accent-border);
+        border-radius: 999px;
+        color: var(--accent);
         font: inherit;
         font-size: 13px;
         font-weight: 700;
-        box-shadow: var(--shadow-soft);
-      }
-      .input {
-        flex: 1 1 auto;
-        box-sizing: border-box;
-        height: 48px;
-        min-height: 48px;
-        max-height: 48px;
-        padding: 13px 15px;
-        border: 1px solid var(--border-subtle);
-        border-radius: var(--radius-control);
-        background: var(--bg-secondary);
-        color: var(--text-primary);
-        font: inherit;
-        font-size: 14px;
-        resize: none;
-        outline: none;
-        box-shadow: var(--shadow-soft);
-      }
-      .input:focus {
-        border-color: rgba(45, 95, 79, 0.5);
-        box-shadow: 0 0 0 4px rgba(45, 95, 79, 0.11);
-      }
-      .send {
-        box-sizing: border-box;
-        min-width: 118px;
-        height: 48px;
-        align-self: stretch;
-        border: 0;
-        border-radius: var(--radius-control);
-        background: linear-gradient(180deg, var(--btn-color) 0%, var(--btn-color-strong) 100%);
-        color: #FFFDF8;
-        font: inherit;
-        font-size: 14px;
-        font-weight: 600;
+        padding: 6px 12px;
         cursor: pointer;
-        padding: 0 16px;
-        box-shadow: var(--shadow-soft);
-        transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+        transition: background .15s, transform .12s;
+        letter-spacing: -.01em;
       }
-      .send:hover {
+      .quick-btn:hover {
+        background: var(--accent-soft);
         transform: translateY(-1px);
-        box-shadow: 0 8px 18px rgba(45, 95, 79, 0.14);
       }
-      .send[disabled], .input[disabled] {
-        opacity: 0.6;
-        cursor: not-allowed;
+
+      /* ── Waiting / closed overlay ── */
+      .overlay-state {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        flex: 1;
+        padding: 24px;
+        text-align: center;
+        background: var(--bg-page);
       }
-      @media (max-width: 640px) {
+      .overlay-state.visible { display: flex; }
+      .overlay-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+      }
+      .overlay-icon.waiting { background: linear-gradient(145deg, #fef3ee, #fde0d0); }
+      .overlay-icon.closed { background: var(--bg-warm); }
+      .overlay-title {
+        font-size: 16px;
+        font-weight: 800;
+        color: var(--text);
+        letter-spacing: -.02em;
+      }
+      .overlay-sub {
+        font-size: 13px;
+        color: var(--text-muted);
+        max-width: 230px;
+        line-height: 1.5;
+      }
+
+      /* ── Composer ── */
+      .composer {
+        padding: 10px 12px 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-top: 1px solid var(--border-soft);
+        background: var(--bg);
+        flex-shrink: 0;
+      }
+      .composer.hidden { display: none; }
+
+      .inp {
+        flex: 1;
+        height: 44px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 0 14px;
+        font: inherit;
+        font-size: 14px;
+        color: var(--text);
+        background: var(--bg-page);
+        outline: none;
+        transition: border-color .15s, box-shadow .15s;
+        resize: none;
+      }
+      .inp::placeholder { color: var(--text-muted); }
+      .inp:focus {
+        border-color: var(--accent-border);
+        box-shadow: 0 0 0 3px rgba(31,122,92,.10);
+      }
+      .inp:disabled { opacity: .55; cursor: not-allowed; }
+
+      .send-btn {
+        height: 44px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: linear-gradient(145deg, var(--accent), var(--accent-dark));
+        color: #fff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: transform .15s, box-shadow .15s, opacity .15s;
+        letter-spacing: -.01em;
+        box-shadow: 0 4px 12px rgba(31,122,92,.25);
+      }
+      .send-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(31,122,92,.3); }
+      .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+      /* ── Closed reset ── */
+      .closed-note {
+        display: none;
+        padding: 10px 12px 14px;
+        border-top: 1px solid var(--border-soft);
+        background: var(--bg);
+      }
+      .closed-note.visible { display: block; }
+      .reset-btn {
+        width: 100%;
+        height: 44px;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: var(--bg-warm);
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: background .15s;
+        letter-spacing: -.01em;
+      }
+      .reset-btn:hover { background: var(--border); }
+
+      /* ── Mobile ── */
+      @media (max-width: 480px) {
         .shell { right: 12px; bottom: 12px; }
-        .shell.position-left { left: 12px; right: auto; }
-        .panel { width: calc(100vw - 24px); height: min(76vh, 620px); }
-        .composer {
-          align-items: stretch;
-          flex-direction: column;
+        .shell.pos-left { left: 12px; right: auto; }
+        .panel {
+          width: calc(100vw - 24px);
+          height: min(78vh, 600px);
+          border-radius: 18px;
         }
-        .send {
-          width: 100%;
-        }
+        .composer { flex-direction: column; align-items: stretch; }
+        .send-btn { width: 100%; }
       }
     </style>
+
     <div class="shell">
-      <button class="launcher" type="button" aria-label="Открыть чат">+</button>
+      <button class="launcher" type="button" aria-label="Открыть чат">
+        <span class="launcher-emoji">💬</span>
+        <span class="unread" aria-hidden="true"></span>
+      </button>
+
       <section class="panel" aria-live="polite">
         <header class="header">
-          <p class="eyebrow">Medical concierge</p>
-          <button class="close" type="button" aria-label="Закрыть чат">×</button>
-          <h2 class="title">Чат с поддержкой</h2>
-          <p class="subtitle">Подскажем по услугам и ценам</p>
+          <div class="avatar"><span class="avatar-emoji">👩‍⚕️</span></div>
+          <div class="header-info">
+            <div class="header-name">AI-консультант</div>
+            <div class="header-status">
+              <span class="dot"></span>
+              <span class="status-label">на связи</span>
+            </div>
+          </div>
+          <button class="close-btn" type="button" aria-label="Закрыть">×</button>
         </header>
-        <div class="statusbar status-ai"><span class="dot"></span><span class="status-text">AI-консультант на связи</span></div>
+
+        <div class="ai-strip">
+          <div class="ai-strip-inner">✦ Отвечаем с ИИ</div>
+        </div>
+
         <div class="messages"></div>
+
         <div class="composer">
-          <textarea class="input" rows="1" placeholder="Напишите ваш вопрос"></textarea>
-          <button class="send" type="button">Отправить</button>
+          <input class="inp" type="text" placeholder="Напишите вопрос…" />
+          <button class="send-btn" type="button">Отправить</button>
         </div>
         <div class="closed-note">
-          <button class="closed-reset" type="button">Начать новый диалог</button>
+          <button class="reset-btn" type="button">Начать новый диалог</button>
         </div>
       </section>
     </div>
@@ -450,352 +548,284 @@
         widgetConfig: {
           primary_color: "#1F7A5C",
           button_color: "#1F7A5C",
-          header_title: "Чат с поддержкой",
-          header_subtitle: "Подскажем по услугам и ценам",
+          header_title: "AI-консультант",
+          header_subtitle: "Запись, цены и услуги",
           position: "bottom-right",
-          avatar_emoji: "💬",
+          avatar_emoji: "👩‍⚕️",
         },
       };
       this.shadow = this.attachShadow({ mode: "closed" });
       this.shadow.appendChild(template.content.cloneNode(true));
-      this.elements = {
-        launcher: this.shadow.querySelector(".launcher"),
-        shell: this.shadow.querySelector(".shell"),
-        panel: this.shadow.querySelector(".panel"),
-        title: this.shadow.querySelector(".title"),
-        subtitle: this.shadow.querySelector(".subtitle"),
-        messages: this.shadow.querySelector(".messages"),
-        input: this.shadow.querySelector(".input"),
-        send: this.shadow.querySelector(".send"),
-        statusbar: this.shadow.querySelector(".statusbar"),
-        statusText: this.shadow.querySelector(".status-text"),
-        reset: this.shadow.querySelector(".closed-reset"),
-        close: this.shadow.querySelector(".close"),
-        composer: this.shadow.querySelector(".composer"),
-        closedNote: this.shadow.querySelector(".closed-note"),
+      this.$ = (sel) => this.shadow.querySelector(sel);
+      this.el = {
+        shell: this.$(".shell"),
+        launcher: this.$(".launcher"),
+        launcherEmoji: this.$(".launcher-emoji"),
+        unread: this.$(".unread"),
+        panel: this.$(".panel"),
+        headerName: this.$(".header-name"),
+        avatarEmoji: this.$(".avatar-emoji"),
+        dot: this.$(".dot"),
+        statusLabel: this.$(".status-label"),
+        close: this.$(".close-btn"),
+        messages: this.$(".messages"),
+        inp: this.$(".inp"),
+        send: this.$(".send-btn"),
+        composer: this.$(".composer"),
+        closedNote: this.$(".closed-note"),
+        reset: this.$(".reset-btn"),
       };
     }
 
     storageKey() {
-      return "ai-chat-widget-session-id:" + this.state.companyId;
+      return "ai-widget-sid:" + this.state.companyId;
     }
 
     connectedCallback() {
       this.bindEvents();
-      this.pushEmptyMessage();
+      this.pushGreeting();
       this.bootstrap();
     }
 
     bindEvents() {
-      this.elements.launcher.addEventListener("click", () => this.toggle());
-      this.elements.close.addEventListener("click", () => this.toggle());
-      this.elements.send.addEventListener("click", () => this.handleSubmit());
-      this.elements.reset.addEventListener("click", () => this.startNewDialog());
-      this.elements.input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          this.handleSubmit();
-        }
+      this.el.launcher.addEventListener("click", () => this.toggle());
+      this.el.close.addEventListener("click", () => this.toggle());
+      this.el.send.addEventListener("click", () => this.submit());
+      this.el.reset.addEventListener("click", () => this.startNew());
+      this.el.inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
       });
     }
 
-    async restoreSession() {
-      if (!this.state.companyId) {
-        this.applyState(STATUS.UNAVAILABLE);
-        return;
-      }
+    pushGreeting() {
+      if (this.el.messages.childElementCount > 0) return;
+      const d = document.createElement("div");
+      d.className = "empty-state";
+      d.innerHTML = `
+        <div class="empty-icon">💬</div>
+        <div class="empty-title">Чем могу помочь?</div>
+        <div class="empty-sub">Спросите об услугах, ценах или запишитесь на приём</div>
+      `;
+      this.el.messages.appendChild(d);
+    }
 
-      this.state.sessionId = window.localStorage.getItem(this.storageKey()) || "";
-      if (!this.state.sessionId) {
-        this.applyState(STATUS.AI_ACTIVE);
-        return;
-      }
-
-      try {
-        const response = await fetch(API_BASE + "/api/chat/session/" + this.state.sessionId);
-        if (!response.ok) {
-          this.resetLocalSession();
-          this.applyState(STATUS.AI_ACTIVE);
-          return;
-        }
-        const payload = await response.json();
-        if (payload.company_id !== this.state.companyId) {
-          this.resetLocalSession();
-          this.applyState(STATUS.AI_ACTIVE);
-          return;
-        }
-        this.renderHistory(payload.messages || []);
-        this.applyState(payload.status);
-        if (payload.status === STATUS.HUMAN_ACTIVE) {
-          this.connectWebSocket();
-        }
-      } catch (error) {
-        this.applyState(STATUS.AI_ACTIVE);
-      }
+    clearGreeting() {
+      const e = this.el.messages.querySelector(".empty-state");
+      if (e) e.remove();
     }
 
     async bootstrap() {
       try {
-        const bootstrapUrl = new URL(API_BASE + "/api/widget/bootstrap");
-        if (EMBED_COMPANY_ID) {
-          bootstrapUrl.searchParams.set("company_id", EMBED_COMPANY_ID);
-        }
-        const response = await fetch(bootstrapUrl.toString());
-        if (!response.ok) {
-          throw await this.buildBootstrapError(response);
-        }
-        const payload = await response.json();
-        this.state.companyId = payload.company_id || EMBED_COMPANY_ID;
-        if (!this.state.companyId) {
-          throw new Error("Widget company is not resolved");
-        }
-        this.applyWidgetConfig(payload.widget_config || {});
+        const url = new URL(API_BASE + "/api/widget/bootstrap");
+        if (EMBED_COMPANY_ID) url.searchParams.set("company_id", EMBED_COMPANY_ID);
+        const res = await fetch(url.toString());
+        if (!res.ok) throw await this.buildBootstrapError(res);
+        const data = await res.json();
+        this.state.companyId = data.company_id || EMBED_COMPANY_ID;
+        if (!this.state.companyId) throw new Error("company not resolved");
+        this.applyConfig(data.widget_config || {});
         await this.restoreSession();
-      } catch (error) {
-        this.markUnavailable(error);
+      } catch (err) {
+        this.markUnavailable(err);
       }
     }
 
-    async buildBootstrapError(response) {
+    async buildBootstrapError(res) {
       let detail = "";
+      try { const d = await res.json(); detail = String(d.detail || d.error || ""); } catch (_) {}
+      const e = new Error(detail || "bootstrap failed");
+      e.status = res.status; e.detail = detail;
+      return e;
+    }
+
+    bootstrapMsg(err) {
+      const s = Number(err?.status || 0);
+      if (s === 403) return "Виджет недоступен: домен не разрешён.";
+      if (s === 404) return "Виджет недоступен: клиент не найден.";
+      if (s === 409) return "Ошибка конфигурации: конфликт доменов.";
+      if (s >= 500) return "Сервис временно недоступен. Попробуйте позже.";
+      return "Виджет не запустился. Проверьте подключение.";
+    }
+
+    applyConfig(cfg) {
+      const c = this.state.widgetConfig;
+      const merge = (key) => { const v = String(cfg[key] || "").trim(); if (v) c[key] = v; };
+      Object.keys(c).forEach(merge);
+      if (!["bottom-right","bottom-left"].includes(c.position)) c.position = "bottom-right";
+      this.state.widgetConfig = c;
+
+      const root = this.shadow.host;
+      root.style.setProperty("--accent", c.primary_color);
+      root.style.setProperty("--accent-dark", this.darken(c.primary_color));
+
+      this.el.headerName.textContent = c.header_title;
+      this.el.avatarEmoji.textContent = c.avatar_emoji;
+      this.el.launcherEmoji.textContent = c.avatar_emoji;
+      this.el.shell.classList.toggle("pos-left", c.position === "bottom-left");
+    }
+
+    darken(hex) {
       try {
-        const payload = await response.json();
-        detail = String(payload.detail || payload.error || "");
-      } catch (error) {
-        detail = "";
-      }
-      const error = new Error(detail || "Widget bootstrap failed");
-      error.status = response.status;
-      error.detail = detail;
-      return error;
+        const n = parseInt(hex.replace("#",""), 16);
+        const r = Math.max(0, (n>>16) - 40);
+        const g = Math.max(0, ((n>>8)&0xff) - 40);
+        const b = Math.max(0, (n&0xff) - 30);
+        return `#${r.toString(16).padStart(2,"0")}${g.toString(16).padStart(2,"0")}${b.toString(16).padStart(2,"0")}`;
+      } catch (_) { return hex; }
     }
 
-    bootstrapErrorMessage(error) {
-      const status = Number(error?.status || 0);
-      if (status === 403) {
-        return "Виджет недоступен: домен не разрешён для этого клиента.";
-      }
-      if (status === 404) {
-        return "Виджет недоступен: клиент не найден. Проверьте company_id.";
-      }
-      if (status === 409) {
-        return "Виджет недоступен: домен привязан к нескольким клиентам.";
-      }
-      if (status >= 500) {
-        return "Сервис чата временно недоступен. Попробуйте позже.";
-      }
-      return "Виджет не запустился. Проверьте код подключения или доступность backend.";
+    async restoreSession() {
+      if (!this.state.companyId) { this.setStatus(STATUS.UNAVAILABLE); return; }
+      this.state.sessionId = window.localStorage.getItem(this.storageKey()) || "";
+      if (!this.state.sessionId) { this.setStatus(STATUS.AI_ACTIVE); return; }
+      try {
+        const res = await fetch(API_BASE + "/api/chat/session/" + this.state.sessionId);
+        if (!res.ok) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); return; }
+        const data = await res.json();
+        if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); return; }
+        this.renderHistory(data.messages || []);
+        this.setStatus(data.status);
+        if (data.status === STATUS.HUMAN_ACTIVE) this.connectWS();
+      } catch (_) { this.setStatus(STATUS.AI_ACTIVE); }
     }
 
-    applyWidgetConfig(config) {
-      const nextConfig = { ...this.state.widgetConfig };
-      for (const key of Object.keys(nextConfig)) {
-        const value = String(config[key] || "").trim();
-        if (value) nextConfig[key] = value;
-      }
-      if (!["bottom-right", "bottom-left"].includes(nextConfig.position)) {
-        nextConfig.position = "bottom-right";
-      }
-      this.state.widgetConfig = nextConfig;
-      this.style.setProperty("--accent", nextConfig.primary_color);
-      this.style.setProperty("--btn-color", nextConfig.button_color);
-      this.style.setProperty("--btn-color-strong", nextConfig.button_color);
-      this.elements.title.textContent = nextConfig.header_title;
-      this.elements.subtitle.textContent = nextConfig.header_subtitle;
-      this.elements.shell.classList.toggle("position-left", nextConfig.position === "bottom-left");
+    renderHistory(msgs) {
+      this.el.messages.innerHTML = "";
+      if (!msgs.length) { this.pushGreeting(); return; }
+      for (const m of msgs) this.addMsg(m.role, m.text, true);
+      this.scrollBottom();
     }
 
     toggle() {
       this.state.open = !this.state.open;
-      this.elements.panel.classList.toggle("open", this.state.open);
-      this.elements.launcher.classList.toggle("hidden", this.state.open);
-      this.elements.launcher.textContent = this.state.open ? "×" : "+";
-      if (this.state.open) {
-        this.scrollToBottom();
-        this.elements.input.focus();
-      }
+      this.el.panel.classList.toggle("open", this.state.open);
+      this.el.launcher.classList.toggle("hidden", this.state.open);
+      this.el.unread.classList.remove("visible");
+      if (this.state.open) { this.scrollBottom(); this.el.inp.focus(); }
     }
 
-    pushEmptyMessage() {
-      if (this.elements.messages.childElementCount > 0) return;
-      const empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent =
-        "Я отвечаю только по базе клиента. Спросите про услугу, цену, запись или попросите оператора.";
-      this.elements.messages.appendChild(empty);
-    }
+    addMsg(role, text, silent) {
+      this.clearGreeting();
+      this.el.messages.querySelectorAll(".quick-actions").forEach(n => n.remove());
 
-    clearEmptyState() {
-      const empty = this.elements.messages.querySelector(".empty");
-      if (empty) empty.remove();
-    }
-
-    shouldHideSystemMessage(text) {
-      const compact = String(text || "").trim();
-      return (
-        compact === "Ожидаем подключения специалиста. Ваше сообщение сохранено в истории диалога." ||
-        compact === "Специалист подключился к диалогу" ||
-        compact === "Диалог завершён. Если остались вопросы — напишите снова."
+      const isSystem = role === "system";
+      const isHandoff = (role === "assistant" || isSystem) && (
+        String(text).startsWith("Передаю") || String(text).startsWith("Ожидаем")
       );
-    }
 
-    isHandoffMessage(text) {
-      const compact = String(text || "").trim();
-      return compact.startsWith("Передаю диалог специалисту.") || compact.startsWith("Передаю специалисту.");
-    }
+      const article = document.createElement("article");
+      article.className = "msg " + (isHandoff ? "system" : role);
 
-    handoffMessage() {
-      return "Передаю специалисту. Можете добавить детали — оператор увидит историю.";
-    }
-
-    renderHistory(messages) {
-      this.elements.messages.innerHTML = "";
-      if (!messages.length) {
-        this.pushEmptyMessage();
-        return;
-      }
-      for (const item of messages) {
-        if (item.role === "system" && this.shouldHideSystemMessage(item.text)) {
-          continue;
-        }
-        const isHandoff = item.role === "assistant" && this.isHandoffMessage(item.text);
-        this.addMessage(isHandoff ? "system" : item.role, isHandoff ? this.handoffMessage() : item.text, true);
-      }
-      this.scrollToBottom();
-    }
-
-    addMessage(role, text, silent) {
-      this.clearEmptyState();
-      const node = document.createElement("article");
-      node.className = "message " + role;
-
-      if (role === "assistant") {
-        const badge = document.createElement("div");
-        badge.className = "badge";
-        badge.textContent = `${this.state.widgetConfig.avatar_emoji} AI`;
-        node.appendChild(badge);
-      } else if (role === "operator") {
-        const badge = document.createElement("div");
-        badge.className = "badge";
-        badge.textContent = "Специалист";
-        node.appendChild(badge);
-      } else if (role === "system") {
-        if (this.shouldHideSystemMessage(text)) {
-          return;
-        }
-        const badge = document.createElement("div");
-        badge.className = "badge";
-        badge.textContent = "Система";
-        node.appendChild(badge);
+      if (!isSystem && !isHandoff) {
+        const label = document.createElement("div");
+        label.className = "msg-label";
+        const cfg = this.state.widgetConfig;
+        if (role === "assistant") label.textContent = cfg.avatar_emoji + " AI";
+        else if (role === "operator") label.textContent = "Специалист";
+        else if (role === "user") label.textContent = "";
+        if (label.textContent) article.appendChild(label);
       }
 
       const body = document.createElement("div");
       body.textContent = text;
-      node.appendChild(body);
-      this.elements.messages.appendChild(node);
-      if (!silent) {
-        this.scrollToBottom();
+      article.appendChild(body);
+      this.el.messages.appendChild(article);
+      if (!silent) this.scrollBottom();
+
+      if (!this.state.open) this.el.unread.classList.add("visible");
+    }
+
+    addQuickActions(actions) {
+      this.el.messages.querySelectorAll(".quick-actions").forEach(n => n.remove());
+      if (!Array.isArray(actions) || !actions.length) return;
+      if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
+
+      const wrap = document.createElement("div");
+      wrap.className = "quick-actions";
+      for (const a of actions) {
+        const norm = typeof a === "string" ? {label:a,type:"message",value:a} : a;
+        if (!norm?.label?.trim()) continue;
+        const btn = document.createElement("button");
+        btn.className = "quick-btn";
+        btn.type = "button";
+        btn.textContent = norm.label;
+        btn.addEventListener("click", () => {
+          if (norm.type === "link") { window.open(norm.value, "_blank", "noopener,noreferrer"); return; }
+          this.sendText(norm.value);
+        });
+        wrap.appendChild(btn);
       }
+      if (wrap.childElementCount) { this.el.messages.appendChild(wrap); this.scrollBottom(); }
     }
 
     showTyping() {
       this.hideTyping();
-      this.clearEmptyState();
-      const node = document.createElement("article");
-      node.className = "message assistant typing";
-      node.setAttribute("aria-label", "AI-консультант печатает");
-
-      const text = document.createElement("span");
-      text.textContent = "печатает";
-      const dots = document.createElement("span");
-      dots.className = "typing-dots";
-      for (let index = 0; index < 3; index += 1) {
-        dots.appendChild(document.createElement("span"));
+      this.clearGreeting();
+      const b = document.createElement("div");
+      b.className = "typing-bubble";
+      b.setAttribute("aria-label", "AI печатает");
+      for (let i = 0; i < 3; i++) {
+        const d = document.createElement("div");
+        d.className = "typing-dot";
+        b.appendChild(d);
       }
-      node.appendChild(text);
-      node.appendChild(dots);
-      this.elements.messages.appendChild(node);
-      this.state.typingNode = node;
+      this.el.messages.appendChild(b);
+      this.state.typingNode = b;
       this.state.typingStartedAt = Date.now();
-      this.scrollToBottom();
+      this.scrollBottom();
     }
 
     async hideTyping() {
       if (this.state.typingNode) {
         const elapsed = Date.now() - this.state.typingStartedAt;
-        if (elapsed < MIN_TYPING_VISIBLE_MS) {
-          await wait(MIN_TYPING_VISIBLE_MS - elapsed);
-        }
+        if (elapsed < MIN_TYPING_VISIBLE_MS) await wait(MIN_TYPING_VISIBLE_MS - elapsed);
         this.state.typingNode.remove();
         this.state.typingNode = null;
-        this.state.typingStartedAt = 0;
       }
     }
 
-    clearQuickActions() {
-      this.elements.messages.querySelectorAll(".quick-actions").forEach((node) => node.remove());
+    setStatus(status) {
+      this.state.status = status;
+      const dotClass = { AI_ACTIVE:"", WAITING_OPERATOR:"waiting", HUMAN_ACTIVE:"human", CLOSED:"closed", UNAVAILABLE:"unavailable" };
+      const labels = {
+        AI_ACTIVE: "на связи",
+        WAITING_OPERATOR: "ожидаем специалиста",
+        HUMAN_ACTIVE: "специалист в чате",
+        CLOSED: "диалог завершён",
+        UNAVAILABLE: "недоступен",
+      };
+      const placeholders = {
+        AI_ACTIVE: "Напишите вопрос…",
+        WAITING_OPERATOR: "Добавьте детали…",
+        HUMAN_ACTIVE: "Напишите…",
+        CLOSED: "",
+        UNAVAILABLE: "",
+      };
+
+      this.el.dot.className = "dot " + (dotClass[status] || "");
+      this.el.statusLabel.textContent = labels[status] || labels.AI_ACTIVE;
+      this.el.inp.placeholder = placeholders[status] || "";
+
+      const isClosed = status === STATUS.CLOSED;
+      const isUnavail = status === STATUS.UNAVAILABLE;
+      this.el.composer.classList.toggle("hidden", isClosed || isUnavail);
+      this.el.closedNote.classList.toggle("visible", isClosed);
+      this.el.inp.disabled = isClosed || isUnavail;
+      this.el.send.disabled = isClosed || isUnavail;
     }
 
-    addQuickActions(actions) {
-      this.clearQuickActions();
-      if (
-        !Array.isArray(actions) ||
-        actions.length === 0 ||
-        this.state.status === STATUS.CLOSED ||
-        this.state.status === STATUS.UNAVAILABLE
-      ) {
-        return;
-      }
-
-      const wrap = document.createElement("div");
-      wrap.className = "quick-actions";
-
-      for (const action of actions) {
-        const normalizedAction =
-          typeof action === "string"
-            ? { label: action, type: "message", value: action }
-            : action;
-        const label = String(normalizedAction?.label || "").trim();
-        const type = String(normalizedAction?.type || "message").trim();
-        const value = String(normalizedAction?.value || label).trim();
-        if (!label || !value) continue;
-
-        const button = document.createElement("button");
-        button.className = "quick-action";
-        button.type = "button";
-        button.textContent = label;
-        button.addEventListener("click", () => this.handleQuickAction({ type, value }));
-        wrap.appendChild(button);
-      }
-
-      if (!wrap.childElementCount) return;
-      this.elements.messages.appendChild(wrap);
-      this.scrollToBottom();
-    }
-
-    handleQuickAction(action) {
-      if (action.type === "link") {
-        window.open(action.value, "_blank", "noopener,noreferrer");
-        return;
-      }
-
-      this.sendText(String(action.value || "").trim());
+    async submit() {
+      const text = this.el.inp.value.trim();
+      if (!text) return;
+      this.sendText(text);
     }
 
     async sendText(text) {
-      if (
-        !text ||
-        this.state.sending ||
-        !this.state.companyId ||
-        this.state.status === STATUS.CLOSED ||
-        this.state.status === STATUS.UNAVAILABLE
-      ) {
-        return;
-      }
+      if (!text || this.state.sending || !this.state.companyId) return;
+      if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
 
-      this.elements.input.value = "";
-      this.clearQuickActions();
-      this.addMessage("user", text);
+      this.el.inp.value = "";
+      this.addMsg("user", text);
 
       if (this.state.status === STATUS.HUMAN_ACTIVE && this.state.ws) {
         this.state.ws.send(text);
@@ -803,12 +833,12 @@
       }
 
       this.state.sending = true;
-      this.elements.send.disabled = true;
+      this.el.send.disabled = true;
       this.showTyping();
       await nextFrame();
 
       try {
-        const response = await fetch(API_BASE + "/api/chat/message", {
+        const res = await fetch(API_BASE + "/api/chat/message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -817,171 +847,82 @@
             message: text,
           }),
         });
-        if (!response.ok) throw new Error("Chat request failed");
+        if (!res.ok) throw new Error("request failed");
+        const data = await res.json();
+        await this.hideTyping();
 
-        const payload = await response.json();
+        if (data.session_id) {
+          this.state.sessionId = data.session_id;
+          window.localStorage.setItem(this.storageKey(), data.session_id);
+        }
+        this.setStatus(data.status);
+        if (data.answer) {
+          const isHandoff = data.status === STATUS.WAITING_OPERATOR;
+          this.addMsg(isHandoff ? "system" : "assistant", data.answer);
+        }
+        this.addQuickActions(data.quick_actions);
+        if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
+      } catch (_) {
         await this.hideTyping();
-        if (payload.session_id) {
-          this.state.sessionId = payload.session_id;
-          window.localStorage.setItem(this.storageKey(), payload.session_id);
-        }
-        this.applyState(payload.status);
-        if (payload.answer) {
-          const isHandoff = payload.status === STATUS.WAITING_OPERATOR && this.isHandoffMessage(payload.answer);
-          const role =
-            isHandoff || payload.status === STATUS.HUMAN_ACTIVE || payload.action === "reject" ? "system" : "assistant";
-          this.addMessage(role, isHandoff ? this.handoffMessage() : payload.answer);
-          this.addQuickActions(payload.quick_actions);
-        }
-        if (payload.status === STATUS.WAITING_OPERATOR || payload.status === STATUS.HUMAN_ACTIVE) {
-          this.connectWebSocket();
-        }
-      } catch (error) {
-        await this.hideTyping();
-        this.addMessage("system", "Не удалось отправить сообщение. Попробуйте ещё раз.");
+        this.addMsg("system", "Не удалось отправить. Попробуйте ещё раз.");
       } finally {
         this.state.sending = false;
-        this.elements.send.disabled = this.state.status === STATUS.CLOSED;
+        this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
       }
     }
 
-    applyState(status) {
-      this.state.status = status;
-      const labels = {
-        AI_ACTIVE: "AI-консультант на связи",
-        WAITING_OPERATOR: "Ожидаем специалиста",
-        HUMAN_ACTIVE: "Специалист в чате",
-        CLOSED: "Диалог завершён",
-        UNAVAILABLE: "Виджет недоступен",
-      };
-      const placeholders = {
-        AI_ACTIVE: "Напишите ваш вопрос",
-        WAITING_OPERATOR: "Добавьте детали, оператор их увидит...",
-        HUMAN_ACTIVE: "Напишите ваш вопрос",
-        CLOSED: "Диалог завершён",
-        UNAVAILABLE: "",
-      };
-      const statusClasses = {
-        AI_ACTIVE: "status-ai",
-        WAITING_OPERATOR: "status-waiting",
-        HUMAN_ACTIVE: "status-human",
-        CLOSED: "status-closed",
-        UNAVAILABLE: "status-closed",
-      };
-
-      this.elements.statusText.textContent = labels[status] || labels.AI_ACTIVE;
-      this.elements.statusbar.classList.remove("status-ai", "status-waiting", "status-human", "status-closed");
-      this.elements.statusbar.classList.add(statusClasses[status] || statusClasses.AI_ACTIVE);
-      this.elements.composer.classList.toggle("hidden", status === STATUS.CLOSED || status === STATUS.UNAVAILABLE);
-      this.elements.closedNote.classList.toggle("visible", status === STATUS.CLOSED);
-      this.elements.input.placeholder = placeholders[status] || placeholders.AI_ACTIVE;
-      this.elements.input.disabled = status === STATUS.CLOSED || status === STATUS.UNAVAILABLE;
-      this.elements.send.disabled = status === STATUS.CLOSED || status === STATUS.UNAVAILABLE;
+    async startNew() {
+      if (this.state.ws) { this.state.ws.close(); this.state.ws = null; }
+      this.clearLocalSession();
+      this.el.messages.innerHTML = "";
+      this.pushGreeting();
+      this.setStatus(STATUS.AI_ACTIVE);
     }
 
-    async handleSubmit() {
-      const text = this.elements.input.value.trim();
-      this.sendText(text);
-    }
-
-    async startNewDialog() {
-      const previousSessionId = this.state.sessionId;
-      if (previousSessionId && this.state.status === STATUS.WAITING_OPERATOR) {
-        try {
-          await fetch(API_BASE + "/api/chat/session/" + previousSessionId + "/cancel", {
-            method: "POST",
-          });
-        } catch (error) {
-          // игнорируем best-effort ошибки отмены для MVP.
-        }
-      }
-
-      if (this.state.ws) {
-        this.state.ws.close();
-        this.state.ws = null;
-      }
-      this.resetLocalSession();
-      this.clearQuickActions();
-      this.elements.messages.innerHTML = "";
-      this.pushEmptyMessage();
-      this.applyState(STATUS.AI_ACTIVE);
-      this.addMessage("system", "Начат новый диалог.");
-    }
-
-    resetLocalSession() {
-      if (this.state.companyId) {
-        window.localStorage.removeItem(this.storageKey());
-      }
+    clearLocalSession() {
+      if (this.state.companyId) window.localStorage.removeItem(this.storageKey());
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;
     }
 
-    markUnavailable(error) {
-      if (this.state.companyId) {
-        window.localStorage.removeItem(this.storageKey());
-      }
-      this.state.sessionId = "";
-      if (this.state.ws) {
-        this.state.ws.close();
-        this.state.ws = null;
-      }
-      this.clearQuickActions();
-      this.elements.messages.innerHTML = "";
-      this.applyState(STATUS.UNAVAILABLE);
-      this.addMessage("system", this.bootstrapErrorMessage(error));
-      if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-        console.warn("[ai-chat-widget] bootstrap failed", {
-          status: error?.status || null,
-          detail: error?.detail || error?.message || null,
-          companyId: EMBED_COMPANY_ID || null,
-          apiBase: API_BASE,
-        });
-      }
+    markUnavailable(err) {
+      this.clearLocalSession();
+      if (this.state.ws) { this.state.ws.close(); this.state.ws = null; }
+      this.el.messages.innerHTML = "";
+      this.setStatus(STATUS.UNAVAILABLE);
+
+      const d = document.createElement("div");
+      d.className = "empty-state";
+      d.innerHTML = `
+        <div class="empty-icon" style="background:linear-gradient(145deg,#fef2f2,#fee2e2)">🔌</div>
+        <div class="empty-title">Виджет недоступен</div>
+        <div class="empty-sub">${this.bootstrapMsg(err)}</div>
+      `;
+      this.el.messages.appendChild(d);
     }
 
-    connectWebSocket() {
-      if (!this.state.sessionId) return;
-      if (!this.state.companyId) return;
+    connectWS() {
+      if (!this.state.sessionId || !this.state.companyId) return;
       if (this.state.ws && this.state.ws.readyState <= 1) return;
-
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = new URL(protocol + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
-      wsUrl.searchParams.set("company_id", this.state.companyId);
-      this.state.ws = new WebSocket(wsUrl.toString());
-
-      this.state.ws.addEventListener("message", (event) => {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const url = new URL(proto + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
+      url.searchParams.set("company_id", this.state.companyId);
+      this.state.ws = new WebSocket(url.toString());
+      this.state.ws.addEventListener("message", (e) => {
         try {
-          const payload = JSON.parse(event.data);
-          if (payload.type === "operator_joined") {
-            this.applyState(STATUS.HUMAN_ACTIVE);
-            this.addMessage("system", payload.text);
-            return;
-          }
-          if (payload.type === "operator_left") {
-            this.applyState(STATUS.CLOSED);
-            this.addMessage("system", payload.text);
-            return;
-          }
-          if (payload.type === "message" && payload.role === "operator") {
-            this.applyState(STATUS.HUMAN_ACTIVE);
-            this.addMessage("operator", payload.text);
-          }
-        } catch (error) {
-          this.addMessage("system", "Ошибка обработки сообщения оператора.");
-        }
+          const d = JSON.parse(e.data);
+          if (d.type === "operator_joined") { this.setStatus(STATUS.HUMAN_ACTIVE); this.addMsg("system", d.text); }
+          else if (d.type === "operator_left") { this.setStatus(STATUS.CLOSED); this.addMsg("system", d.text); }
+          else if (d.type === "message" && d.role === "operator") { this.setStatus(STATUS.HUMAN_ACTIVE); this.addMsg("operator", d.text); }
+        } catch (_) {}
       });
-
       this.state.ws.addEventListener("close", () => {
-        if (this.state.status === STATUS.HUMAN_ACTIVE) {
-          this.applyState(STATUS.CLOSED);
-        }
+        if (this.state.status === STATUS.HUMAN_ACTIVE) this.setStatus(STATUS.CLOSED);
       });
     }
 
-    scrollToBottom() {
-      requestAnimationFrame(() => {
-        this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
-      });
+    scrollBottom() {
+      requestAnimationFrame(() => { this.el.messages.scrollTop = this.el.messages.scrollHeight; });
     }
   }
 
@@ -989,13 +930,9 @@
     window.customElements.define("ai-chat-widget", AIChatWidget);
   }
 
-  function initWidget() {
-    if (document.querySelector("ai-chat-widget")) return;
-    const widget = document.createElement("ai-chat-widget");
-    document.body.appendChild(widget);
-  }
-
-  window.addEventListener("load", function () {
-    initWidget();
+  window.addEventListener("load", () => {
+    if (!document.querySelector("ai-chat-widget")) {
+      document.body.appendChild(document.createElement("ai-chat-widget"));
+    }
   });
 })();

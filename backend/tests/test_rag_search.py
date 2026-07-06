@@ -1,0 +1,71 @@
+"""проверки RAG lexical retriever."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.services.rag_search import retrieve_article_context
+
+
+def _write_chunks(path: Path) -> None:
+    rows = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "title": "Кольпоскопия",
+            "url": "https://example.test/kolposkopiya",
+            "chunk_index": 0,
+            "source_type": "article",
+            "text": "Кольпоскопия помогает врачу осмотреть шейку матки и выявить изменения тканей.",
+        },
+        {
+            "chunk_id": "chunk-2",
+            "document_id": "doc-2",
+            "title": "Уход за кожей",
+            "url": "https://example.test/skin",
+            "chunk_index": 0,
+            "source_type": "article",
+            "text": "После лета коже часто требуется мягкое восстановление и увлажнение.",
+        },
+    ]
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_retrieve_article_context_filters_confident_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    matches = retrieve_article_context("как проходит кольпоскопия", top_k=3, min_score=1.0)
+
+    assert matches
+    assert matches[0]["title"] == "Кольпоскопия"
+    assert set(matches[0]) == {"title", "url", "snippet", "chunk_id", "score"}
+
+
+def test_retrieve_article_context_returns_empty_when_score_is_low(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    assert retrieve_article_context("как проходит кольпоскопия", min_score=9999.0) == []
+
+
+def test_retrieve_article_context_raises_for_missing_corpus(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(tmp_path / "missing.jsonl"))
+
+    with pytest.raises(FileNotFoundError):
+        retrieve_article_context("как проходит кольпоскопия")

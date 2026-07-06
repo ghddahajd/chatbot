@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import PolicyAction, PolicyReason, PolicyResult, Session
+from ..services.rag_search import retrieve_article_context
 from .constants import (
     BOOKING_CONTACT_PROMPT,
     BOOKING_KEYWORDS,
@@ -45,6 +47,9 @@ from .rules import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
     value = getattr(knowledge_base, "phrasebook", {}).get(key)
     return str(value).strip() if value else ""
@@ -64,6 +69,26 @@ def _service_quick_actions(service, *labels: str) -> list[object]:
         actions.append(link_action)
     actions.extend(labels)
     return actions
+
+
+def _article_quick_actions(matches: list[dict[str, object]]) -> list[object]:
+    actions: list[object] = []
+    top_url = str(matches[0].get("url") or "").strip() if matches else ""
+    if top_url:
+        actions.append({"label": "Читать статью", "type": "link", "value": top_url})
+    actions.append("Позвать оператора")
+    return actions
+
+
+def _retrieve_article_context_safe(message: str) -> list[dict[str, object]]:
+    try:
+        return retrieve_article_context(message)
+    except FileNotFoundError:
+        logger.warning("rag article corpus not found; faq_question will clarify")
+        return []
+    except ValueError as error:
+        logger.warning("rag article corpus invalid; faq_question will clarify error=%s", type(error).__name__)
+        return []
 
 
 def _service_variant_examples(service, limit: int = 5) -> list[str]:
@@ -479,6 +504,35 @@ def analyze_message(
     fact_guard_result = _fact_guard_result(message, knowledge_base)
     if fact_guard_result is not None:
         return fact_guard_result
+
+    if intent == "faq_question" and service is None:
+        article_matches = _retrieve_article_context_safe(message)
+        if not article_matches:
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.FAQ_QUESTION,
+                confidence=classifier_confidence or 0.7,
+                safe_context={
+                    "message_to_user": (
+                        "Точного ответа по этой теме в базе не нашёл. "
+                        "Могу передать вопрос специалисту."
+                    )
+                },
+                quick_actions=["Позвать оператора", "Посмотреть услуги"],
+            )
+
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.FAQ_QUESTION,
+            confidence=classifier_confidence or 0.85,
+            safe_context={
+                "article_context": article_matches,
+                "question_type": "faq_question",
+                "domain_profile": knowledge_base.domain_profile,
+                "phrasebook": getattr(knowledge_base, "phrasebook", {}),
+            },
+            quick_actions=_article_quick_actions(article_matches),
+        )
 
     if intent == "unknown_service":
         similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.78)

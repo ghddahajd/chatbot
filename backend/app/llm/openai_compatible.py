@@ -174,6 +174,22 @@ class OpenAIClient(BaseLLMClient):
             lines.append("Тип вопроса: explanation")
             return "\n".join(lines) or "Нет описания услуги."
 
+        if question_type == "faq_question":
+            article_context = context.get("article_context")
+            if isinstance(article_context, list) and article_context:
+                lines.append("Отрывки из статей базы знаний (используй только это):")
+                for item in article_context:
+                    if not isinstance(item, dict):
+                        continue
+                    title = str(item.get("title") or "").strip()
+                    snippet = str(item.get("snippet") or "").strip()
+                    if title or snippet:
+                        lines.append(f"- {title}: {snippet}")
+            else:
+                lines.append("Отрывков по теме нет.")
+            lines.append("Тип вопроса: faq_question")
+            return "\n".join(lines) or "Нет данных по вопросу."
+
         if service.get("name"):
             lines.append(f"Услуга: {service['name']}")
         if service.get("short_description"):

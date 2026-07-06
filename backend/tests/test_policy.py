@@ -1,5 +1,9 @@
 """проверки policy guard."""
 
+import json
+import shutil
+from pathlib import Path
+
 from app.models import Message, MessageRole, PolicyAction, PolicyReason
 from app.policy import analyze_message, classify_and_extract
 from app.policy.constants import OPERATOR_SOFT_OFFER_MESSAGE
@@ -20,6 +24,27 @@ def _analyze(message: str, session, knowledge_base):
         session,
         knowledge_base,
         _classification(message, knowledge_base),
+    )
+
+
+def _write_rag_chunks(path: Path) -> None:
+    rows = [
+        {
+            "chunk_id": "kolpo-1",
+            "document_id": "doc-kolpo",
+            "title": "Как проходит кольпоскопия",
+            "url": "https://example.test/kolposkopiya",
+            "chunk_index": 0,
+            "source_type": "article",
+            "text": (
+                "Как проходит кольпоскопия: кольпоскопия помогает врачу осмотреть шейку матки и выявить изменения тканей. "
+                "Исследование проводится при помощи специального оптического прибора."
+            ),
+        }
+    ]
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -200,3 +225,75 @@ def test_contact_prompt_can_be_cancelled(policy_session, knowledge_base) -> None
     assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.CONTACT_PROVIDED
     assert result.safe_context["contact_request_cancelled"] is True
+
+
+def test_faq_question_uses_article_context(
+    policy_session,
+    knowledge_base,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    result = analyze_message(
+        "как проходит кольпоскопия",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.FAQ_QUESTION
+    assert result.safe_context["question_type"] == "faq_question"
+    assert result.safe_context["article_context"]
+    assert result.quick_actions[0]["type"] == "link"
+
+
+def test_faq_question_clarifies_without_confident_article_context(
+    policy_session,
+    knowledge_base,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    result = analyze_message(
+        "нерелевантный вопрос без совпадений",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.FAQ_QUESTION
+    assert "article_context" not in result.safe_context
+
+
+def test_fact_guard_stays_before_faq_rag(
+    policy_session,
+    resolver,
+    managed_env,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "есть ботокс?",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert "fact_guard" in result.safe_context

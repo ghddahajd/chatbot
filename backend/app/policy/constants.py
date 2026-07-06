@@ -389,6 +389,7 @@ ALLOWED_CLASSIFIER_INTENTS = {
     "lead_request",
     "booking_request",
     "clarify",
+    "faq_question",
     "service_mention",
     "unknown_service",
     "location_mismatch",

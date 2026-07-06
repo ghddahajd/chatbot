@@ -28,6 +28,7 @@ SPECIAL_MARKERS = {
     "booking_request",
     "contact_provided",
     "cosmetic_concern",
+    "faq_question",
     "lead_created",
     "list_services",
     "location_mismatch",
@@ -176,9 +177,9 @@ def _load_jsonl(path: Path, context: dict[str, str], company_id: str) -> list[Ev
     return cases
 
 
-def _load_cases(company_id: str, knowledge_base: Any) -> list[EvalCase]:
+def _load_cases(company_id: str, knowledge_base: Any, eval_paths: list[Path] | None = None) -> list[EvalCase]:
     context = _case_context(knowledge_base)
-    paths = [
+    paths = eval_paths or [
         EVALS_DIR / "universal.jsonl",
         EVALS_DIR / "edge_cases.jsonl",
         EVALS_DIR / "real_user_phrases.jsonl",
@@ -199,6 +200,8 @@ def _policy_marker(policy_result: Any, classification: dict[str, object]) -> str
         return "price"
     if safe_context.get("question_type") == "cosmetic_concern":
         return "cosmetic_concern"
+    if safe_context.get("question_type") == "faq_question":
+        return "faq_question"
     if safe_context.get("contact"):
         return "contact_provided"
     if reason in {"medical_advice", "regulated_advice"}:
@@ -333,7 +336,12 @@ def _print_result(result: EvalResult) -> None:
         print("   exp: " + ", ".join(expected))
 
 
-async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[EvalResult]:
+async def _run(
+    company_id: str,
+    use_real_llm: bool,
+    temp_dir: Path,
+    eval_paths: list[Path] | None = None,
+) -> list[EvalResult]:
     from fastapi.testclient import TestClient  # noqa: WPS433
     from app.config import get_settings  # noqa: WPS433
 
@@ -344,7 +352,7 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Eval
     results: list[EvalResult] = []
     with TestClient(app) as client:
         knowledge_base = app.state.knowledge_base_resolver.get(company_id, fallback=False)
-        cases = _load_cases(company_id, knowledge_base)
+        cases = _load_cases(company_id, knowledge_base, eval_paths)
         for case in cases:
             if case.expected_marker == "lead_created":
                 results.append(_evaluate_chat_case(client, company_id, case, temp_dir / "leads.jsonl"))
@@ -367,8 +375,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llm-base-url", default="", help="override LLM_BASE_URL for this run")
     parser.add_argument("--llm-model", default="", help="override LLM_MODEL for this run")
     parser.add_argument("--llm-api-key", default="", help="override LLM_API_KEY for this run")
+    parser.add_argument(
+        "--eval",
+        action="append",
+        default=[],
+        help="JSONL eval file path or name under backend/evals. Can be passed multiple times.",
+    )
     parser.add_argument("--strict", action="store_true", help="вернуть exit 1, если есть провалы")
     return parser.parse_args()
+
+
+def _resolve_eval_paths(values: list[str]) -> list[Path] | None:
+    if not values:
+        return None
+    paths: list[Path] = []
+    for value in values:
+        path = Path(value)
+        if not path.is_absolute() and not path.exists():
+            path = EVALS_DIR / value
+        paths.append(path)
+    return paths
 
 
 def main() -> int:
@@ -387,7 +413,7 @@ def main() -> int:
         print(f"AI Quality Evals — {args.company}")
         _print_llm_config(get_settings(), args.real_llm, args.intent_engine)
         print("─" * 60)
-        results = anyio.run(_run, args.company, args.real_llm, temp_dir)
+        results = anyio.run(_run, args.company, args.real_llm, temp_dir, _resolve_eval_paths(args.eval))
         for result in results:
             _print_result(result)
 

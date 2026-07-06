@@ -150,7 +150,9 @@ HARD_RESTRICTED_KEYWORDS = {
     "осложнение",
     "после процедуры",
     "болит",
-    "боль",
+    "боли",
+    "больно",
+    "болью",
     "температура",
     "симптом",
 }
@@ -312,7 +314,13 @@ def analyze_message(
             },
         )
 
-    if has_booking_contact_prompt(session) and not phone and not operator_requested:
+    looks_like_new_question = "?" in message or classifier_confidence > 0
+    if (
+        has_booking_contact_prompt(session)
+        and not phone
+        and not operator_requested
+        and not looks_like_new_question
+    ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.BOOKING_REQUEST,
@@ -380,6 +388,10 @@ def analyze_message(
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
+
+    fact_guard_result = _fact_guard_result(message, knowledge_base)
+    if fact_guard_result is not None:
+        return fact_guard_result
 
     if intent == "clarify":
         return PolicyResult(
@@ -476,10 +488,6 @@ def analyze_message(
             },
             quick_actions=["Позвать оператора", "Оставить телефон"],
         )
-
-    fact_guard_result = _fact_guard_result(message, knowledge_base)
-    if fact_guard_result is not None:
-        return fact_guard_result
 
     if intent == "cosmetic_concern":
         suggested_services = cosmetic_concern_services(message, knowledge_base)

@@ -197,6 +197,17 @@ def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_bas
     assert result.reason != PolicyReason.MEDICAL_ADVICE
 
 
+def test_bolshoi_does_not_false_positive_as_medical_bol(policy_session, knowledge_base) -> None:
+    """regression: keyword "боль" совпадал как подстрока внутри "большой"
+    (contains_keyword не проверял границы слова), из-за чего "почему такой
+    большой диапазон?" улетал в transfer_operator как medical_advice."""
+
+    result = _analyze("почему такой большой диапазон?", policy_session, knowledge_base)
+
+    assert result.action != PolicyAction.TRANSFER_OPERATOR
+    assert result.reason != PolicyReason.REGULATED_ADVICE
+
+
 def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, knowledge_base) -> None:
     policy_session.messages.append(
         Message(
@@ -209,6 +220,23 @@ def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, kno
 
     assert result.action == PolicyAction.ASK_CONTACT
     assert result.reason == PolicyReason.BOOKING_REQUEST
+
+
+def test_new_question_after_booking_prompt_is_not_re_nagged(policy_session, knowledge_base) -> None:
+    """regression: has_booking_contact_prompt() смотрит в историю сообщений и раньше
+    не давал эскейпа — любой новый вопрос без явного "отмена" повторно ловил тот же
+    промпт "напишите телефон", даже если пользователь явно спросил что-то другое."""
+
+    policy_session.messages.append(
+        Message(
+            role=MessageRole.ASSISTANT,
+            text="Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
+        )
+    )
+
+    result = _analyze("какие врачи у вас есть?", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.BOOKING_REQUEST
 
 
 def test_lead_request_asks_for_contact(policy_session, knowledge_base) -> None:
@@ -401,3 +429,32 @@ def test_fact_guard_stays_before_cosmetic_concern(
     assert result.reason == PolicyReason.UNKNOWN_SERVICE
     assert "fact_guard" in result.safe_context
     assert result.safe_context["fact_guard"]["matched_blocked"] == ["Келост"]
+
+
+def test_fact_guard_stays_before_contact_link(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """regression: вопросы про ОМС могут классифицироваться как contact_link из-за слова
+    "к вам", но client fact guard должен победить обычную ссылочную ветку."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "можно к вам по ОМС?",
+        policy_session,
+        knowledge_base,
+        {"intent": "contact_link", "service_id": None, "confidence": 0.88},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert "fact_guard" in result.safe_context
+    assert result.safe_context["fact_guard"]["matched_blocked"] == ["ОМС", "омс"]
+    assert result.safe_context["message_to_user"] == (
+        "По полису ОМС приём не ведём. "
+        "Могу подсказать по платным услугам или передать вопрос специалисту."
+    )

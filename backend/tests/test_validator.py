@@ -74,3 +74,35 @@ def test_faq_validator_blocks_ungrounded_answer() -> None:
     }
 
     assert not validate_response("После процедуры можно гарантировать быстрый результат.", context)
+
+
+def test_faq_validator_blocks_ungrounded_equipment_brand() -> None:
+    """regression: живой прогон дал 'диодных системах Palo' для лазерной эпиляции,
+    хотя в источнике бренд не упоминался — та же категория бага, что и Nd:YAG/
+    Alexandrite в consultation-пути, только в faq_question/RAG-пути."""
+
+    context = {
+        "question_type": "faq_question",
+        "article_context": [
+            {"title": "Лазерная эпиляция бикини", "snippet": "Лазерная эпиляция воздействует на волосяной фолликул."}
+        ],
+    }
+
+    assert not validate_response(
+        "Мужская лазерная эпиляция выполняется на эффективных диодных системах Palo.",
+        context,
+    )
+
+
+def test_faq_validator_allows_equipment_brand_grounded_in_source() -> None:
+    context = {
+        "question_type": "faq_question",
+        "article_context": [
+            {"title": "Лазерная эпиляция", "snippet": "Используется диодный лазер Palo для всех типов кожи."}
+        ],
+    }
+
+    assert validate_response(
+        "Используется диодный лазер Palo для всех типов кожи.",
+        context,
+    )

@@ -251,3 +251,30 @@ def test_explicit_service_beats_previous_service_context(test_client) -> None:
     assert second_response.status_code == 200
     assert second_payload["action"] == "answer"
     assert "Консультация дерматолога" in second_payload["answer"]
+
+
+def test_new_question_breaks_out_of_pending_booking_contact(test_client) -> None:
+    """regression: до фикса любое сообщение после 'хочу записаться' (без телефона)
+    навсегда перехватывалось запросом телефона, а extract_name вытаскивал случайное
+    слово вопроса как "имя" (например "Какие, напишите телефон..." из "какие врачи
+    у вас есть?"). Новый вопрос должен реально отвечаться, не зацикливать."""
+
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу записаться на чистку лица"},
+    )
+    session_id = first_response.json()["session_id"]
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "какие врачи у вас есть?",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert "Какие" not in second_payload["answer"]
+    assert "напишите, пожалуйста, телефон — передам заявку" not in second_payload["answer"]

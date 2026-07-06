@@ -1,0 +1,8 @@
+{"id":"vendor_kelost_blocked","company":"rosh_import_demo","message":"а колите ли вы келост?","expected_action":"clarify","expected_marker":"unknown_service"}
+{"id":"vendor_botox_blocked","company":"rosh_import_demo","message":"есть ботокс?","expected_action":"clarify","expected_marker":"unknown_service"}
+{"id":"vendor_dysport_blocked","company":"rosh_import_demo","message":"делаете диспорт?","expected_action":"clarify","expected_marker":"unknown_service"}
+{"id":"vendor_laser_aftercare_faq","company":"rosh_import_demo","message":"что нельзя после лазерной шлифовки?","expected_action":"answer","expected_marker":"faq_question"}
+{"id":"vendor_kolposkopiya_faq","company":"rosh_import_demo","message":"как проходит кольпоскопия?","expected_action":"answer","expected_marker":"faq_question"}
+{"id":"vendor_offtopic_weather","company":"rosh_import_demo","message":"какая погода в москве","expected_action":"off_topic","expected_marker":"off_topic"}
+{"id":"vendor_oms_blocked","company":"rosh_import_demo","message":"можно к вам по ОМС?","expected_action":"clarify","expected_marker":"unknown_service"}
+{"id":"vendor_osteopath_blocked","company":"rosh_import_demo","message":"хочу к остеопату","expected_action":"clarify","expected_marker":"unknown_service"}

@@ -34,7 +34,7 @@ UNSUPPORTED_DETAIL_PATTERNS = (
 UNSUPPORTED_EQUIPMENT_PATTERNS = (
     re.compile(
         r"(?:nd[\s:-]?yag|alexandrite|александритов|диодны[йе]|рубиновы[йе]|"
-        r"ipl-?лазер|неодимов|эрбиев)",
+        r"ipl-?лазер|неодимов|эрбиев|palo(?:mar)?)",
         re.IGNORECASE,
     ),
 )
@@ -126,6 +126,9 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         safe_words = _significant_words(snippets_text)
         if safe_words and not (_significant_words(answer) & safe_words):
             return False
+        for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS:
+            if pattern.search(answer) and not pattern.search(snippets_text):
+                return False
 
     return True
 

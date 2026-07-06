@@ -115,6 +115,24 @@ class ChatService:
         await session_store.set_pending_action(session_id, None)
         await session_store.update_contact_draft(session_id, clear=True)
 
+    def _looks_like_new_question(self, message: str, knowledge_base) -> bool:
+        """отличает смену темы от попытки дать имя/телефон.
+
+        Без этого любой новый вопрос ("какие врачи у вас есть?") молча трактовался
+        как неудачная попытка назвать имя, и extract_name вытаскивал случайное слово
+        ("Какие") — бот застревал в бесконечном "напишите телефон" на любое сообщение.
+        """
+
+        if "?" in message:
+            return True
+        classification = classify_and_extract(
+            message,
+            service_classifier_payload(self.request, knowledge_base),
+            knowledge_base.company.city,
+            knowledge_base.domain_profile,
+        )
+        return float(classification.get("confidence") or 0.0) > 0
+
     async def _handle_pending_contact(
         self,
         *,
@@ -122,17 +140,25 @@ class ChatService:
         lead_service,
         session,
         message: str,
+        knowledge_base,
     ) -> ChatMessageResponse | None:
         if session.pending_action not in {PENDING_CONTACT, PENDING_BOOKING_CONTACT}:
             return None
 
         normalized_message = normalize_text(message)
         if contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+            was_booking_request = session.pending_action == PENDING_BOOKING_CONTACT
             await self._clear_contact_state(session_store, session.session_id)
-            answer = self._phrase(
-                "contact_cancelled",
-                "Ок, контакт не оставляем. Могу подсказать по услугам, ценам или позвать менеджера.",
-            )
+            if was_booking_request:
+                answer = self._phrase(
+                    "booking_cancelled",
+                    "Ок, заявку не оформляем. Могу подсказать по услугам, ценам или позвать менеджера.",
+                )
+            else:
+                answer = self._phrase(
+                    "contact_cancelled",
+                    "Ок, контакт не оставляем. Могу подсказать по услугам, ценам или позвать менеджера.",
+                )
             await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
             session = await session_store.get(session.session_id)
             return ChatMessageResponse(
@@ -145,6 +171,10 @@ class ChatService:
             )
 
         phone = extract_phone(message)
+        if not phone and self._looks_like_new_question(message, knowledge_base):
+            await self._clear_contact_state(session_store, session.session_id)
+            return None
+
         if not phone:
             answer = self._pending_contact_answer(session, message)
             name = extract_name(message, None)
@@ -337,6 +367,7 @@ class ChatService:
             lead_service=lead_service,
             session=session,
             message=message,
+            knowledge_base=knowledge_base,
         )
         if pending_contact_response is not None:
             return pending_contact_response

@@ -196,6 +196,9 @@ class OpenAIClient(BaseLLMClient):
             lines.append(f"Описание: {service['short_description']}")
         if service.get("price_range_text"):
             lines.append(f"Диапазон стоимости направления: {service['price_range_text']}")
+        price_unit_note = str(context.get("price_unit_note") or "").strip()
+        if price_unit_note:
+            lines.append(f"Оговорка по единицам цены: {price_unit_note}")
         variants = service.get("variants")
         if isinstance(variants, list) and variants:
             lines.append(f"Количество вариантов в прайсе по направлению: {len(variants)}")

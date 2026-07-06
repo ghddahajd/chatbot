@@ -300,12 +300,38 @@ class KnowledgeBase:
         scored_services.sort(key=lambda item: item[0], reverse=True)
         return [service for _, service in scored_services[:3]]
 
+    def _price_unit_note(self, service: Service) -> str:
+        variants = service.variants
+        if not variants:
+            return ""
+
+        names = [
+            str(variant.get("name") or "").strip().lower()
+            for variant in variants
+            if isinstance(variant, dict) and str(variant.get("name") or "").strip()
+        ]
+        if not names or len(names) != len(variants):
+            return ""
+
+        unit_patterns = (
+            re.compile(r"(?:^|[\s(])1\s*ед\.?(?:[\s)]|$)"),
+            re.compile(r"(?:^|[\s(])за\s+единиц"),
+            re.compile(r"(?:^|[\s(])за\s+мл(?:[\s)]|$)"),
+            re.compile(r"(?:^|[\s(])\d+(?:[,.]\d+)?\s*мл(?:[\s)]|$)"),
+            re.compile(r"(?:^|[\s(])за\s+укол(?:[\s)]|$)"),
+        )
+        if all(any(pattern.search(name) for pattern in unit_patterns) for name in names):
+            return "Цена указана за единицу препарата или объём; итоговое количество определит специалист на консультации."
+
+        return ""
+
     def get_service_context(self, service: Optional[Service]) -> dict[str, object]:
         if service is None:
             return {}
 
         price = self.find_price_by_service_id(service.id)
         service_payload = service.model_dump()
+        price_unit_note = self._price_unit_note(service)
         return {
             "company": {
                 "company_name": self.company.company_name,
@@ -320,6 +346,7 @@ class KnowledgeBase:
             "disclaimer": self.company.safety_disclaimer,
             "phrasebook": self.phrasebook,
             "domain_profile": self.domain_profile,
+            "price_unit_note": price_unit_note,
         }
 
 

@@ -570,9 +570,14 @@ class ChatService:
         elif (
             policy_result.action == PolicyAction.ANSWER
             and policy_result.safe_context.get("message_to_user")
-            and not policy_result.safe_context.get("question_type")
-            and not policy_result.safe_context.get("service")
-            and not policy_result.safe_context.get("all_services")
+            and (
+                policy_result.safe_context.get("force_direct_answer")
+                or (
+                    not policy_result.safe_context.get("question_type")
+                    and not policy_result.safe_context.get("service")
+                    and not policy_result.safe_context.get("all_services")
+                )
+            )
         ):
             answer = str(policy_result.safe_context.get("message_to_user") or "")
         elif should_use_consultation_llm(policy_result.safe_context):

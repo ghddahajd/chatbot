@@ -52,9 +52,26 @@ def _parse_datetime(value: Any) -> Optional[datetime]:
         return None
 
 
+_MARKDOWN_SPECIAL_CHARS = ("_", "*", "`", "[")
+
+
+def _escape_markdown(value: str) -> str:
+    """экранирует спецсимволы Telegram Markdown (parse_mode=Markdown).
+
+    Без этого голое "_" в любом динамическом значении (например `session_id=...`
+    в operator_url, или подчёркивание внутри имени/саммари) ломает парсинг целиком:
+    Telegram возвращает 400 "can't parse entities", и лид/уведомление не доставляется
+    вообще — не просто криво отображается, а полностью проваливается.
+    """
+
+    for char in _MARKDOWN_SPECIAL_CHARS:
+        value = value.replace(char, "\\" + char)
+    return value
+
+
 def _text_value(value: Any) -> str:
     text = str(value or "").strip()
-    return text or "не указано"
+    return _escape_markdown(text) if text else "не указано"
 
 
 def _telegram_text(
@@ -77,7 +94,7 @@ def _telegram_text(
         )
 
     if event_type == "operator_requested":
-        operator_url = str(payload.get("operator_url") or "").strip()
+        operator_url = _escape_markdown(str(payload.get("operator_url") or "").strip())
         operator_line = f"\n🔗 Открыть панель: {operator_url}" if operator_url else ""
         return (
             f"⚡️ *Клиент просит оператора* — {_text_value(company_name)}\n\n"
@@ -89,7 +106,7 @@ def _telegram_text(
     reason_line = REASON_LABELS.get(str(payload.get("reason") or ""), "Оператор/контакт")
     service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else "✂️ Услуга: не указана\n"
     last_message = _last_user_message_text(payload)
-    operator_url = str(payload.get("operator_url") or "").strip()
+    operator_url = _escape_markdown(str(payload.get("operator_url") or "").strip())
     dialog_line = f"\n\n🔗 Открыть диалог: {operator_url}" if operator_url else ""
     return (
         f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"

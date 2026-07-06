@@ -197,6 +197,37 @@ def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_bas
     assert result.reason != PolicyReason.MEDICAL_ADVICE
 
 
+def test_generic_procedure_products_question_is_not_medical(policy_session, knowledge_base) -> None:
+    result = _analyze("ботулинотерапия какие препараты используете", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.REGULATED_ADVICE
+
+
+def test_real_symptom_after_procedure_stays_medical(policy_session, knowledge_base) -> None:
+    result = _analyze("у меня болит после процедуры", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_escape_hatch_allows_safe_service_question_even_if_model_flags_regulated(
+    policy_session,
+    knowledge_base,
+) -> None:
+    result = analyze_message(
+        "что нельзя после процедуры чистки лица",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "regulated_advice",
+            "service_id": "facial_cleansing",
+            "confidence": 0.9,
+        },
+    )
+
+    assert result.action != PolicyAction.TRANSFER_OPERATOR
+
+
 def test_bolshoi_does_not_false_positive_as_medical_bol(policy_session, knowledge_base) -> None:
     """regression: keyword "боль" совпадал как подстрока внутри "большой"
     (contains_keyword не проверял границы слова), из-за чего "почему такой
@@ -458,3 +489,71 @@ def test_fact_guard_stays_before_contact_link(
         "По полису ОМС приём не ведём. "
         "Могу подсказать по платным услугам или передать вопрос специалисту."
     )
+
+
+def test_fact_guard_known_values_answer_is_direct(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "ботулинотерапия какие препараты используете",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "service_mention",
+            "service_id": "botulinoterapiya_9d5734af",
+            "confidence": 0.9,
+        },
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OK
+    assert result.safe_context["force_direct_answer"] is True
+    assert "Ксеомин" in result.safe_context["message_to_user"]
+    assert "Миотокс" in result.safe_context["message_to_user"]
+
+
+def test_fact_guard_empty_known_values_clarifies_without_claiming(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "какие филлеры используете?",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "service_mention",
+            "service_id": "fillery_f2df3e74",
+            "confidence": 0.9,
+        },
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert result.safe_context["force_direct_answer"] is True
+    assert "точный список" in result.safe_context["message_to_user"].lower()
+
+
+def test_unit_price_note_for_injection_variants(
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+    service = knowledge_base.find_service_by_id("botulinoterapiya_9d5734af")
+
+    context = knowledge_base.get_service_context(service)
+
+    assert "за единицу" in context["price_unit_note"].lower()
+    assert "количество определит специалист" in context["price_unit_note"].lower()

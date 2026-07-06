@@ -123,6 +123,16 @@ def _service_explanation_message(service) -> str:
     return f"{service.name} — {service.short_description} Детали уточнит специалист."
 
 
+FACT_VALUE_QUESTION_KEYWORDS = {
+    "какие препараты",
+    "какой препарат",
+    "какие материалы",
+    "какой материал",
+    "какие филлеры",
+    "какой филлер",
+    "что используете",
+    "чем работаете",
+}
 HARD_RESTRICTED_KEYWORDS = {
     "диагноз",
     "лечить",
@@ -148,7 +158,6 @@ HARD_RESTRICTED_KEYWORDS = {
     "отёк",
     "инфекция",
     "осложнение",
-    "после процедуры",
     "болит",
     "боли",
     "больно",
@@ -228,6 +237,80 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
             },
             quick_actions=_service_quick_actions(service, "Позвать оператора", "Посмотреть услуги")
             if service
+            else ["Позвать оператора", "Посмотреть услуги"],
+        )
+
+    return None
+
+
+def _fact_guard_known_values_result(
+    message: str,
+    knowledge_base: KnowledgeBase,
+    service,
+) -> PolicyResult | None:
+    if not contains_keyword(normalize_text(message), FACT_VALUE_QUESTION_KEYWORDS):
+        return None
+
+    config = getattr(knowledge_base, "config_payload", {})
+    fact_guards = config.get("fact_guards") if isinstance(config, dict) else None
+    if not isinstance(fact_guards, list):
+        return None
+
+    normalized_message = normalize_text(message)
+    for guard in fact_guards:
+        if not isinstance(guard, dict):
+            continue
+
+        topic = str(guard.get("topic") or "").strip()
+        service_id = str(guard.get("service_id") or "").strip() or None
+        guard_service = knowledge_base.find_service_by_id(service_id)
+        known_values = [
+            str(value).strip()
+            for value in guard.get("known_values", [])
+            if str(value).strip()
+        ]
+        topic_matches = bool(topic and normalize_text(topic) in normalized_message)
+        service_matches = bool(service is not None and service_id and service.id == service_id)
+        guard_service_matches = bool(
+            guard_service is not None
+            and (
+                normalize_text(guard_service.name) in normalized_message
+                or any(
+                    normalized_synonym and normalized_synonym in normalized_message
+                    for normalized_synonym in (normalize_text(synonym) for synonym in guard_service.synonyms)
+                )
+            )
+        )
+        if not (topic_matches or service_matches or guard_service_matches):
+            continue
+
+        selected_service = guard_service or service
+        if known_values:
+            topic_label = topic or (selected_service.name if selected_service else "этой теме")
+            message_to_user = f"По теме «{topic_label}» в базе указаны: {', '.join(known_values)}."
+        else:
+            topic_label = topic or (selected_service.name if selected_service else "этой теме")
+            message_to_user = (
+                f"Точный список по теме «{topic_label}» в базе не указан. "
+                "Лучше уточнить его у специалиста."
+            )
+
+        return PolicyResult(
+            action=PolicyAction.ANSWER if known_values else PolicyAction.CLARIFY,
+            reason=PolicyReason.OK if known_values else PolicyReason.UNKNOWN_SERVICE,
+            service_id=selected_service.id if selected_service else service_id,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "service": selected_service.model_dump() if selected_service else None,
+                "fact_guard": {
+                    "topic": topic,
+                    "known_values": known_values,
+                },
+            },
+            quick_actions=_service_quick_actions(selected_service, "Уточнить цену", "Позвать оператора")
+            if selected_service
             else ["Позвать оператора", "Посмотреть услуги"],
         )
 
@@ -392,6 +475,10 @@ def analyze_message(
     fact_guard_result = _fact_guard_result(message, knowledge_base)
     if fact_guard_result is not None:
         return fact_guard_result
+
+    fact_guard_known_values_result = _fact_guard_known_values_result(message, knowledge_base, service)
+    if fact_guard_known_values_result is not None:
+        return fact_guard_known_values_result
 
     if intent == "clarify":
         return PolicyResult(

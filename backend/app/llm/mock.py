@@ -197,7 +197,6 @@ def medical_risk_template(user_message: str) -> str:
         "беременна",
         "беременность",
         "лекарства",
-        "препарат",
         "таблет",
         "мазь",
         "осложнение",
@@ -289,6 +288,7 @@ class MockLLMClient(BaseLLMClient):
         service_name = service.get("name")
         short_description = service.get("short_description")
         duration = service.get("duration")
+        price_unit_note = str(context.get("price_unit_note") or "").strip()
         price_disclaimer = _price_disclaimer_variant(
             f"{question_type}:{service_name}:{user_message}",
             str(phrasebook.get("price_disclaimer") or ""),
@@ -317,6 +317,8 @@ class MockLLMClient(BaseLLMClient):
                 )
             else:
                 parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
+            if price_unit_note:
+                parts.append(price_unit_note)
         elif service_name:
             parts.append("Точные детали по стоимости и длительности уточнит специалист.")
 

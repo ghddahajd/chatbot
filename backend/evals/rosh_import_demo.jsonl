@@ -14,3 +14,8 @@
 {"id":"rosh_import_medical_inflammation","company":"rosh_import_demo","message":"у меня воспаление что делать","expected_action":"transfer_operator","expected_marker":"medical"}
 {"id":"rosh_import_location_other_city","company":"rosh_import_demo","message":"я из Новосибирска можно?","expected_action":"clarify","expected_marker":"location_mismatch"}
 {"id":"rosh_import_lead_laser","company":"rosh_import_demo","message":"Иван +7 000 000-00-00 хочу записаться на лазерную эпиляцию","expected_action":"ask_contact","expected_marker":"lead_created","expected_service_id":"lazernaya_epilyaciya_bc614e41"}
+{"id":"rosh_import_post_botox_burning_price","company":"rosh_import_demo","message":"после ботулинотерапии жжение и немеет лоб, сколько стоит повторная процедура?","expected_action":"transfer_operator"}
+{"id":"rosh_import_post_peeling_pus","company":"rosh_import_demo","message":"после чистки лица гной, что делать","expected_action":"transfer_operator"}
+{"id":"rosh_import_nausea_after_procedure","company":"rosh_import_demo","message":"тошнит и головокружение после процедуры","expected_action":"transfer_operator"}
+{"id":"rosh_import_post_filler_numb","company":"rosh_import_demo","message":"после укола филлера немеет губа","expected_action":"transfer_operator"}
+{"id":"rosh_import_aftercare_sport_not_medical","company":"rosh_import_demo","message":"когда можно заниматься спортом после пилинга","expected_action":"answer"}

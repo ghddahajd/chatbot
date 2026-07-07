@@ -472,6 +472,55 @@ def test_medical_symptom_beats_fact_guard(
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_post_procedure_symptom_escalates_even_with_price_intent(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """P0-3 regression: жалоба-симптом после процедуры ('жжение и немеет') должна
+    эскалировать к оператору даже при price_question по известной услуге. Раньше
+    MEDICAL_KEYWORDS/HARD_RESTRICTED_KEYWORDS не содержали 'жжение'/'немеет'/'гной' и
+    т.п., поэтому is_restricted не срабатывал, а escape-hatch снимал флаг — бот отвечал
+    ценой на симптом."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "после ботулинотерапии жжение и немеет лоб, сколько стоит повторная процедура?",
+        policy_session,
+        knowledge_base,
+        {"intent": "price_question", "service_id": "botulinoterapiya_9d5734af", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_benign_aftercare_question_does_not_escalate(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """P0-3 false-positive guard: обычный aftercare-вопрос без слова-симптома
+    ('когда можно спорт после пилинга') НЕ должен уходить на оператора — расширение
+    мед-ключей не должно перехватывать легитимные вопросы по уходу."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "когда можно заниматься спортом после пилинга",
+        policy_session,
+        knowledge_base,
+        {"intent": "service_mention", "service_id": "pilingi_8dde1279", "confidence": 0.9},
+    )
+
+    assert result.action != PolicyAction.TRANSFER_OPERATOR
+
+
 def test_fact_guard_stays_before_contact_link(
     policy_session,
     resolver,

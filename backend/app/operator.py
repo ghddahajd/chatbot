@@ -495,11 +495,7 @@ def render_operator_panel() -> str:
       }
 
       function isHandoffMessage(item) {
-        return (
-          item.role === "assistant" &&
-          typeof item.text === "string" &&
-          item.text.startsWith("Передаю диалог специалисту.")
-        );
+        return item.role === "assistant" && item.kind === "handoff";
       }
 
       function displayRole(item) {

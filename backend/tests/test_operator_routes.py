@@ -13,6 +13,34 @@ def _send_message(test_client, message: str) -> dict:
     return response.json()
 
 
+def test_handoff_message_marked_with_kind_for_panel(test_client) -> None:
+    """P0-2 regression: сообщение о передаче оператору помечается kind='handoff'
+    структурно, а не распознаётся панелью по тексту (тексты handoff у клиентов разные:
+    'менеджеру'/'мастеру'/'вопрос менеджеру'), поэтому match по строке молча ломался."""
+    payload = _send_message(test_client, "у меня воспаление что делать")
+    assert payload["action"] == "transfer_operator"
+
+    session = test_client.get(
+        f"/api/operator/sessions/{payload['session_id']}", headers=OPERATOR_HEADERS
+    ).json()
+    assistant_messages = [m for m in session["messages"] if m["role"] == "assistant"]
+    assert assistant_messages
+    assert assistant_messages[-1]["kind"] == "handoff"
+
+
+def test_regular_answer_has_no_handoff_kind(test_client) -> None:
+    """P0-2 guard: обычный ответ НЕ помечается handoff, иначе панель нарисует его
+    системным разделителем."""
+    payload = _send_message(test_client, "привет")
+
+    session = test_client.get(
+        f"/api/operator/sessions/{payload['session_id']}", headers=OPERATOR_HEADERS
+    ).json()
+    assistant_messages = [m for m in session["messages"] if m["role"] == "assistant"]
+    assert assistant_messages
+    assert all(m.get("kind") != "handoff" for m in assistant_messages)
+
+
 def test_operator_sessions_queue_scope_keeps_only_operator_queue(test_client) -> None:
     ai_payload = _send_message(test_client, "привет")
     waiting_payload = _send_message(test_client, "у меня воспаление что делать")

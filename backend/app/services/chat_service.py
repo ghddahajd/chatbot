@@ -627,7 +627,10 @@ class ChatService:
                 session.messages[-8:],
             )
 
-        await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+        answer_kind = "handoff" if response_action == PolicyAction.TRANSFER_OPERATOR else None
+        await session_store.append_message(
+            session.session_id, MessageRole.ASSISTANT, answer, kind=answer_kind
+        )
         session = await session_store.get(session.session_id)
 
         return ChatMessageResponse(

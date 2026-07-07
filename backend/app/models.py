@@ -64,6 +64,7 @@ class PendingAction(str, Enum):
 class Message(BaseModel):
     role: MessageRole
     text: str
+    kind: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

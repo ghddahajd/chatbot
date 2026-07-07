@@ -49,12 +49,14 @@ class SessionStore:
         async with self._lock:
             return list(self._sessions.values())
 
-    async def append_message(self, session_id: str, role: MessageRole, text: str) -> Optional[Session]:
+    async def append_message(
+        self, session_id: str, role: MessageRole, text: str, kind: Optional[str] = None
+    ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
-            session.messages.append(Message(role=role, text=text))
+            session.messages.append(Message(role=role, text=text, kind=kind))
             if role == MessageRole.USER:
                 session.message_count += 1
             session.updated_at = datetime.utcnow()

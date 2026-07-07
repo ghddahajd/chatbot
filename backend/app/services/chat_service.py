@@ -333,7 +333,7 @@ class ChatService:
                 session_id=session.session_id,
                 status=session.status,
                 action=PolicyAction.CLARIFY,
-                answer="Похоже, сообщение пустое. Напишите вопрос, и я подскажу.",
+                answer=self._phrase("empty_message", "Похоже, сообщение пустое. Напишите вопрос, и я подскажу."),
                 lead_created=False,
                 quick_actions=[],
             )
@@ -343,7 +343,10 @@ class ChatService:
                 session_id=session.session_id,
                 status=session.status,
                 action=PolicyAction.CLARIFY,
-                answer="Не совсем понял вопрос. Можете переформулировать словами?",
+                answer=self._phrase(
+                    "empty_message_letters",
+                    "Не совсем понял вопрос. Можете переформулировать словами?",
+                ),
                 lead_created=False,
                 quick_actions=[],
             )
@@ -353,7 +356,7 @@ class ChatService:
                 session_id=session.session_id,
                 status=session.status,
                 action=PolicyAction.CLARIFY,
-                answer=RATE_LIMIT_ANSWER,
+                answer=self._phrase("rate_limit", RATE_LIMIT_ANSWER),
                 lead_created=False,
                 quick_actions=[
                     QuickAction(label="Начать новый диалог", type="message", value="Начать новый диалог")
@@ -445,7 +448,10 @@ class ChatService:
                 session_id=session.session_id,
                 status=session.status,
                 action=PolicyAction.REJECT,
-                answer="Чат передан специалисту. Пожалуйста, дождитесь ответа оператора.",
+                answer=self._phrase(
+                    "human_active_wait",
+                    "Чат передан специалисту. Пожалуйста, дождитесь ответа оператора.",
+                ),
                 lead_created=False,
                 quick_actions=[],
             )

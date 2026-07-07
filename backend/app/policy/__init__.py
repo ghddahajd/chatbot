@@ -9,17 +9,13 @@ from ..knowledge import KnowledgeBase, normalize_text
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import retrieve_article_context
 from .constants import (
-    BOOKING_CONTACT_PROMPT,
     BOOKING_KEYWORDS,
-    CONTACT_PROMPT,
     DURATION_KEYWORDS,
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
-    HANDOFF_MESSAGE,
     LEAD_REQUEST_KEYWORDS,
     NEGATIVE_MESSAGES,
     OPERATOR_REQUEST_KEYWORDS,
-    OPERATOR_SOFT_OFFER_MESSAGE,
     PRICE_KEYWORDS,
     TELEGRAM_KEYWORDS,
     VISIT_KEYWORDS,
@@ -375,7 +371,7 @@ def analyze_message(
             confidence=0.98,
             safe_context={
                 "message_to_user": knowledge_base.company.safety_disclaimer,
-                "handoff_message": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE,
+                "handoff_message": _phrase(knowledge_base, "handoff_message"),
                 "restricted_category": restricted_category,
             },
             quick_actions=["Позвать оператора", "Оставить телефон"],
@@ -391,7 +387,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "contact_request_cancelled": True,
-                "message_to_user": "Ок, контакт не оставляем. Могу подсказать по услугам, ценам или позвать менеджера.",
+                "message_to_user": _phrase(knowledge_base, "contact_cancelled"),
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
@@ -406,7 +402,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request_cancelled": True,
-                "message_to_user": "Ок, заявку не оформляем. Могу подсказать по услугам, ценам или позвать менеджера.",
+                "message_to_user": _phrase(knowledge_base, "booking_cancelled"),
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
@@ -456,7 +452,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt") or BOOKING_CONTACT_PROMPT,
+                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
             },
             quick_actions=["Оставить телефон", "Позвать оператора"],
         )
@@ -586,7 +582,7 @@ def analyze_message(
             confidence=classifier_confidence or 0.88,
             safe_context={
                 "force_direct_answer": True,
-                "message_to_user": _phrase(knowledge_base, "contact_prompt") or CONTACT_PROMPT,
+                "message_to_user": _phrase(knowledge_base, "contact_prompt"),
                 "service": service.model_dump() if service else None,
             },
             quick_actions=["Позвать оператора", "Посмотреть услуги"],
@@ -702,7 +698,6 @@ def analyze_message(
                 confidence=0.9,
                 safe_context={
                     "message_to_user": _phrase(knowledge_base, "operator_soft_offer")
-                    or OPERATOR_SOFT_OFFER_MESSAGE
                 },
                 quick_actions=[
                     {
@@ -722,7 +717,7 @@ def analyze_message(
             reason=PolicyReason.OPERATOR_REQUESTED,
             service_id=service.id if service else None,
             confidence=0.95,
-            safe_context={"message_to_user": _phrase(knowledge_base, "handoff_message") or HANDOFF_MESSAGE},
+            safe_context={"message_to_user": _phrase(knowledge_base, "handoff_message")},
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
@@ -779,7 +774,7 @@ def analyze_message(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt") or BOOKING_CONTACT_PROMPT,
+                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
             },
             quick_actions=["Оставить телефон", "Позвать оператора"],
         )
@@ -859,7 +854,7 @@ def analyze_message(
                 confidence=0.92,
                 safe_context={
                     **context,
-                    "message_to_user": _phrase(knowledge_base, "contact_prompt") or CONTACT_PROMPT,
+                    "message_to_user": _phrase(knowledge_base, "contact_prompt"),
                 },
             )
 

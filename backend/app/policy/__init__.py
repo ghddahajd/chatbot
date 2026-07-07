@@ -69,7 +69,7 @@ def _article_quick_actions(matches: list[dict[str, object]]) -> list[object]:
     top_url = str(matches[0].get("url") or "").strip() if matches else ""
     if top_url:
         actions.append({"label": "Читать статью", "type": "link", "value": top_url})
-    actions.append("Позвать оператора")
+    actions.append("Позвать менеджера")
     return actions
 
 
@@ -111,9 +111,9 @@ def _service_explanation_message(service) -> str:
             f"{service.name} — направление с {variants_count} вариантами в прайсе. "
             "Например: "
             + "; ".join(examples)
-            + ". Точный вариант и стоимость лучше подтвердить со специалистом."
+            + ". Точный вариант и стоимость лучше подтвердить с менеджером."
         )
-    return f"{service.name} — {service.short_description} Детали уточнит специалист."
+    return f"{service.name} — {service.short_description} Детали уточнит менеджер."
 
 
 FACT_VALUE_QUESTION_KEYWORDS = {
@@ -224,9 +224,9 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
         if not message_to_user:
             topic_label = topic or (service.name if service else "услуга")
             message_to_user = (
-                f"В базе центра {blocked_text} не указан. "
-                f"По теме «{topic_label}» в базе есть: {allowed_text}. "
-                "Могу показать страницу услуги или передать вопрос специалисту."
+                f"По теме «{topic_label}» доступны: {allowed_text}. "
+                f"{blocked_text} среди подтверждённых вариантов нет. "
+                "Могу показать страницу услуги или передать вопрос менеджеру."
             )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -242,9 +242,9 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
                     "known_values": known_values,
                 },
             },
-            quick_actions=_service_quick_actions(service, "Позвать оператора", "Посмотреть услуги")
+            quick_actions=_service_quick_actions(service, "Позвать менеджера", "Посмотреть услуги")
             if service
-            else ["Позвать оператора", "Посмотреть услуги"],
+            else ["Позвать менеджера", "Посмотреть услуги"],
         )
 
     return None
@@ -294,12 +294,12 @@ def _fact_guard_known_values_result(
         selected_service = guard_service or service
         if known_values:
             topic_label = topic or (selected_service.name if selected_service else "этой теме")
-            message_to_user = f"По теме «{topic_label}» в базе указаны: {', '.join(known_values)}."
+            message_to_user = f"По теме «{topic_label}» указаны: {', '.join(known_values)}."
         else:
             topic_label = topic or (selected_service.name if selected_service else "этой теме")
             message_to_user = (
-                f"Точный список по теме «{topic_label}» в базе не указан. "
-                "Лучше уточнить его у специалиста."
+                f"Точный список по теме «{topic_label}» не указан. "
+                "Лучше уточнить у менеджера."
             )
 
         return PolicyResult(
@@ -316,9 +316,9 @@ def _fact_guard_known_values_result(
                     "known_values": known_values,
                 },
             },
-            quick_actions=_service_quick_actions(selected_service, "Уточнить цену", "Позвать оператора")
+            quick_actions=_service_quick_actions(selected_service, "Уточнить цену", "Позвать менеджера")
             if selected_service
-            else ["Позвать оператора", "Посмотреть услуги"],
+            else ["Позвать менеджера", "Посмотреть услуги"],
         )
 
     return None
@@ -374,7 +374,7 @@ def analyze_message(
                 "handoff_message": _phrase(knowledge_base, "handoff_message"),
                 "restricted_category": restricted_category,
             },
-            quick_actions=["Позвать оператора", "Оставить телефон"],
+            quick_actions=["Позвать менеджера", "Оставить телефон"],
         )
 
     if session.pending_action == PendingAction.COLLECT_CONTACT.value and contains_keyword(
@@ -389,7 +389,7 @@ def analyze_message(
                 "contact_request_cancelled": True,
                 "message_to_user": _phrase(knowledge_base, "contact_cancelled"),
             },
-            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
     if session.pending_action == PendingAction.BOOKING_CONTACT.value and contains_keyword(
@@ -404,7 +404,7 @@ def analyze_message(
                 "booking_request_cancelled": True,
                 "message_to_user": _phrase(knowledge_base, "booking_cancelled"),
             },
-            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
     if phone and session.lead_requested:
@@ -417,10 +417,10 @@ def analyze_message(
                 "force_direct_answer": True,
                 "message_to_user": (
                     "Контакты уже передали менеджеру. Если нужно изменить заявку, "
-                    "допишите детали здесь или позовите оператора."
+                    "допишите детали здесь или позовите менеджера."
                 ),
             },
-            quick_actions=["Позвать оператора", "Посмотреть услуги"],
+            quick_actions=["Позвать менеджера", "Посмотреть услуги"],
         )
 
     if phone and lead_requested:
@@ -454,7 +454,7 @@ def analyze_message(
                 "booking_request": True,
                 "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
             },
-            quick_actions=["Оставить телефон", "Позвать оператора"],
+            quick_actions=["Оставить телефон", "Позвать менеджера"],
         )
 
     if intent == "location_mismatch" or is_location_mismatch(
@@ -468,19 +468,19 @@ def analyze_message(
                 "company_city": knowledge_base.company.city,
                 "message_to_user": (
                     f"Очный приём только в {city_in_text}. "
-                    "Уточните, пожалуйста, у специалиста — возможно есть удалённый формат консультации для вашего случая."
+                    "Уточните, пожалуйста, у менеджера — возможно есть удалённый формат консультации для вашего случая."
                 ),
                 "context_for_model": {
                     "company_city": knowledge_base.company.city,
                     "note": (
                         f"очный приём только в {knowledge_base.company.city}, "
-                        "можно уточнить формат у специалиста"
+                        "можно уточнить формат у менеджера"
                     ),
                 },
             },
             quick_actions=[
                 {
-                    "label": "Позвать оператора",
+                    "label": "Позвать менеджера",
                     "type": "message",
                     "value": "Хочу узнать про удалённый формат",
                 }
@@ -510,7 +510,7 @@ def analyze_message(
                     f"{knowledge_base.company.company_name}. Могу подсказать по услугам или ценам."
                 )
             },
-            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
     fact_guard_result = _fact_guard_result(message, knowledge_base)
@@ -531,7 +531,7 @@ def analyze_message(
                 "message_to_user": _phrase(knowledge_base, "clarify")
                 or "Не совсем понял. Уточните, пожалуйста, услугу, цену или вопрос для менеджера.",
             },
-            quick_actions=["Посмотреть услуги", "Позвать оператора"],
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
     if intent == "list_services":
@@ -543,7 +543,7 @@ def analyze_message(
                 "all_services": all_services_context(knowledge_base),
                 "question_type": "list_services",
             },
-            quick_actions=["Уточнить цену", "Позвать оператора"],
+            quick_actions=["Уточнить цену", "Позвать менеджера"],
         )
 
     if intent == "contact_link":
@@ -553,9 +553,9 @@ def analyze_message(
         if wants_visit:
             message_to_user = (
                 f"Очный приём проходит в {city_in_text}. "
-                "Можно уточнить запись и подходящий формат у специалиста."
+                "Можно уточнить запись и подходящий формат у менеджера."
             )
-            quick_actions = ["Позвать оператора", "Открыть сайт"]
+            quick_actions = ["Позвать менеджера", "Открыть сайт"]
         elif wants_telegram and not wants_website:
             message_to_user = "Можно написать нам в Telegram — кнопка ниже."
             quick_actions = ["Написать в Telegram"]
@@ -563,8 +563,8 @@ def analyze_message(
             message_to_user = "Сайт центра можно открыть по кнопке ниже."
             quick_actions = ["Открыть сайт"]
         else:
-            message_to_user = "Могу дать ссылку на сайт или Telegram, а при необходимости позвать оператора."
-            quick_actions = ["Написать в Telegram", "Открыть сайт", "Позвать оператора"]
+            message_to_user = "Могу дать ссылку на сайт или Telegram, а при необходимости позвать менеджера."
+            quick_actions = ["Написать в Telegram", "Открыть сайт", "Позвать менеджера"]
 
         return PolicyResult(
             action=PolicyAction.ANSWER,
@@ -585,7 +585,7 @@ def analyze_message(
                 "message_to_user": _phrase(knowledge_base, "contact_prompt"),
                 "service": service.model_dump() if service else None,
             },
-            quick_actions=["Позвать оператора", "Посмотреть услуги"],
+            quick_actions=["Позвать менеджера", "Посмотреть услуги"],
         )
 
     if unsupported_city:
@@ -600,7 +600,7 @@ def analyze_message(
                     "Можем уточнить формат."
                 )
             },
-            quick_actions=["Позвать оператора", "Написать в Telegram"],
+            quick_actions=["Позвать менеджера", "Написать в Telegram"],
         )
 
     if intent == "cosmetic_concern":
@@ -617,14 +617,14 @@ def analyze_message(
                     "domain_profile": knowledge_base.domain_profile,
                     "message_to_user": (
                         f"Для такого запроса обычно подходят: {service_names}. "
-                        "Точные рекомендации даст специалист на консультации."
+                        "Точные рекомендации даст менеджер на консультации."
                     ),
                 },
                 quick_actions=[
                     {"label": service.name, "type": "message", "value": service.name}
                     for service in suggested_services
                 ]
-                + ["Позвать оператора"],
+                + ["Позвать менеджера"],
             )
 
     if intent == "faq_question" and not price_requested and not duration_requested:
@@ -637,11 +637,10 @@ def analyze_message(
                 confidence=classifier_confidence or 0.7,
                 safe_context={
                     "message_to_user": (
-                        "Точного ответа по этой теме в базе не нашёл. "
-                        "Могу передать вопрос специалисту."
+                        "По этому вопросу лучше уточнить у менеджера — подключить?"
                     )
                 },
-                quick_actions=["Позвать оператора", "Посмотреть услуги"],
+                quick_actions=["Позвать менеджера", "Посмотреть услуги"],
             )
 
         return PolicyResult(
@@ -669,10 +668,9 @@ def analyze_message(
             safe_context={
                 "message_to_user": (
                     _phrase(knowledge_base, "unknown_service")
-                    or "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
                 )
             },
-            quick_actions=["Позвать оператора", "Посмотреть услуги"],
+            quick_actions=["Позвать менеджера", "Посмотреть услуги"],
         )
 
     if operator_requested:
@@ -701,9 +699,9 @@ def analyze_message(
                 },
                 quick_actions=[
                     {
-                        "label": "Сразу к специалисту",
+                        "label": "Сразу к менеджеру",
                         "type": "message",
-                        "value": "Да, оператора",
+                        "value": "Да, менеджера",
                     },
                     {
                         "label": "Сначала спрошу тут",
@@ -734,10 +732,9 @@ def analyze_message(
                 safe_context={
                     "message_to_user": (
                         _phrase(knowledge_base, "unknown_service")
-                        or "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
                     )
                 },
-                quick_actions=["Посмотреть услуги", "Позвать оператора"],
+                quick_actions=["Посмотреть услуги", "Позвать менеджера"],
             )
         if service is None and not phone:
             return PolicyResult(
@@ -776,7 +773,7 @@ def analyze_message(
                 "booking_request": True,
                 "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
             },
-            quick_actions=["Оставить телефон", "Позвать оператора"],
+            quick_actions=["Оставить телефон", "Позвать менеджера"],
         )
 
     if phone and session.pending_action == PendingAction.BOOKING_CONTACT.value:
@@ -839,10 +836,9 @@ def analyze_message(
                 safe_context={
                     "message_to_user": (
                         _phrase(knowledge_base, "unknown_service")
-                        or "В базе такой услуги не нашёл. Могу показать список услуг или передать вопрос менеджеру."
                     )
                 },
-                quick_actions=["Позвать оператора", "Посмотреть услуги"],
+                quick_actions=["Позвать менеджера", "Посмотреть услуги"],
             )
 
         context = knowledge_base.get_service_context(service)
@@ -880,7 +876,7 @@ def analyze_message(
                 safe_context={
                     "message_to_user": "Уточните, пожалуйста, по какой услуге рассказать подробнее."
                 },
-                quick_actions=["Посмотреть услуги", "Позвать оператора"],
+                quick_actions=["Посмотреть услуги", "Позвать менеджера"],
             )
 
         context = knowledge_base.get_service_context(service)
@@ -894,7 +890,7 @@ def analyze_message(
                 "question_type": "explanation",
                 "message_to_user": _service_explanation_message(service),
             },
-            quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать оператора"),
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать менеджера"),
         )
 
     if duration_requested:
@@ -906,7 +902,7 @@ def analyze_message(
                 safe_context={
                     "message_to_user": "Уточните, пожалуйста, по какой услуге нужен срок или длительность."
                 },
-                quick_actions=["Позвать оператора", "Посмотреть услуги"],
+                quick_actions=["Позвать менеджера", "Посмотреть услуги"],
             )
 
         context = knowledge_base.get_service_context(service)
@@ -925,7 +921,7 @@ def analyze_message(
             service_id=service.id,
             confidence=0.88,
             safe_context=knowledge_base.get_service_context(service),
-            quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать оператора"),
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать менеджера"),
         )
 
     if session.status.value != "AI_ACTIVE":
@@ -951,5 +947,5 @@ def analyze_message(
                 "Могу рассказать про услуги, цены или оформить заявку."
             )
         },
-        quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        quick_actions=["Посмотреть услуги", "Позвать менеджера"],
     )

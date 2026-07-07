@@ -450,7 +450,7 @@ class ChatService:
                 action=PolicyAction.REJECT,
                 answer=self._phrase(
                     "human_active_wait",
-                    "Чат передан специалисту. Пожалуйста, дождитесь ответа оператора.",
+                    "Чат передан менеджеру. Пожалуйста, дождитесь ответа.",
                 ),
                 lead_created=False,
                 quick_actions=[],
@@ -540,7 +540,7 @@ class ChatService:
                 or policy_result.safe_context.get("message_to_user")
                 or self._phrase(
                     "handoff_message",
-                    "Передаю диалог менеджеру. Оператор увидит историю переписки.",
+                    "Передаю диалог менеджеру. Он увидит историю переписки.",
                 )
             )
         elif policy_result.action == PolicyAction.CLARIFY:

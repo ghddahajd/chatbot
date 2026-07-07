@@ -149,7 +149,7 @@ class CompanyConfig(BaseModel):
         elif not medical_disclaimer and safety_disclaimer:
             self.medical_disclaimer = safety_disclaimer
         elif not safety_disclaimer and not medical_disclaimer:
-            fallback = "По этому вопросу лучше уточнить у специалиста."
+            fallback = "По этому вопросу лучше уточнить у менеджера."
             self.safety_disclaimer = fallback
             self.medical_disclaimer = fallback
         return self

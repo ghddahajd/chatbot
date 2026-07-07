@@ -75,7 +75,7 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(
         phrasebook.get("price_disclaimer")
-        or "Предварительно так, точнее сообщит специалист."
+        or "Предварительно так, точнее сообщит менеджер."
     )
 
     if question_type == "price":
@@ -188,7 +188,7 @@ def clean_template_answer(context: dict[str, Any]) -> str:
             return (
                 "Для такого запроса обычно подходят: "
                 + ", ".join(names)
-                + ". Точные рекомендации даст специалист на консультации."
+                + ". Точные рекомендации даст менеджер на консультации."
             )
 
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
@@ -196,7 +196,7 @@ def clean_template_answer(context: dict[str, Any]) -> str:
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(
         phrasebook.get("price_disclaimer")
-        or "Предварительно так, точнее сообщит специалист."
+        or "Предварительно так, точнее сообщит менеджер."
     )
     parts: list[str] = []
     if service.get("name"):
@@ -209,7 +209,7 @@ def clean_template_answer(context: dict[str, Any]) -> str:
         parts.append(f"Стоимость: {price['price_text']}. {price_disclaimer}")
     if parts:
         return " ".join(parts)
-    return "Уточните, пожалуйста, что вас интересует? Могу рассказать про услуги, цены или записать к специалисту."
+    return "Уточните, пожалуйста, что вас интересует? Могу рассказать про услуги, цены или записать к менеджеру."
 
 
 def fallback_after_invalid_response(answer: str, context: dict[str, Any]) -> str:

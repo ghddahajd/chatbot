@@ -172,6 +172,13 @@ def test_operator_request_keyword_soft_redirect(policy_session, knowledge_base) 
     assert result.reason == PolicyReason.OPERATOR_REQUESTED
 
 
+def test_manager_button_text_triggers_operator_flow(policy_session, knowledge_base) -> None:
+    result = _analyze("Хочу поговорить с менеджером", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.OPERATOR_REQUESTED
+
+
 def test_location_inside_company_city_is_not_mismatch(policy_session, knowledge_base) -> None:
     result = _analyze("я из района динамо в москве норм?", policy_session, knowledge_base)
 
@@ -546,7 +553,7 @@ def test_fact_guard_stays_before_contact_link(
     assert result.safe_context["fact_guard"]["matched_blocked"] == ["ОМС", "омс"]
     assert result.safe_context["message_to_user"] == (
         "По полису ОМС приём не ведём. "
-        "Могу подсказать по платным услугам или передать вопрос специалисту."
+        "Могу подсказать по платным услугам или передать вопрос менеджеру."
     )
 
 
@@ -615,4 +622,4 @@ def test_unit_price_note_for_injection_variants(
     context = knowledge_base.get_service_context(service)
 
     assert "за единицу" in context["price_unit_note"].lower()
-    assert "количество определит специалист" in context["price_unit_note"].lower()
+    assert "количество определит менеджер" in context["price_unit_note"].lower()

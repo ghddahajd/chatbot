@@ -26,7 +26,7 @@ def similar_services_result(
         confidence=confidence,
         safe_context={
             "similar": services_summary(similar_services),
-            "message_to_user": f"Такой услуги в базе не вижу, но есть похожие: {service_names}. Интересно?",
+            "message_to_user": f"Такой услуги у нас пока не вижу, но есть похожие: {service_names}. Интересно?",
         },
         quick_actions=[
             {"label": service.name, "type": "message", "value": service.name}

@@ -60,7 +60,7 @@ class BaseLLMClient(ABC):
         message_to_user = context.get("message_to_user")
         if isinstance(message_to_user, str) and message_to_user.strip():
             return message_to_user.strip()
-        return "Понял запрос. Могу подсказать по стоимости или передать вопрос специалисту."
+        return "Понял запрос. Могу подсказать по стоимости или передать вопрос менеджеру."
 
     async def classify_restricted_risk(self, user_message: str) -> str:
         """классифицирует консультационное сообщение как restricted или safe."""
@@ -72,7 +72,7 @@ class BaseLLMClient(ABC):
         """возвращает безопасный ответ для передачи restricted сообщений оператору."""
 
         del user_message
-        return "Понимаю, лучше уточнить это у специалиста напрямую — подключаю оператора."
+        return "Понимаю, лучше уточнить это у менеджера напрямую — подключаю менеджера."
 
     async def classify_medical_risk(self, user_message: str) -> str:
         """legacy alias для старого medical-oriented API."""

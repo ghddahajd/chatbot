@@ -87,7 +87,7 @@ async def _final_answer_for_policy(
         answer = str(
             policy_result.safe_context.get("handoff_message")
             or policy_result.safe_context.get("message_to_user")
-            or "Передаю диалог менеджеру. Оператор увидит историю переписки."
+            or "Передаю диалог менеджеру. Он увидит историю переписки."
         )
         return answer, policy_result.action, "direct_handoff", False
 

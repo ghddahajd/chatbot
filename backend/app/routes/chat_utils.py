@@ -50,7 +50,7 @@ def format_quick_actions(
 ) -> list[QuickAction]:
     company = (knowledge_base or request.app.state.knowledge_base).company
     values_by_label = {
-        "Позвать оператора": ("message", "Хочу поговорить с оператором"),
+        "Позвать менеджера": ("message", "Хочу поговорить с менеджером"),
         "Посмотреть услуги": ("message", "Покажи список услуг"),
         "Оставить телефон": ("message", "Хочу оставить телефон"),
         "Уточнить цену": ("message", "Хочу уточнить цену"),
@@ -144,7 +144,7 @@ def contextual_affirmative_response(
             confidence=0.9,
             safe_context={
                 "force_direct_answer": True,
-                "message_to_user": "Что уточнить по этой услуге: цену, детали или соединить со специалистом?"
+                "message_to_user": "Что уточнить по этой услуге: цену, детали или соединить с менеджером?"
             },
             quick_actions=[
                 "Уточнить цену",
@@ -153,7 +153,7 @@ def contextual_affirmative_response(
                     "type": "message",
                     "value": "Расскажи подробнее про эту услугу",
                 },
-                "Позвать оператора",
+                "Позвать менеджера",
             ],
         )
 

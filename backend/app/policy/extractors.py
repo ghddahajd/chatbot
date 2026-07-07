@@ -8,13 +8,10 @@ from typing import Optional
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import MessageRole, Session
 from .constants import (
-    BOOKING_CONTACT_PROMPT,
-    CONTACT_PROMPT,
     KNOWN_CITY_FORMS,
     LOCATION_MISMATCH_KEYWORDS,
     LOCATION_PATTERNS,
     NEGATIVE_MESSAGES,
-    OPERATOR_SOFT_OFFER_MESSAGE,
     PHONE_PATTERN,
 )
 
@@ -174,50 +171,3 @@ def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -
         if service is not None:
             return service.id
     return None
-
-
-def has_operator_soft_offer(session: Session, knowledge_base: KnowledgeBase) -> bool:
-    phrasebook_text = str(getattr(knowledge_base, "phrasebook", {}).get("operator_soft_offer") or "").strip()
-    expected_text = phrasebook_text or OPERATOR_SOFT_OFFER_MESSAGE
-    return any(
-        message.role == MessageRole.ASSISTANT and expected_text in message.text
-        for message in session.messages
-    )
-
-
-def has_booking_contact_prompt(session: Session) -> bool:
-    for message in reversed(session.messages):
-        normalized_message = normalize_text(message.text)
-        if message.role == MessageRole.ASSISTANT and "заявку на запись передали" in normalized_message:
-            return False
-        if message.role == MessageRole.ASSISTANT and "заявку не оформляем" in normalized_message:
-            return False
-        if message.role == MessageRole.ASSISTANT and BOOKING_CONTACT_PROMPT in message.text:
-            return True
-        if (
-            message.role == MessageRole.ASSISTANT
-            and "заявк" in normalized_message
-            and "имя" in normalized_message
-            and "телефон" in normalized_message
-        ):
-            return True
-    return False
-
-
-def has_contact_prompt(session: Session) -> bool:
-    for message in reversed(session.messages):
-        normalized_message = normalize_text(message.text)
-        if message.role == MessageRole.ASSISTANT and "передали ваши контакты" in normalized_message:
-            return False
-        if message.role == MessageRole.ASSISTANT and "контакт не оставляем" in normalized_message:
-            return False
-        if message.role == MessageRole.ASSISTANT and CONTACT_PROMPT in message.text:
-            return True
-        if (
-            message.role == MessageRole.ASSISTANT
-            and "имя" in normalized_message
-            and "телефон" in normalized_message
-            and "заявк" not in normalized_message
-        ):
-            return True
-    return False

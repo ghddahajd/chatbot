@@ -70,6 +70,48 @@ def test_booking_contact_enqueues_booking_event(test_client, monkeypatch) -> Non
     assert events[-1]["session_id"] == first_payload["session_id"]
 
 
+def test_successful_booking_clears_pending_and_does_not_duplicate_lead(test_client, managed_env) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "хочу записаться на Консультация косметолога",
+        },
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+    second_payload = second_response.json()
+    assert second_response.status_code == 200
+    assert second_payload["lead_created"] is True
+
+    leads_file = managed_env["temp_dir"] / "leads.jsonl"
+    leads_before = leads_file.read_text(encoding="utf-8").splitlines()
+
+    third_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "+7 999 123-45-67",
+        },
+    )
+    third_payload = third_response.json()
+    leads_after = leads_file.read_text(encoding="utf-8").splitlines()
+
+    assert third_response.status_code == 200
+    assert third_payload["lead_created"] is False
+    assert len(leads_after) == len(leads_before)
+
+
 def test_transfer_operator_enqueues_operator_requested_event(test_client, monkeypatch) -> None:
     events = []
 
@@ -96,6 +138,30 @@ def test_transfer_operator_enqueues_operator_requested_event(test_client, monkey
     operator_url = events[-1]["payload"]["operator_url"]
     assert "/operator?token=" in operator_url
     assert "demo-operator-token" in operator_url
+
+
+def test_operator_second_request_transfers_after_soft_offer(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    )
+    first_payload = first_response.json()
+    assert first_response.status_code == 200
+    assert first_payload["action"] == "clarify"
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Да, оператора",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "transfer_operator"
+    assert second_payload["status"] == "WAITING_OPERATOR"
 
 
 def test_pending_contact_accepts_messy_phone_and_name(test_client) -> None:

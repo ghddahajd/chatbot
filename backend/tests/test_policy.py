@@ -4,7 +4,7 @@ import json
 import shutil
 from pathlib import Path
 
-from app.models import Message, MessageRole, PolicyAction, PolicyReason
+from app.models import PendingAction, PolicyAction, PolicyReason
 from app.policy import analyze_message, classify_and_extract
 
 
@@ -112,18 +112,10 @@ def test_operator_request_soft_redirect(policy_session, knowledge_base) -> None:
 
 
 def test_operator_request_second_time_hard_transfer(policy_session, knowledge_base) -> None:
-    """regression: has_operator_soft_offer() раньше сравнивал текст ответа с константой
-    OPERATOR_SOFT_OFFER_MESSAGE, которая не совпадала с реальным DEFAULT_PHRASEBOOK/client
-    config.yaml текстом, из-за чего повторный запрос оператора никогда не приводил
-    к TRANSFER_OPERATOR — бот бесконечно повторял мягкое предложение."""
+    """policy должен читать явное состояние, а не текст предыдущего ответа."""
     first_result = _analyze("хочу оператора", policy_session, knowledge_base)
     assert first_result.action == PolicyAction.CLARIFY
-    policy_session.messages.append(
-        Message(
-            role=MessageRole.ASSISTANT,
-            text=str(first_result.safe_context.get("message_to_user")),
-        )
-    )
+    policy_session.pending_action = PendingAction.OFFERED_OPERATOR.value
 
     result = _analyze("хочу оператора", policy_session, knowledge_base)
 
@@ -249,12 +241,7 @@ def test_bolshoi_does_not_false_positive_as_medical_bol(policy_session, knowledg
 
 
 def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, knowledge_base) -> None:
-    policy_session.messages.append(
-        Message(
-            role=MessageRole.ASSISTANT,
-            text="Чтобы оставить заявку, напишите имя, телефон, автомобиль и удобное время.",
-        )
-    )
+    policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
 
     result = _analyze("Иван +7 999 123-45-67", policy_session, knowledge_base)
 
@@ -263,16 +250,8 @@ def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, kno
 
 
 def test_new_question_after_booking_prompt_is_not_re_nagged(policy_session, knowledge_base) -> None:
-    """regression: has_booking_contact_prompt() смотрит в историю сообщений и раньше
-    не давал эскейпа — любой новый вопрос без явного "отмена" повторно ловил тот же
-    промпт "напишите телефон", даже если пользователь явно спросил что-то другое."""
-
-    policy_session.messages.append(
-        Message(
-            role=MessageRole.ASSISTANT,
-            text="Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
-        )
-    )
+    """Новый вопрос не должен зависеть от текста прошлого prompt."""
+    policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
 
     result = _analyze("какие врачи у вас есть?", policy_session, knowledge_base)
 
@@ -295,12 +274,8 @@ def test_lead_request_with_reversed_word_order_asks_for_contact(policy_session, 
 
 
 def test_contact_prompt_can_be_cancelled(policy_session, knowledge_base) -> None:
-    policy_session.messages.append(
-        Message(
-            role=MessageRole.ASSISTANT,
-            text="Оставьте имя и телефон, и менеджер сможет связаться с вами позже.",
-        )
-    )
+    """policy читает явное состояние COLLECT_CONTACT, а не текст прошлого ответа."""
+    policy_session.pending_action = PendingAction.COLLECT_CONTACT.value
 
     result = _analyze("нет не надо", policy_session, knowledge_base)
 

@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 from ..knowledge import KnowledgeBase, normalize_text
-from ..models import PolicyAction, PolicyReason, PolicyResult, Session
+from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import retrieve_article_context
 from .constants import (
     BOOKING_CONTACT_PROMPT,
@@ -30,9 +30,6 @@ from .extractors import (
     extract_name,
     extract_phone,
     find_unsupported_city,
-    has_booking_contact_prompt,
-    has_contact_prompt,
-    has_operator_soft_offer,
     is_location_mismatch,
     last_service_from_history,
 )
@@ -370,7 +367,9 @@ def analyze_message(
             quick_actions=["Позвать оператора", "Оставить телефон"],
         )
 
-    if has_contact_prompt(session) and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+    if session.pending_action == PendingAction.COLLECT_CONTACT.value and contains_keyword(
+        normalized_message, NEGATIVE_MESSAGES
+    ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.CONTACT_PROVIDED,
@@ -383,7 +382,9 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
         )
 
-    if has_booking_contact_prompt(session) and contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+    if session.pending_action == PendingAction.BOOKING_CONTACT.value and contains_keyword(
+        normalized_message, NEGATIVE_MESSAGES
+    ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.BOOKING_REQUEST,
@@ -394,6 +395,22 @@ def analyze_message(
                 "message_to_user": "Ок, заявку не оформляем. Могу подсказать по услугам, ценам или позвать менеджера.",
             },
             quick_actions=["Посмотреть услуги", "Позвать оператора"],
+        )
+
+    if phone and session.lead_requested:
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.CONTACT_PROVIDED,
+            service_id=service.id if service else None,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": (
+                    "Контакты уже передали менеджеру. Если нужно изменить заявку, "
+                    "допишите детали здесь или позовите оператора."
+                ),
+            },
+            quick_actions=["Позвать оператора", "Посмотреть услуги"],
         )
 
     if phone and lead_requested:
@@ -413,7 +430,7 @@ def analyze_message(
 
     looks_like_new_question = "?" in message or classifier_confidence > 0
     if (
-        has_booking_contact_prompt(session)
+        session.pending_action == PendingAction.BOOKING_CONTACT.value
         and not phone
         and not operator_requested
         and not looks_like_new_question
@@ -663,7 +680,7 @@ def analyze_message(
                     "service": service.model_dump() if service else None,
                 },
             )
-        if not has_operator_soft_offer(session, knowledge_base):
+        if session.pending_action != PendingAction.OFFERED_OPERATOR.value:
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
                 reason=PolicyReason.OPERATOR_REQUESTED,
@@ -753,7 +770,7 @@ def analyze_message(
             quick_actions=["Оставить телефон", "Позвать оператора"],
         )
 
-    if phone and has_booking_contact_prompt(session):
+    if phone and session.pending_action == PendingAction.BOOKING_CONTACT.value:
         if service is None:
             service = knowledge_base.find_service_by_id(
                 session.last_service_id or last_service_from_history(session, knowledge_base)

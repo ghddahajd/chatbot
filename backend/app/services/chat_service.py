@@ -11,6 +11,7 @@ from ..knowledge import normalize_text
 from ..models import (
     ChatMessageResponse,
     MessageRole,
+    PendingAction,
     PolicyAction,
     PolicyReason,
     QuickAction,
@@ -40,8 +41,6 @@ from .session_summarizer import summarize_session
 
 
 logger = logging.getLogger(__name__)
-PENDING_CONTACT = "collect_contact"
-PENDING_BOOKING_CONTACT = "booking_contact"
 
 
 class ChatService:
@@ -144,12 +143,15 @@ class ChatService:
         message: str,
         knowledge_base,
     ) -> ChatMessageResponse | None:
-        if session.pending_action not in {PENDING_CONTACT, PENDING_BOOKING_CONTACT}:
+        if session.pending_action not in {
+            PendingAction.COLLECT_CONTACT.value,
+            PendingAction.BOOKING_CONTACT.value,
+        }:
             return None
 
         normalized_message = normalize_text(message)
         if contains_keyword(normalized_message, NEGATIVE_MESSAGES):
-            was_booking_request = session.pending_action == PENDING_BOOKING_CONTACT
+            was_booking_request = session.pending_action == PendingAction.BOOKING_CONTACT.value
             await self._clear_contact_state(session_store, session.session_id)
             if was_booking_request:
                 answer = self._phrase(
@@ -196,7 +198,7 @@ class ChatService:
         name = extract_name(message, phone) or str(session.contact_draft.get("name") or "").strip() or None
         await session_store.update_contact_draft(session.session_id, name=name, phone=phone)
 
-        is_booking_request = session.pending_action == PENDING_BOOKING_CONTACT
+        is_booking_request = session.pending_action == PendingAction.BOOKING_CONTACT.value
         contact = {"name": name, "phone": phone}
         lead = build_lead_from_contact(
             company_id=session.company_id,
@@ -261,22 +263,19 @@ class ChatService:
 
         if policy_result.action == PolicyAction.ASK_CONTACT and not policy_result.safe_context.get("contact"):
             pending_action = (
-                PENDING_BOOKING_CONTACT
+                PendingAction.BOOKING_CONTACT.value
                 if policy_result.safe_context.get("booking_request")
-                else PENDING_CONTACT
+                else PendingAction.COLLECT_CONTACT.value
             )
             await session_store.set_pending_action(session.session_id, pending_action)
             return
 
-        message_to_user = normalize_text(str(policy_result.safe_context.get("message_to_user") or ""))
-        asks_for_contact = "телефон" in message_to_user and ("имя" in message_to_user or "заявк" in message_to_user)
-        if policy_result.action == PolicyAction.CLARIFY and asks_for_contact:
-            pending_action = (
-                PENDING_BOOKING_CONTACT
-                if policy_result.safe_context.get("booking_request")
-                else PENDING_CONTACT
-            )
-            await session_store.set_pending_action(session.session_id, pending_action)
+        if policy_result.action == PolicyAction.CLARIFY and policy_result.safe_context.get("booking_request"):
+            await session_store.set_pending_action(session.session_id, PendingAction.BOOKING_CONTACT.value)
+            return
+
+        if policy_result.action == PolicyAction.CLARIFY and policy_result.reason == PolicyReason.OPERATOR_REQUESTED:
+            await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
             return
 
         if policy_result.action in {PolicyAction.ANSWER, PolicyAction.SMALL_TALK, PolicyAction.OFF_TOPIC}:

@@ -303,8 +303,7 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
     get_settings.cache_clear()
 
     from app.main import app  # noqa: WPS433
-    from app.models import Message, MessageRole, Session  # noqa: WPS433
-    from app.policy.constants import CONTACT_PROMPT, OPERATOR_SOFT_OFFER_MESSAGE  # noqa: WPS433
+    from app.models import Message, MessageRole, PendingAction, Session  # noqa: WPS433
 
     results: list[ScenarioResult] = []
     with TestClient(app) as client:
@@ -322,11 +321,9 @@ async def _run(company_id: str, use_real_llm: bool, temp_dir: Path) -> list[Scen
 
             session = Session(company_id=company_id)
             if scenario.setup == "operator_soft":
-                session.messages.append(
-                    Message(role=MessageRole.ASSISTANT, text=OPERATOR_SOFT_OFFER_MESSAGE)
-                )
+                session.pending_action = PendingAction.OFFERED_OPERATOR.value
             if scenario.setup == "contact_prompt":
-                session.messages.append(Message(role=MessageRole.ASSISTANT, text=CONTACT_PROMPT))
+                session.pending_action = PendingAction.COLLECT_CONTACT.value
             policy_result, classification = await _policy_result_for_message(
                 scenario.message,
                 session,

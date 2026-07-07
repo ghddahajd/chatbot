@@ -55,6 +55,12 @@ class PolicyReason(str, Enum):
     OFF_TOPIC = "off_topic"
 
 
+class PendingAction(str, Enum):
+    COLLECT_CONTACT = "collect_contact"
+    BOOKING_CONTACT = "booking_contact"
+    OFFERED_OPERATOR = "offered_operator"
+
+
 class Message(BaseModel):
     role: MessageRole
     text: str

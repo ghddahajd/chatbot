@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     delivery_retry_enabled: bool = True
     delivery_retry_interval_seconds: int = 60
+    session_ttl_seconds: int = 86400
+    session_eviction_interval_seconds: int = 3600
+    session_eviction_enabled: bool = True
+    session_snapshot_file: str = ""
+    chat_rate_limit_enabled: bool = True
+    chat_rate_limit_per_minute: int = 30
     operator_token: str = "demo-operator-token"
     allowed_origins: str = "http://localhost:8000"
     default_company_id: str = "rosh_demo"

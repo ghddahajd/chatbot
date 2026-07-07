@@ -10,6 +10,7 @@ from ..models import (
     SessionPublicResponse,
     SessionStatus,
 )
+from ..rate_limit import client_ip
 from ..services.chat_service import ChatService
 
 
@@ -43,6 +44,11 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
 
 @router.post("/message", response_model=ChatMessageResponse)
 async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMessageResponse | JSONResponse:
+    settings = request.app.state.settings
+    if settings.chat_rate_limit_enabled:
+        limiter = request.app.state.chat_rate_limiter
+        if not limiter.allow(client_ip(request)):
+            raise HTTPException(status_code=429, detail="Too many chat messages. Please wait.")
     return await ChatService(request).handle_message(
         company_id=payload.company_id,
         session_id=payload.session_id,

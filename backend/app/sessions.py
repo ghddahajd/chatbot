@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
+from pathlib import Path
 
 from .models import Message, MessageRole, OperatorSessionSummary, Session, SessionStatus
 
@@ -48,6 +50,60 @@ class SessionStore:
     async def list_all(self) -> list[Session]:
         async with self._lock:
             return list(self._sessions.values())
+
+    async def evict_stale(self, ttl_seconds: int) -> int:
+        cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
+        evictable_statuses = {SessionStatus.CLOSED, SessionStatus.AI_ACTIVE}
+        async with self._lock:
+            stale_session_ids = [
+                session_id
+                for session_id, session in self._sessions.items()
+                if session.status in evictable_statuses and session.updated_at < cutoff
+            ]
+            for session_id in stale_session_ids:
+                del self._sessions[session_id]
+            return len(stale_session_ids)
+
+    async def snapshot_to(self, path: Path, *, ttl_seconds: Optional[int] = None) -> int:
+        cutoff = None
+        if ttl_seconds is not None:
+            cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
+
+        async with self._lock:
+            sessions = [
+                session
+                for session in self._sessions.values()
+                if session.status != SessionStatus.CLOSED
+                and (cutoff is None or session.updated_at >= cutoff)
+            ]
+            payload = [session.model_dump(mode="json") for session in sessions]
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(path)
+        return len(payload)
+
+    async def restore_from(self, path: Path) -> int:
+        if not path.exists():
+            return 0
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, list):
+                raise ValueError("session snapshot root must be list")
+            restored = {
+                session.session_id: session
+                for item in payload
+                if isinstance(item, dict)
+                for session in [Session.model_validate(item)]
+            }
+        except Exception as error:
+            logger.warning("session snapshot restore failed path=%s error=%s", path, type(error).__name__)
+            return 0
+
+        async with self._lock:
+            self._sessions.update(restored)
+        return len(restored)
 
     async def append_message(
         self, session_id: str, role: MessageRole, text: str, kind: Optional[str] = None

@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,9 +18,32 @@ from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
+from .rate_limit import RateLimiter
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .sessions import SessionStore
 from .ws_manager import ConnectionManager
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _run_session_eviction_loop(
+    session_store: SessionStore,
+    *,
+    ttl_seconds: int,
+    interval_seconds: int,
+    snapshot_file: Path | None,
+) -> None:
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await session_store.evict_stale(ttl_seconds)
+            if snapshot_file is not None:
+                await session_store.snapshot_to(snapshot_file, ttl_seconds=ttl_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning("session eviction loop error=%s", type(error).__name__)
 
 
 @asynccontextmanager
@@ -37,6 +61,9 @@ async def lifespan(app: FastAPI):
     app.state.knowledge_base_resolver.build_domain_index()
     app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
     app.state.session_store = SessionStore()
+    snapshot_file = Path(settings.session_snapshot_file) if settings.session_snapshot_file else None
+    if snapshot_file is not None:
+        await app.state.session_store.restore_from(snapshot_file)
     app.state.delivery_service = DeliveryService(
         outbox_file=settings.delivery_outbox_file,
         knowledge_base_resolver=app.state.knowledge_base_resolver,
@@ -57,20 +84,37 @@ async def lifespan(app: FastAPI):
     app.state.system_prompt = get_system_prompt()
     app.state.policy_analyzer = analyze_message
     app.state.ws_manager = ConnectionManager(app.state.session_store)
+    app.state.chat_rate_limiter = RateLimiter(limit=settings.chat_rate_limit_per_minute)
 
     retry_task = None
     if settings.delivery_retry_enabled:
         retry_task = asyncio.create_task(
             app.state.delivery_service.run_retry_loop(settings.delivery_retry_interval_seconds)
         )
+    eviction_task = None
+    if settings.session_eviction_enabled:
+        eviction_task = asyncio.create_task(
+            _run_session_eviction_loop(
+                app.state.session_store,
+                ttl_seconds=settings.session_ttl_seconds,
+                interval_seconds=settings.session_eviction_interval_seconds,
+                snapshot_file=snapshot_file,
+            )
+        )
 
     try:
         yield
     finally:
+        if eviction_task is not None:
+            eviction_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await eviction_task
         if retry_task is not None:
             retry_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await retry_task
+        if snapshot_file is not None:
+            await app.state.session_store.snapshot_to(snapshot_file, ttl_seconds=settings.session_ttl_seconds)
 
 
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)

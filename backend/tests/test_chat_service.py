@@ -2,6 +2,8 @@
 
 import json
 
+from fastapi.testclient import TestClient
+
 
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
     first_response = test_client.post(
@@ -29,6 +31,44 @@ def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> Non
     assert second_payload["action"] == "clarify"
     assert second_payload["status"] == "AI_ACTIVE"
     assert "контакт не оставляем" in second_payload["answer"].lower()
+
+
+def test_chat_rate_limit_blocks_single_ip_but_not_other_ips(managed_env, monkeypatch) -> None:
+    monkeypatch.setenv("CHAT_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_PER_MINUTE", "2")
+
+    from app.config import get_settings
+    from app.main import app
+
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        headers = {"X-Forwarded-For": "203.0.113.10"}
+        first_response = client.post(
+            "/api/chat/message",
+            json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+            headers=headers,
+        )
+        second_response = client.post(
+            "/api/chat/message",
+            json={"company_id": "rosh_demo", "session_id": first_response.json()["session_id"], "message": "услуги"},
+            headers=headers,
+        )
+        limited_response = client.post(
+            "/api/chat/message",
+            json={"company_id": "rosh_demo", "session_id": first_response.json()["session_id"], "message": "цены"},
+            headers=headers,
+        )
+        other_ip_response = client.post(
+            "/api/chat/message",
+            json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+            headers={"X-Forwarded-For": "203.0.113.11"},
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert limited_response.status_code == 429
+    assert other_ip_response.status_code == 200
+    get_settings.cache_clear()
 
 
 def test_booking_contact_enqueues_booking_event(test_client, monkeypatch) -> None:

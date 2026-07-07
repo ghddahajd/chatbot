@@ -1,5 +1,6 @@
 """проверки generic delivery outbox."""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -409,3 +410,100 @@ def test_webhook_send_adds_event_headers_with_stable_delivery_id(
     assert calls[1]["headers"]["X-Delivery-ID"] == "stable-delivery-id"
     assert calls[0]["json"]["event_type"] == "operator_requested"
     assert calls[0]["json"]["data"] == {"last_message": "оператор"}
+
+
+def test_retry_due_retries_failed_record_and_marks_sent(tmp_path: Path, resolver, monkeypatch) -> None:
+    outbox_file = tmp_path / "delivery_outbox.jsonl"
+    service = DeliveryService(
+        outbox_file=outbox_file,
+        knowledge_base_resolver=resolver,
+        telegram_bot_token="token",
+        telegram_chat_id="chat",
+    )
+    failed_record = {
+        "timestamp": "2026-06-30T19:00:00",
+        "delivery_id": "delivery-retry-1",
+        "event_type": "lead_created",
+        "company_id": "rosh_demo",
+        "session_id": "session-1",
+        "destination_type": "telegram",
+        "status": "failed",
+        "attempts": 1,
+        "next_attempt_at": "2020-01-01T00:00:00",
+        "target": "chat",
+        "payload": {"summary": "лид"},
+        "last_error": "ConnectError",
+        "response_status": None,
+    }
+
+    async def fake_send(record: dict[str, Any]) -> int:
+        assert record["delivery_id"] == "delivery-retry-1"
+        return 200
+
+    async def run_retry() -> dict[str, Any]:
+        await service._append_record(failed_record)
+        return await service.retry_due()
+
+    import anyio
+
+    monkeypatch.setattr(service, "_send", fake_send)
+    result = anyio.run(run_retry)
+    records = read_jsonl(outbox_file)
+
+    assert result == {"attempted": 1, "sent": 1, "failed": 0, "dead": 0}
+    assert records[-1]["delivery_id"] == "delivery-retry-1"
+    assert records[-1]["status"] == "sent"
+    assert records[-1]["attempts"] == 2
+
+
+def test_run_retry_loop_cancels_cleanly(tmp_path: Path, resolver) -> None:
+    service = DeliveryService(
+        outbox_file=tmp_path / "delivery_outbox.jsonl",
+        knowledge_base_resolver=resolver,
+    )
+
+    async def run_loop() -> None:
+        task = asyncio.create_task(service.run_retry_loop(60))
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        raise AssertionError("retry loop task did not propagate cancellation")
+
+    import anyio
+
+    anyio.run(run_loop)
+
+
+def test_run_retry_loop_continues_after_retry_error(tmp_path: Path, resolver, monkeypatch) -> None:
+    service = DeliveryService(
+        outbox_file=tmp_path / "delivery_outbox.jsonl",
+        knowledge_base_resolver=resolver,
+    )
+    calls = 0
+    second_call = asyncio.Event()
+
+    async def fake_retry_due(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("boom")
+        second_call.set()
+        return {"attempted": 0, "sent": 0, "failed": 0, "dead": 0}
+
+    async def run_loop() -> None:
+        monkeypatch.setattr(service, "retry_due", fake_retry_due)
+        task = asyncio.create_task(service.run_retry_loop(0))
+        await asyncio.wait_for(second_call.wait(), timeout=1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    import anyio
+
+    anyio.run(run_loop)
+    assert calls >= 2

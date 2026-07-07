@@ -227,6 +227,18 @@ class DeliveryService:
             "dead": sum(1 for item in attempted if item.get("status") == "dead"),
         }
 
+    async def run_retry_loop(self, interval_seconds: int) -> None:
+        """периодически повторяет due-доставки, пока задачу не отменят."""
+
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+                await self.retry_due()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning("delivery retry loop error=%s", type(error).__name__)
+
     def summary(
         self,
         *,

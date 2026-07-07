@@ -1,5 +1,7 @@
 """точка входа fastapi."""
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -55,7 +57,20 @@ async def lifespan(app: FastAPI):
     app.state.system_prompt = get_system_prompt()
     app.state.policy_analyzer = analyze_message
     app.state.ws_manager = ConnectionManager(app.state.session_store)
-    yield
+
+    retry_task = None
+    if settings.delivery_retry_enabled:
+        retry_task = asyncio.create_task(
+            app.state.delivery_service.run_retry_loop(settings.delivery_retry_interval_seconds)
+        )
+
+    try:
+        yield
+    finally:
+        if retry_task is not None:
+            retry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await retry_task
 
 
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)

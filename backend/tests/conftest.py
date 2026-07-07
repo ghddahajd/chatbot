@@ -102,6 +102,7 @@ def managed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
     monkeypatch.setenv("LEADS_FILE", str(tmp_path / "leads.jsonl"))
     monkeypatch.setenv("ANALYTICS_FILE", str(tmp_path / "analytics.jsonl"))
     monkeypatch.setenv("DELIVERY_OUTBOX_FILE", str(tmp_path / "delivery_outbox.jsonl"))
+    monkeypatch.setenv("DELIVERY_RETRY_ENABLED", "false")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
     monkeypatch.setenv("OPERATOR_TOKEN", "demo-operator-token")

@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    delivery_retry_enabled: bool = True
+    delivery_retry_interval_seconds: int = 60
     operator_token: str = "demo-operator-token"
     allowed_origins: str = "http://localhost:8000"
     default_company_id: str = "rosh_demo"

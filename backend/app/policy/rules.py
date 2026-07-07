@@ -20,9 +20,13 @@ def similar_services_result(
         return None
 
     service_names = ", ".join(service.name for service in similar_services)
+    # если совпадение ровно одно — запоминаем услугу как контекст, чтобы follow-up
+    # («давай», «расскажи подробнее», «цена») резолвился, а не падал в общий clarify.
+    single_service_id = similar_services[0].id if len(similar_services) == 1 else None
     return PolicyResult(
         action=PolicyAction.CLARIFY,
         reason=PolicyReason.SIMILAR_SERVICES_FOUND,
+        service_id=single_service_id,
         confidence=confidence,
         safe_context={
             "similar": services_summary(similar_services),

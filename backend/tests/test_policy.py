@@ -104,6 +104,28 @@ def test_unknown_service_suggests_similar(policy_session, knowledge_base) -> Non
     assert result.safe_context["similar"]
 
 
+def test_single_similar_service_binds_context_for_followup(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """regression: одиночное similar-совпадение ('Шатл Комби') раньше возвращалось с
+    service_id=None → follow-up ('давай', 'расскажи подробнее') терял услугу и падал в
+    общий clarify. Теперь единственная похожая услуга привязывается как контекст."""
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = _analyze("Хочу Шатл Комби", policy_session, knowledge_base)
+    assert result.reason == PolicyReason.SIMILAR_SERVICES_FOUND
+    assert result.service_id is not None
+
+    policy_session.last_service_id = result.service_id
+    followup = _analyze("расскажи подробнее про эту услугу", policy_session, knowledge_base)
+    assert followup.action == PolicyAction.ANSWER
+    assert followup.reason == PolicyReason.SERVICE_EXPLANATION
+
+
 def test_operator_request_soft_redirect(policy_session, knowledge_base) -> None:
     result = _analyze("хочу оператора", policy_session, knowledge_base)
 

@@ -8,6 +8,8 @@ from typing import Any
 
 from app.llm import MockLLMClient
 from app.llm.openai_compatible import OpenAIClient
+from app.llm.prompts import build_system_prompt
+from app.models import Message, MessageRole
 
 
 KNOWN_SERVICES = [
@@ -48,6 +50,22 @@ class _RecordingOpenAIClient(OpenAIClient):
                 ]
             }
         )
+
+
+class _RecordingCompletionClient(OpenAIClient):
+    def __init__(self, answer: str) -> None:
+        super().__init__(api_key="test-key", model="test-model", base_url="http://test")
+        self.answer = answer
+        self.last_payload: dict[str, Any] | None = None
+
+    async def _post_chat_completions(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> _FakeResponse:
+        del headers
+        self.last_payload = payload
+        return _FakeResponse({"choices": [{"message": {"content": self.answer}}]})
 
 
 def test_mock_structured_classifier_returns_contract() -> None:
@@ -131,6 +149,45 @@ def test_openai_structured_classifier_uses_json_schema_response_format() -> None
     assert client.last_payload is not None
     assert client.last_payload["response_format"]["type"] == "json_schema"
     assert "domain_profile JSON" in client.last_payload["messages"][1]["content"]
+
+
+def test_build_system_prompt_uses_question_type_block() -> None:
+    price_prompt = build_system_prompt("price")
+    faq_prompt = build_system_prompt("faq_question")
+
+    assert "Тип ответа: цена" in price_prompt
+    assert "Тип ответа: статья/FAQ" not in price_prompt
+    assert "Тип ответа: статья/FAQ" in faq_prompt
+    assert "Тип ответа: цена" not in faq_prompt
+
+
+def test_openai_complete_sends_history_as_chat_turns_not_system_json() -> None:
+    client = _RecordingCompletionClient(
+        "Чистка лица стоит от 4 500 ₽. Это предварительно, точнее подскажет менеджер после уточнения деталей."
+    )
+    context = {
+        "question_type": "price",
+        "service": {"name": "Чистка лица", "short_description": "Описание услуги"},
+        "price": {"price_text": "от 4 500 ₽"},
+    }
+    history = [
+        Message(role=MessageRole.USER, text="хочу чистку лица"),
+        Message(role=MessageRole.ASSISTANT, text="Могу подсказать цену."),
+    ]
+
+    answer = asyncio.run(client.complete("", context, "а сколько?", history))
+
+    assert "4 500" in answer
+    assert client.last_payload is not None
+    messages = client.last_payload["messages"]
+    system_message = messages[0]["content"]
+    assert "recent_history JSON" not in system_message
+    assert "хочу чистку лица" not in system_message
+    assert {"role": "user", "content": "хочу чистку лица"} in messages
+    assert {"role": "assistant", "content": "Могу подсказать цену."} in messages
+    assert messages[-1]["role"] == "user"
+    assert client.last_payload["max_tokens"] == 320
+    assert "Тип ответа: цена" in system_message
 
 
 def test_openai_structured_classifier_returns_none_on_invalid_schema() -> None:

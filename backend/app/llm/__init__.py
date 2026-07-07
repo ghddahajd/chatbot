@@ -20,6 +20,7 @@ from .prompts import (
     PRICE_DISCLAIMER,
     SMALL_TALK_PROMPT,
     SYSTEM_PROMPT,
+    build_system_prompt,
 )
 
 
@@ -49,4 +50,4 @@ def build_llm_client(
 def get_system_prompt() -> str:
     """возвращает фиксированный system prompt."""
 
-    return SYSTEM_PROMPT
+    return build_system_prompt()

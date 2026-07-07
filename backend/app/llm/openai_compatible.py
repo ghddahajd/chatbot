@@ -20,6 +20,7 @@ from .mock import service_consultation_template, small_talk_template
 from .parsing import normalize_classification_result, tolerant_json_parse
 from .prompts import (
     DEFAULT_FALLBACK,
+    FEW_SHOT_MESSAGES,
     INTENT_CLASSIFICATION_PROMPT,
     RESTRICTED_HANDOFF_FALLBACK,
     RESTRICTED_HANDOFF_PROMPT,
@@ -28,6 +29,7 @@ from .prompts import (
     SERVICE_CONSULTATION_TONE_VARIANTS,
     SMALL_TALK_PROMPT,
     STRUCTURED_INTENT_CLASSIFICATION_PROMPT,
+    build_system_prompt,
 )
 
 
@@ -262,6 +264,16 @@ class OpenAIClient(BaseLLMClient):
                 lines.append(f"{role}: {text}")
         return "\n".join(lines) or "Истории нет."
 
+    def _history_messages_for_model(self, history: Optional[list[Message]], *, limit: int = 8) -> list[dict[str, str]]:
+        messages: list[dict[str, str]] = []
+        for message in (history or [])[-limit:]:
+            if message.role.value not in {"user", "assistant"}:
+                continue
+            text = message.text.strip()
+            if text:
+                messages.append({"role": message.role.value, "content": text})
+        return messages
+
     async def complete(
         self,
         system_prompt: str,
@@ -272,41 +284,30 @@ class OpenAIClient(BaseLLMClient):
         context_for_model = self._context_for_model(context)
         phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
         price_disclaimer = str(phrasebook.get("price_disclaimer") or "")
-        history_payload = json.dumps(
-            [
-                {
-                    "role": message.role.value,
-                    "text": message.text,
-                }
-                for message in history[-8:]
-            ],
-            ensure_ascii=False,
-            default=str,
+        system_content = (
+            f"{build_system_prompt(context.get('question_type'))}\n\n"
+            f"Клиентская оговорка цены/сроков: {price_disclaimer}\n\n"
+            f"Контекст для ответа:\n{context_for_model}"
         )
+        messages = [
+            {"role": "system", "content": system_content},
+            *FEW_SHOT_MESSAGES,
+            *self._history_messages_for_model(history),
+            {
+                "role": "user",
+                "content": (
+                    "Сформулируй один готовый ответ клиенту только на основе контекста выше. "
+                    "Не показывай служебные поля, JSON, списки ключей или внутренние данные. "
+                    f"Тип вопроса: {context.get('question_type', 'general')}. "
+                    f"Сообщение клиента для тональности: {user_message}"
+                ),
+            },
+        ]
         payload = {
             "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        f"{system_prompt}\n\n"
-                        f"Клиентская оговорка цены/сроков: {price_disclaimer}\n\n"
-                        f"Контекст для ответа:\n{context_for_model}\n\n"
-                        f"recent_history JSON:\n{history_payload}"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "Сформулируй один готовый ответ клиенту только на основе контекста выше. "
-                        "Не показывай служебные поля, JSON, списки ключей или внутренние данные. "
-                        f"Тип вопроса: {context.get('question_type', 'general')}. "
-                        f"Сообщение клиента для тональности: {user_message}"
-                    ),
-                },
-            ],
+            "messages": messages,
             "temperature": 0.2,
-            "max_tokens": 180,
+            "max_tokens": 320,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
 

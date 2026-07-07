@@ -22,10 +22,10 @@
 {"id":"u_booking_service","message":"хочу записаться на {first_service}","expected_intent":"booking_request","expected_action":"clarify","expected_marker":"booking_request","expected_service_id":"{first_service_id}"}
 {"id":"u_booking_contact","message":"Иван +7 000 000-00-00","history":[{"role":"assistant","text":"Чтобы оставить заявку, напишите имя, телефон и удобное время."}],"expected_action":"ask_contact","expected_marker":"contact_provided"}
 {"id":"u_contact_request_1","message":"хочу оставить телефон","expected_action":"ask_contact","expected_marker":"contact_provided"}
-{"id":"u_contact_cancel","message":"нет не надо","history":[{"role":"assistant","text":"Оставьте имя и телефон, и менеджер сможет связаться с вами позже."}],"expected_action":"clarify","expected_marker":"contact_provided"}
+{"id":"u_contact_cancel","message":"нет не надо","history":[{"role":"assistant","text":"Оставьте имя и телефон, и менеджер сможет связаться с вами позже."}],"expected_action":"clarify","expected_marker":"contact_provided","pending_action":"collect_contact"}
 {"id":"u_operator_soft_1","message":"позовите оператора","expected_intent":"operator_request","expected_action":"clarify","expected_marker":"operator_soft"}
 {"id":"u_operator_soft_2","message":"хочу живого человека","expected_intent":"operator_request","expected_action":"clarify","expected_marker":"operator_soft"}
-{"id":"u_operator_confirm","message":"да оператора","history":[{"role":"assistant","text":"Могу попробовать помочь сама — опишите, что вас интересует. Или сразу соединю со специалистом."}],"expected_action":"transfer_operator"}
+{"id":"u_operator_confirm","message":"да оператора","history":[{"role":"assistant","text":"Могу попробовать помочь сама — опишите, что вас интересует. Или сразу соединю со специалистом."}],"expected_action":"transfer_operator","pending_action":"offered_operator"}
 {"id":"u_location_far_1","message":"я из Новосибирска можно?","expected_intent":"location_mismatch","expected_action":"clarify","expected_marker":"location_mismatch"}
 {"id":"u_location_far_2","message":"работаете в Питере?","expected_intent":"location_mismatch","expected_action":"clarify","expected_marker":"location_mismatch"}
 {"id":"u_location_same_city","message":"я из {company_city_from}","expected_action":"clarify"}

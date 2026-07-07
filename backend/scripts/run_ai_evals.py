@@ -50,6 +50,7 @@ class EvalCase:
     company: str | None
     message: str
     history: list[dict[str, str]]
+    pending_action: str | None
     expected_intent: str | None
     expected_action: str | None
     expected_marker: str | None
@@ -160,6 +161,7 @@ def _load_jsonl(path: Path, context: dict[str, str], company_id: str) -> list[Ev
                 company=str(case_company) if case_company else None,
                 message=str(_format_value(raw_case.get("message") or "", context)),
                 history=formatted_history,
+                pending_action=str(raw_case.get("pending_action") or "").strip() or None,
                 expected_intent=str(_format_value(raw_case.get("expected_intent"), context))
                 if raw_case.get("expected_intent") is not None
                 else None,
@@ -220,6 +222,8 @@ def _build_session(company_id: str, case: EvalCase) -> Any:
     for item in case.history:
         role = MessageRole.ASSISTANT if item["role"] == "assistant" else MessageRole.USER
         session.messages.append(Message(role=role, text=item["text"]))
+    if case.pending_action:
+        session.pending_action = case.pending_action
     return session
 
 

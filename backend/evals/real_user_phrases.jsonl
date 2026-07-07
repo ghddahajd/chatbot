@@ -1,4 +1,6 @@
 {"id":"real_rosh_typo_cleaning","company":"rosh_demo","message":"чистку лциа можно","expected_action":"answer","expected_service_id":"facial_cleansing"}
+{"id":"real_rosh_typo_greeting_fuzzy","company":"rosh_demo","message":"прифет","expected_action":"small_talk"}
+{"id":"real_rosh_typo_price_cleaning","company":"rosh_demo","message":"сколко стоит чиска","expected_action":"answer","expected_marker":"price","expected_service_id":"facial_cleansing"}
 {"id":"real_rosh_typo_laser","company":"rosh_demo","message":"лазерная епиляцыя цена","expected_action":"answer","expected_marker":"price","expected_service_id":"laser_epilation"}
 {"id":"real_rosh_typo_consultation","company":"rosh_demo","message":"консультацыя косметолога скок стоит","expected_action":"answer","expected_marker":"price","expected_service_id":"cosmetologist_consultation"}
 {"id":"real_rosh_short_price_followup","company":"rosh_demo","message":"а по деньгам?","history":[{"role":"user","text":"хочу чистку лица"}],"expected_action":"answer","expected_marker":"price","expected_service_id":"facial_cleansing"}

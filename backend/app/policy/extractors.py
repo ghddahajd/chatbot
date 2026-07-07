@@ -15,6 +15,41 @@ from .constants import (
     PHONE_PATTERN,
 )
 
+try:
+    from rapidfuzz.distance import Levenshtein
+except ImportError:  # pragma: no cover - local dev can run before deps are installed.
+    Levenshtein = None
+
+
+def _distance_at_most_one(left: str, right: str) -> bool:
+    if Levenshtein is not None:
+        return Levenshtein.distance(left, right) <= 1
+
+    if left == right:
+        return True
+    if abs(len(left) - len(right)) > 1:
+        return False
+
+    edits = 0
+    i = 0
+    j = 0
+    while i < len(left) and j < len(right):
+        if left[i] == right[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(left) == len(right):
+            i += 1
+            j += 1
+        elif len(left) > len(right):
+            i += 1
+        else:
+            j += 1
+    return True
+
 
 def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
     tokens = set(normalized_text.split())
@@ -29,6 +64,37 @@ def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
             continue
         if keyword in normalized_text:
             return True
+    return False
+
+
+def fuzzy_contains(normalized_text: str, keywords: set[str], *, min_len: int = 4) -> bool:
+    """Узкий fuzzy-match для UX-слов, не для safety/medical."""
+
+    tokens = [token for token in normalized_text.split() if token]
+    for keyword in keywords:
+        if " " in keyword:
+            if keyword in normalized_text:
+                return True
+            keyword_tokens = [token for token in keyword.split() if token]
+            if not keyword_tokens:
+                continue
+            for index in range(0, len(tokens) - len(keyword_tokens) + 1):
+                window = tokens[index : index + len(keyword_tokens)]
+                if all(
+                    len(token) >= min_len
+                    and len(keyword_token) >= min_len
+                    and _distance_at_most_one(token, keyword_token)
+                    for token, keyword_token in zip(window, keyword_tokens)
+                ):
+                    return True
+            continue
+        if len(keyword) < min_len:
+            if keyword in normalized_text:
+                return True
+            continue
+        for token in tokens:
+            if len(token) >= min_len and _distance_at_most_one(token, keyword):
+                return True
     return False
 
 

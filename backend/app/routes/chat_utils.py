@@ -22,7 +22,13 @@ from ..policy.constants import (
     EXPLANATION_KEYWORDS,
     PRICE_KEYWORDS,
 )
-from ..policy.extractors import contains_keyword, extract_phone, last_service_from_history, mentions_company_city
+from ..policy.extractors import (
+    contains_keyword,
+    extract_phone,
+    fuzzy_contains,
+    last_service_from_history,
+    mentions_company_city,
+)
 from ..policy.restricted import (
     get_restricted_categories,
     has_medical_restricted_category,
@@ -224,7 +230,7 @@ def _contextual_service_classification(
         return local_result
 
     normalized_message = normalize_text(message)
-    if contains_keyword(normalized_message, PRICE_KEYWORDS) or normalized_message in {"а сколько", "сколько", "почем", "почём"}:
+    if fuzzy_contains(normalized_message, PRICE_KEYWORDS) or normalized_message in {"а сколько", "сколько", "почем", "почём"}:
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.9}
     if contains_keyword(normalized_message, DURATION_KEYWORDS) or contains_keyword(
         normalized_message,

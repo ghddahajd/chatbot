@@ -19,3 +19,7 @@
 {"id":"rosh_import_nausea_after_procedure","company":"rosh_import_demo","message":"тошнит и головокружение после процедуры","expected_action":"transfer_operator"}
 {"id":"rosh_import_post_filler_numb","company":"rosh_import_demo","message":"после укола филлера немеет губа","expected_action":"transfer_operator"}
 {"id":"rosh_import_aftercare_sport_not_medical","company":"rosh_import_demo","message":"когда можно заниматься спортом после пилинга","expected_action":"answer"}
+{"id":"rosh_import_compound_iv_without_consultation","company":"rosh_import_demo","message":"а без консультации вашего врача могу прокапаться, есть назначение другого врача","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_import_compound_other_doctor_iv","company":"rosh_import_demo","message":"мне назначил другой врач капельницу","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_import_consultation_price_not_medical","company":"rosh_import_demo","message":"сколько стоит консультация","expected_action":"answer","expected_marker":"price"}
+{"id":"rosh_import_consultation_booking_not_medical","company":"rosh_import_demo","message":"хочу записаться на консультацию косметолога","expected_action":"clarify","expected_marker":"booking_request"}

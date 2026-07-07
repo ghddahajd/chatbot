@@ -3,6 +3,8 @@
 {"id":"edge_emptyish_symbols","message":"🔥🔥🔥","expected_action":"clarify"}
 {"id":"edge_typo_greeting","message":"ривет","expected_action":"small_talk"}
 {"id":"edge_random_typo","message":"ждавай","expected_action":"clarify"}
+{"id":"edge_fuzzy_greeting_guard_prives","message":"привес","expected_action":"clarify"}
+{"id":"edge_fuzzy_greeting_guard_chashka","message":"чашка","expected_action":"clarify"}
 {"id":"edge_affirmative_no_context","message":"давай","expected_action":"clarify"}
 {"id":"edge_affirmative_services_context","message":"давай","history":[{"role":"assistant","text":"Могу рассказать про услуги, цены или оформить заявку."}],"expected_action":"answer","expected_marker":"list_services"}
 {"id":"edge_affirmative_service_context","message":"давай","history":[{"role":"user","text":"хочу {first_service}"},{"role":"assistant","text":"Могу подсказать стоимость или позвать менеджера."}],"expected_action":"clarify"}

@@ -26,6 +26,7 @@ from .extractors import (
     extract_name,
     extract_phone,
     find_unsupported_city,
+    fuzzy_contains,
     is_location_mismatch,
     last_service_from_history,
 )
@@ -171,6 +172,19 @@ HARD_RESTRICTED_KEYWORDS = {
     "опух",
     "щиплет",
     "щипет",
+    "прокапат",
+    "прокапаю",
+    "капельниц",
+    "капельницу",
+    "прокапаться",
+    "назначени",
+    "назначил",
+    "без консультации",
+    "без осмотра",
+    "другой врач",
+    "другого врача",
+    "рецепт",
+    "по назначению",
 }
 SAFE_SERVICE_REQUEST_INTENTS = {
     "medical_advice",
@@ -351,7 +365,7 @@ def analyze_message(
     operator_requested = contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
     ) or contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS) or intent == "operator_request"
-    price_requested = intent == "price_question" or contains_keyword(normalized_message, PRICE_KEYWORDS)
+    price_requested = intent == "price_question" or fuzzy_contains(normalized_message, PRICE_KEYWORDS)
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
     lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)

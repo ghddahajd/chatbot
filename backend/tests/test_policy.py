@@ -61,6 +61,36 @@ def test_explicit_medical_profile_restricted(policy_session, knowledge_base) -> 
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_medical_compound_beats_consultation_service(policy_session, resolver, managed_env) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    for message in [
+        "а без консультации вашего врача могу прокапаться, есть назначение другого врача",
+        "мне назначил другой врач капельницу",
+        "можно без осмотра врача",
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.TRANSFER_OPERATOR
+        assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_consultation_service_does_not_false_escalate(policy_session, resolver, managed_env) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    for message in [
+        "сколько стоит консультация",
+        "хочу записаться на консультацию косметолога",
+        "во сколько консультации",
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.reason != PolicyReason.REGULATED_ADVICE
+        assert result.action != PolicyAction.TRANSFER_OPERATOR
+
+
 def test_generic_profile_does_not_auto_block_medical_phrase(resolver, managed_env) -> None:
     from app.models import Session
 
@@ -157,6 +187,27 @@ def test_small_talk_greeting(policy_session, knowledge_base) -> None:
 
     assert result.action == PolicyAction.SMALL_TALK
     assert result.reason == PolicyReason.SMALL_TALK
+
+
+def test_fuzzy_greeting_typos_are_small_talk(policy_session, knowledge_base) -> None:
+    for message in ["прифет", "приыват"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.SMALL_TALK
+        assert result.reason == PolicyReason.SMALL_TALK
+
+
+def test_fuzzy_greeting_does_not_match_unrelated_words(knowledge_base) -> None:
+    for message in ["привес", "часть", "чашка", "стрижку делаете?"]:
+        classification = _classification(message, knowledge_base)
+        assert classification["intent"] != "small_talk"
+
+
+def test_fuzzy_price_and_short_service_typo(policy_session, knowledge_base) -> None:
+    result = _analyze("сколко стоит чиска", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.service_id == "facial_cleansing"
 
 
 def test_off_topic_bicycle(policy_session, knowledge_base) -> None:

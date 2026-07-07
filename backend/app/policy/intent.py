@@ -21,11 +21,12 @@ from .constants import (
     PROMPT_INJECTION_KEYWORDS,
     SERVICE_LIST_FAST_MESSAGES,
     SERVICE_LIST_KEYWORDS,
+    SMALL_TALK_FUZZY_EXCLUDE,
     SMALL_TALK_KEYWORDS,
     UNKNOWN_SERVICE_KEYWORDS,
     VISIT_KEYWORDS,
 )
-from .extractors import contains_keyword, is_location_mismatch, mentions_company_city
+from .extractors import _distance_at_most_one, contains_keyword, fuzzy_contains, is_location_mismatch, mentions_company_city
 from .restricted import is_restricted_question
 
 
@@ -43,7 +44,12 @@ def _service_token_match(term_token: str, query_token: str, *, allow_fuzzy: bool
     if not allow_fuzzy:
         return False
     if len(term_token) < 6 or len(query_token) < 6:
-        return False
+        return (
+            len(term_token) >= 5
+            and len(query_token) >= 5
+            and term_token[0] == query_token[0]
+            and _distance_at_most_one(term_token, query_token)
+        )
     first_letters = {term_token[0], query_token[0]}
     if term_token[0] != query_token[0] and first_letters != {"е", "э"}:
         return False
@@ -134,7 +140,7 @@ def classify_and_extract(
 
     if (
         contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS)
-        and not contains_keyword(normalized_message, PRICE_KEYWORDS)
+        and not fuzzy_contains(normalized_message, PRICE_KEYWORDS)
         and not contains_keyword(normalized_message, DURATION_KEYWORDS)
     ):
         return {"intent": "faq_question", "service_id": service_id, "confidence": 0.84}
@@ -152,10 +158,16 @@ def classify_and_extract(
         return {"intent": "contact_link", "service_id": None, "confidence": 0.88}
     if contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS):
         return {"intent": "lead_request", "service_id": service_id, "confidence": 0.88}
-    if contains_keyword(normalized_message, PRICE_KEYWORDS):
+    if fuzzy_contains(normalized_message, PRICE_KEYWORDS):
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, BOOKING_KEYWORDS):
         return {"intent": "booking_request", "service_id": service_id, "confidence": 0.88}
+    if (
+        service_id is None
+        and "делаете" in normalized_message.split()
+        and not normalized_message.startswith(("что ", "чем "))
+    ):
+        return {"intent": "unknown_service", "service_id": None, "confidence": 0.82}
     is_restricted, _category = is_restricted_question(message, domain_profile)
     if is_restricted:
         return {"intent": "medical_advice", "service_id": service_id, "confidence": 0.86}
@@ -163,6 +175,10 @@ def classify_and_extract(
         return {"intent": "cosmetic_concern", "service_id": service_id, "confidence": 0.82}
     if service_id:
         return {"intent": "service_mention", "service_id": service_id, "confidence": 0.78}
-    if contains_keyword(normalized_message, SMALL_TALK_KEYWORDS):
+    if (
+        len(normalized_message.split()) <= 2
+        and normalized_message not in SMALL_TALK_FUZZY_EXCLUDE
+        and fuzzy_contains(normalized_message, SMALL_TALK_KEYWORDS)
+    ):
         return {"intent": "small_talk", "service_id": None, "confidence": 0.76}
     return {"intent": "service_mention", "service_id": None, "confidence": 0.0}

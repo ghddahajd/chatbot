@@ -23,3 +23,9 @@
 {"id":"rosh_import_compound_other_doctor_iv","company":"rosh_import_demo","message":"мне назначил другой врач капельницу","expected_action":"transfer_operator","expected_marker":"medical"}
 {"id":"rosh_import_consultation_price_not_medical","company":"rosh_import_demo","message":"сколько стоит консультация","expected_action":"answer","expected_marker":"price"}
 {"id":"rosh_import_consultation_booking_not_medical","company":"rosh_import_demo","message":"хочу записаться на консультацию косметолога","expected_action":"clarify","expected_marker":"booking_request"}
+{"id":"rosh_import_clinic_location","company":"rosh_import_demo","message":"где вы находитесь?","expected_action":"answer"}
+{"id":"rosh_import_clinic_doctor_deferred","company":"rosh_import_demo","message":"кто у вас гинеколог?","expected_action":"clarify"}
+{"id":"rosh_import_clinic_schedule_deferred","company":"rosh_import_demo","message":"какое расписание у молотиловой","expected_action":"clarify"}
+{"id":"rosh_import_clinic_oms_no","company":"rosh_import_demo","message":"можно к вам попасть по ОМС?","expected_action":"clarify"}
+{"id":"rosh_import_clinic_ambulance_no","company":"rosh_import_demo","message":"а на скорой меня к вам привезут?","expected_action":"clarify"}
+{"id":"rosh_import_clinic_products_no","company":"rosh_import_demo","message":"продается ли у вас косметика","expected_action":"clarify"}

@@ -47,6 +47,19 @@ def _write_rag_chunks(path: Path) -> None:
     )
 
 
+def _copy_rosh_import_kb(resolver, managed_env, *, config_append: str = ""):
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    target_dir = managed_env["clients_dir"] / "rosh_import_demo"
+    shutil.copytree(source_dir, target_dir)
+    if config_append:
+        config_path = target_dir / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").rstrip() + "\n" + config_append.strip() + "\n",
+            encoding="utf-8",
+        )
+    return resolver.get("rosh_import_demo", fallback=False)
+
+
 def test_medical_question_blocked(policy_session, knowledge_base) -> None:
     result = _analyze("что попить от прыщей?", policy_session, knowledge_base)
 
@@ -62,14 +75,16 @@ def test_explicit_medical_profile_restricted(policy_session, knowledge_base) -> 
 
 
 def test_medical_compound_beats_consultation_service(policy_session, resolver, managed_env) -> None:
-    source_dir = Path("backend/data/clients/rosh_import_demo")
-    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
-    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
     for message in [
         "а без консультации вашего врача могу прокапаться, есть назначение другого врача",
         "мне назначил другой врач капельницу",
         "можно без осмотра врача",
+        "можно у вас удалить родинку",
+        "на гистологию отправляете?",
+        "можно ли сделать у вас аборт",
+        "что значит кокковые формы бактерий во влагалище",
     ]:
         result = _analyze(message, policy_session, knowledge_base)
         assert result.action == PolicyAction.TRANSFER_OPERATOR
@@ -77,9 +92,7 @@ def test_medical_compound_beats_consultation_service(policy_session, resolver, m
 
 
 def test_consultation_service_does_not_false_escalate(policy_session, resolver, managed_env) -> None:
-    source_dir = Path("backend/data/clients/rosh_import_demo")
-    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
-    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
     for message in [
         "сколько стоит консультация",
@@ -89,6 +102,91 @@ def test_consultation_service_does_not_false_escalate(policy_session, resolver, 
         result = _analyze(message, policy_session, knowledge_base)
         assert result.reason != PolicyReason.REGULATED_ADVICE
         assert result.action != PolicyAction.TRANSFER_OPERATOR
+
+
+def test_clinic_location_answers_without_offtopic(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("где вы находитесь?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OK
+    assert result.safe_context["force_direct_answer"] is True
+    assert "Часы работы" in result.safe_context["message_to_user"]
+    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+
+
+def test_clinic_doctor_info_answers_from_config(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(
+        resolver,
+        managed_env,
+        config_append="""
+clinic_info:
+  doctors:
+    - {name: "Иванова Анна Петровна", specialty: "дерматолог"}
+    - {name: "Петрова Мария Ивановна", specialty: "гинеколог"}
+  facts:
+    oms: false
+    ambulance_brings: false
+    sells_products: false
+    discloses_doctor_schedule: false
+""",
+    )
+
+    result = _analyze("кто у вас дерматолог?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Иванова Анна Петровна" in result.safe_context["message_to_user"]
+    assert "Петрова Мария Ивановна" not in result.safe_context["message_to_user"]
+
+
+def test_clinic_doctor_info_defers_without_data(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("а как зовут гинеколога", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+
+
+def test_clinic_doctor_schedule_defers_without_slots(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("какое расписание у молотиловой", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert "Центр работает" in result.safe_context["message_to_user"]
+    assert "расписание конкретного врача уточнит менеджер" in result.safe_context["message_to_user"]
+
+
+def test_clinic_facts_answer_from_config(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    cases = [
+        ("можно к вам попасть по ОМС?", "По ОМС приём не ведём"),
+        ("а на скорой меня к вам привезут?", "не в частную клинику"),
+        ("продается ли у вас косметика", "Продаём только услуги"),
+    ]
+    for message, expected_text in cases:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.CLARIFY
+        assert expected_text in result.safe_context["message_to_user"]
+
+
+def test_clinic_info_does_not_intercept_core_flows(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    price_result = _analyze("сколько стоит консультация", policy_session, knowledge_base)
+    booking_result = _analyze("хочу записаться на консультацию косметолога", policy_session, knowledge_base)
+    city_result = _analyze("я не из Москвы", policy_session, knowledge_base)
+    medical_result = _analyze("у меня воспаление что делать", policy_session, knowledge_base)
+
+    assert price_result.action == PolicyAction.ANSWER
+    assert price_result.reason == PolicyReason.PRICE_QUESTION
+    assert booking_result.reason == PolicyReason.BOOKING_REQUEST
+    assert city_result.reason == PolicyReason.LOCATION_MISMATCH
+    assert medical_result.action == PolicyAction.TRANSFER_OPERATOR
+    assert medical_result.reason == PolicyReason.REGULATED_ADVICE
 
 
 def test_generic_profile_does_not_auto_block_medical_phrase(resolver, managed_env) -> None:
@@ -621,12 +719,9 @@ def test_fact_guard_stays_before_contact_link(
     )
 
     assert result.action == PolicyAction.CLARIFY
-    assert result.reason == PolicyReason.UNKNOWN_SERVICE
-    assert "fact_guard" in result.safe_context
-    assert result.safe_context["fact_guard"]["matched_blocked"] == ["ОМС", "омс"]
+    assert result.reason == PolicyReason.OK
     assert result.safe_context["message_to_user"] == (
-        "По полису ОМС приём не ведём. "
-        "Могу подсказать по платным услугам или передать вопрос менеджеру."
+        "По ОМС приём не ведём, услуги доступны платно. Детали подскажет менеджер."
     )
 
 

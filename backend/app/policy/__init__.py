@@ -10,13 +10,20 @@ from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Se
 from ..services.rag_search import retrieve_article_context
 from .constants import (
     BOOKING_KEYWORDS,
+    AMBULANCE_ACTION_KEYWORDS,
+    AMBULANCE_SUBJECT_KEYWORDS,
+    CLINIC_LOCATION_KEYWORDS,
+    DOCTOR_INFO_KEYWORDS,
+    DOCTOR_SCHEDULE_KEYWORDS,
     DURATION_KEYWORDS,
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
     NEGATIVE_MESSAGES,
+    OMS_FACT_KEYWORDS,
     OPERATOR_REQUEST_KEYWORDS,
     PRICE_KEYWORDS,
+    PRODUCTS_FACT_KEYWORDS,
     TELEGRAM_KEYWORDS,
     VISIT_KEYWORDS,
     WEBSITE_KEYWORDS,
@@ -47,6 +54,16 @@ logger = logging.getLogger(__name__)
 def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
     value = getattr(knowledge_base, "phrasebook", {}).get(key)
     return str(value).strip() if value else ""
+
+
+def _format_phrase(knowledge_base: KnowledgeBase, key: str, **values: object) -> str:
+    phrase = _phrase(knowledge_base, key)
+    if not phrase:
+        return ""
+    try:
+        return phrase.format(**values)
+    except (KeyError, ValueError):
+        return phrase
 
 
 def _service_link_action(service) -> dict[str, str] | None:
@@ -117,6 +134,175 @@ def _service_explanation_message(service) -> str:
     return f"{service.name} — {service.short_description} Детали уточнит менеджер."
 
 
+def _clinic_info(knowledge_base: KnowledgeBase) -> dict[str, object]:
+    config = getattr(knowledge_base, "config_payload", {})
+    clinic_info = config.get("clinic_info") if isinstance(config, dict) else None
+    return clinic_info if isinstance(clinic_info, dict) else {}
+
+
+def _clinic_facts(knowledge_base: KnowledgeBase) -> dict[str, object]:
+    facts = _clinic_info(knowledge_base).get("facts")
+    return facts if isinstance(facts, dict) else {}
+
+
+def _clinic_doctors(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
+    raw_doctors = _clinic_info(knowledge_base).get("doctors")
+    if not isinstance(raw_doctors, list):
+        return []
+
+    doctors: list[dict[str, str]] = []
+    for item in raw_doctors:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        specialty = str(item.get("specialty") or "").strip()
+        if name:
+            doctors.append({"name": name, "specialty": specialty})
+    return doctors
+
+
+def _doctor_matches(message: str, doctor: dict[str, str]) -> bool:
+    normalized_message = normalize_text(message)
+    name = normalize_text(doctor.get("name", ""))
+    specialty = normalize_text(doctor.get("specialty", ""))
+    if name and any(part and part in normalized_message for part in name.split()):
+        return True
+    return bool(specialty and specialty in normalized_message)
+
+
+def _format_doctors(doctors: list[dict[str, str]]) -> str:
+    values = []
+    for doctor in doctors:
+        specialty = doctor.get("specialty", "")
+        values.append(f"{doctor['name']} — {specialty}" if specialty else doctor["name"])
+    return "; ".join(values)
+
+
+def _looks_like_placeholder_address(address: str) -> bool:
+    normalized = normalize_text(address)
+    return not normalized or "уточняется" in normalized or "уточнит" in normalized
+
+
+def _clinic_info_result(
+    message: str,
+    normalized_message: str,
+    knowledge_base: KnowledgeBase,
+) -> PolicyResult | None:
+    company = knowledge_base.company
+    doctors = _clinic_doctors(knowledge_base)
+    facts = _clinic_facts(knowledge_base)
+    base_quick_actions = ["Оставить телефон", "Позвать менеджера"]
+
+    if contains_keyword(normalized_message, CLINIC_LOCATION_KEYWORDS):
+        address = str(company.address or "").strip()
+        if _looks_like_placeholder_address(address):
+            message_to_user = _format_phrase(
+                knowledge_base,
+                "clinic_location_deferred",
+                company_name=company.company_name,
+                city=company.city,
+                working_hours=company.working_hours,
+            )
+        else:
+            message_to_user = _format_phrase(
+                knowledge_base,
+                "clinic_location",
+                company_name=company.company_name,
+                city=company.city,
+                address=address,
+                working_hours=company.working_hours,
+            )
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=0.9,
+            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            quick_actions=base_quick_actions,
+        )
+
+    if contains_keyword(normalized_message, DOCTOR_SCHEDULE_KEYWORDS):
+        matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
+        doctor_note = f" По врачу: {_format_doctors(matched_doctors)}." if matched_doctors else ""
+        message_to_user = _format_phrase(
+            knowledge_base,
+            "doctor_schedule_deferred",
+            working_hours=company.working_hours,
+        ) + doctor_note
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=0.88,
+            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            quick_actions=base_quick_actions,
+        )
+
+    if contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS):
+        matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
+        selected_doctors = matched_doctors or doctors
+        if selected_doctors:
+            message_to_user = _format_phrase(
+                knowledge_base,
+                "doctors_from_data",
+                doctors=_format_doctors(selected_doctors[:5]),
+            )
+            action = PolicyAction.ANSWER
+        else:
+            message_to_user = _phrase(knowledge_base, "doctors_deferred")
+            action = PolicyAction.CLARIFY
+        return PolicyResult(
+            action=action,
+            reason=PolicyReason.OK,
+            confidence=0.88,
+            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            quick_actions=base_quick_actions,
+        )
+
+    fact_key = ""
+    fact_value = None
+    if contains_keyword(normalized_message, OMS_FACT_KEYWORDS):
+        fact_value = facts.get("oms")
+        fact_key = "fact_oms_yes" if fact_value is True else "fact_oms_no" if fact_value is False else ""
+    elif contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS) and contains_keyword(
+        normalized_message, AMBULANCE_ACTION_KEYWORDS
+    ):
+        fact_value = facts.get("ambulance_brings")
+        fact_key = (
+            "fact_ambulance_yes"
+            if fact_value is True
+            else "fact_ambulance_no"
+            if fact_value is False
+            else ""
+        )
+    elif contains_keyword(normalized_message, PRODUCTS_FACT_KEYWORDS):
+        fact_value = facts.get("sells_products")
+        fact_key = (
+            "fact_products_yes"
+            if fact_value is True
+            else "fact_products_no"
+            if fact_value is False
+            else ""
+        )
+
+    if fact_key or fact_value is None and (
+        contains_keyword(normalized_message, OMS_FACT_KEYWORDS)
+        or (
+            contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS)
+            and contains_keyword(normalized_message, AMBULANCE_ACTION_KEYWORDS)
+        )
+        or contains_keyword(normalized_message, PRODUCTS_FACT_KEYWORDS)
+    ):
+        message_to_user = _phrase(knowledge_base, fact_key) if fact_key else _phrase(knowledge_base, "clinic_fact_deferred")
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=0.9,
+            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            quick_actions=base_quick_actions,
+        )
+
+    return None
+
+
 FACT_VALUE_QUESTION_KEYWORDS = {
     "какие препараты",
     "какой препарат",
@@ -136,11 +322,18 @@ HARD_RESTRICTED_KEYWORDS = {
     "выпишите",
     "таблет",
     "мазь",
+    "крем",
     "антибиотик",
     "воспаление",
+    "воспален",
     "кровит",
     "кровоточ",
     "родинка",
+    "родинк",
+    "гистолог",
+    "аборт",
+    "кокков",
+    "бактер",
     "опасно",
     "аллергия",
     "зуд",
@@ -500,6 +693,10 @@ def analyze_message(
                 }
             ],
         )
+
+    clinic_info_result = _clinic_info_result(message, normalized_message, knowledge_base)
+    if clinic_info_result is not None:
+        return clinic_info_result
 
     if intent == "small_talk":
         return PolicyResult(

@@ -38,6 +38,13 @@ domain_profile:
     complaint: "operator"
     custom_price: "operator"
     booking: "lead_then_operator"
+clinic_info:
+  doctors: []
+  facts:
+    oms: null
+    ambulance_brings: null
+    sells_products: null
+    discloses_doctor_schedule: false
 phrasebook:
   company_noun: "компания"
   service_word: "услуга"

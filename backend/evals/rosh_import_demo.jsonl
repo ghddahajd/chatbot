@@ -7,6 +7,8 @@
 {"id":"rosh_import_botox_not_in_kb","company":"rosh_import_demo","message":"есть ботокс?","expected_action":"clarify","expected_service_id":"botulinoterapiya_9d5734af"}
 {"id":"rosh_import_dysport_not_in_kb","company":"rosh_import_demo","message":"диспорт есть?","expected_action":"clarify","expected_service_id":"botulinoterapiya_9d5734af"}
 {"id":"rosh_import_cleaning_price","company":"rosh_import_demo","message":"сколько стоит чистка лица","expected_action":"answer","expected_marker":"price","expected_service_id":"chistki_e744e513"}
+{"id":"rosh_import_apparatnaya_cleaning_price","company":"rosh_import_demo","message":"аппаратная чистка лица сколько стоит","expected_action":"answer","expected_marker":"price","expected_service_id":"chistki_e744e513"}
+{"id":"rosh_import_apparatnaya_cleaning_mention","company":"rosh_import_demo","message":"аппаратная чистка","expected_action":"answer","expected_service_id":"chistki_e744e513"}
 {"id":"rosh_import_bbl_details","company":"rosh_import_demo","message":"расскажи про фотолечение bbl","expected_action":"answer","expected_service_id":"fotolechenie_bbl_85e80491"}
 {"id":"rosh_import_unknown_hammam","company":"rosh_import_demo","message":"хочу хаммам","expected_action":"clarify"}
 {"id":"rosh_import_offtopic_console","company":"rosh_import_demo","message":"ps5 или xbox","expected_action":"off_topic"}
@@ -18,6 +20,8 @@
 {"id":"rosh_import_post_peeling_pus","company":"rosh_import_demo","message":"после чистки лица гной, что делать","expected_action":"transfer_operator"}
 {"id":"rosh_import_nausea_after_procedure","company":"rosh_import_demo","message":"тошнит и головокружение после процедуры","expected_action":"transfer_operator"}
 {"id":"rosh_import_post_filler_numb","company":"rosh_import_demo","message":"после укола филлера немеет губа","expected_action":"transfer_operator"}
+{"id":"rosh_import_mole_consult_referral","company":"rosh_import_demo","message":"можно у вас удалить родинку","expected_action":"transfer_operator","expected_marker":"medical"}
+{"id":"rosh_import_sensitive_abortion_escalate","company":"rosh_import_demo","message":"можно ли сделать у вас аборт","expected_action":"transfer_operator","expected_marker":"medical"}
 {"id":"rosh_import_aftercare_sport_not_medical","company":"rosh_import_demo","message":"когда можно заниматься спортом после пилинга","expected_action":"answer"}
 {"id":"rosh_import_compound_iv_without_consultation","company":"rosh_import_demo","message":"а без консультации вашего врача могу прокапаться, есть назначение другого врача","expected_action":"transfer_operator","expected_marker":"medical"}
 {"id":"rosh_import_compound_other_doctor_iv","company":"rosh_import_demo","message":"мне назначил другой врач капельницу","expected_action":"transfer_operator","expected_marker":"medical"}

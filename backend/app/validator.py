@@ -34,7 +34,9 @@ UNSUPPORTED_DETAIL_PATTERNS = (
 UNSUPPORTED_EQUIPMENT_PATTERNS = (
     re.compile(
         r"(?:nd[\s:-]?yag|alexandrite|александритов|диодны[йе]|рубиновы[йе]|"
-        r"ipl-?лазер|неодимов|эрбиев|palo(?:mar)?)",
+        r"ipl-?лазер|неодимов|эрбиев|palo(?:mar)?|vectus|sciton|joule|"
+        r"forever\s+clear|candela|gentlelase|m22|bbl|futura|exilis|"
+        r"onetec|surgitron)",
         re.IGNORECASE,
     ),
 )
@@ -48,7 +50,7 @@ MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS = (
     re.compile(
         r"(?:диагноз|лечени|лечить|препарат|таблет|мазь|антибиотик|назнач|"
         r"гарант|безопасн|побочн|противопоказ|симптом|аллерг|беремен|"
-        r"кров|родин|осложнен|осложнён|нормально|опасн|покраснен|от[её]к)",
+        r"кров|родин|рубц|осложнен|осложнён|нормально|опасн|покраснен|от[её]к)",
         re.IGNORECASE,
     ),
 )
@@ -126,9 +128,8 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         safe_words = _significant_words(snippets_text)
         if safe_words and not (_significant_words(answer) & safe_words):
             return False
-        for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS:
-            if pattern.search(answer) and not pattern.search(snippets_text):
-                return False
+        if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
+            return False
 
     return True
 

@@ -13,12 +13,15 @@ from .constants import (
     AMBULANCE_ACTION_KEYWORDS,
     AMBULANCE_SUBJECT_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
+    DEFAULT_SENSITIVE_TOPIC_KEYWORDS,
     DOCTOR_INFO_KEYWORDS,
     DOCTOR_SCHEDULE_KEYWORDS,
     DURATION_KEYWORDS,
+    EQUIPMENT_QUESTION_KEYWORDS,
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
+    MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
     OMS_FACT_KEYWORDS,
     OPERATOR_REQUEST_KEYWORDS,
@@ -159,6 +162,253 @@ def _clinic_doctors(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
         if name:
             doctors.append({"name": name, "specialty": specialty})
     return doctors
+
+
+def _clinic_equipment(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
+    raw_equipment = _clinic_info(knowledge_base).get("equipment")
+    if not isinstance(raw_equipment, list):
+        return []
+
+    equipment: list[dict[str, object]] = []
+    for item in raw_equipment:
+        if not isinstance(item, dict):
+            continue
+        service_id = str(item.get("service_id") or "").strip()
+        aliases = [
+            str(alias).strip()
+            for alias in item.get("question_aliases", [])
+            if str(alias).strip()
+        ]
+        equipment.append(
+            {
+                "service_id": service_id or None,
+                "question_aliases": aliases,
+                "equipment_name": str(item.get("equipment_name") or "").strip() or None,
+                "public_answer": str(item.get("public_answer") or "").strip(),
+                "disclose": bool(item.get("disclose") is True),
+            }
+        )
+    return equipment
+
+
+def _clinic_sensitive_topics(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
+    raw_topics = _clinic_info(knowledge_base).get("sensitive_topics")
+    if not isinstance(raw_topics, list):
+        return []
+
+    topics: list[dict[str, object]] = []
+    for item in raw_topics:
+        if not isinstance(item, dict):
+            continue
+        keywords = [
+            normalize_text(str(keyword))
+            for keyword in item.get("keywords", [])
+            if normalize_text(str(keyword))
+        ]
+        if not keywords:
+            continue
+        handling = str(item.get("handling") or "escalate").strip().lower()
+        if handling not in {"escalate", "decline"}:
+            handling = "escalate"
+        topics.append(
+            {
+                "keywords": keywords,
+                "handling": handling,
+                "text": str(item.get("text") or "").strip(),
+                "offer_lead": item.get("offer_lead") is not False,
+            }
+        )
+    return topics
+
+
+def _sensitive_topic_match(normalized_message: str, knowledge_base: KnowledgeBase) -> dict[str, object] | None:
+    for topic in _clinic_sensitive_topics(knowledge_base):
+        keywords = topic.get("keywords") if isinstance(topic.get("keywords"), list) else []
+        if any(keyword in normalized_message for keyword in keywords):
+            return topic
+
+    if contains_keyword(normalized_message, DEFAULT_SENSITIVE_TOPIC_KEYWORDS):
+        return {
+            "keywords": [],
+            "handling": "escalate",
+            "text": "",
+            "offer_lead": True,
+        }
+    return None
+
+
+def _consultation_service_for_referral(normalized_message: str, knowledge_base: KnowledgeBase):
+    candidates = [
+        service
+        for service in knowledge_base.services
+        if "консультац" in normalize_text(
+            " ".join([service.name, service.category, *service.synonyms])
+        )
+    ]
+    if not candidates:
+        return None
+
+    if contains_keyword(normalized_message, {"родинк", "гистолог", "новообраз", "дерматоскоп"}):
+        for service in candidates:
+            service_text = normalize_text(" ".join([service.name, service.category, *service.synonyms]))
+            if any(keyword in service_text for keyword in ("дермат", "косметолог", "врач")):
+                return service
+    return candidates[0]
+
+
+def _medical_referral_quick_actions(consultation_service, *, offer_lead: bool = True) -> list[object]:
+    actions: list[object] = []
+    if consultation_service is not None:
+        actions.append(
+            {
+                "label": consultation_service.name,
+                "type": "message",
+                "value": consultation_service.name,
+            }
+        )
+    if offer_lead:
+        actions.append("Оставить телефон")
+    actions.append("Позвать менеджера")
+    return actions
+
+
+def _medical_referral_result(
+    normalized_message: str,
+    knowledge_base: KnowledgeBase,
+    service,
+    restricted_category: str | None,
+) -> PolicyResult:
+    consultation_service = None
+    if contains_keyword(normalized_message, MEDICAL_REFERRAL_KEYWORDS):
+        consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
+
+    message_to_user = _phrase(knowledge_base, "medical_referral") or knowledge_base.company.safety_disclaimer
+    return PolicyResult(
+        action=PolicyAction.TRANSFER_OPERATOR,
+        reason=PolicyReason.REGULATED_ADVICE,
+        service_id=service.id if service else None,
+        confidence=0.98,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": message_to_user,
+            "handoff_message": message_to_user,
+            "restricted_category": restricted_category,
+            "referral_service": consultation_service.model_dump() if consultation_service else None,
+        },
+        quick_actions=_medical_referral_quick_actions(consultation_service),
+    )
+
+
+def _sensitive_topic_result(
+    topic: dict[str, object],
+    normalized_message: str,
+    knowledge_base: KnowledgeBase,
+    service,
+    restricted_category: str | None,
+) -> PolicyResult:
+    handling = str(topic.get("handling") or "escalate")
+    configured_text = str(topic.get("text") or "").strip()
+    offer_lead = topic.get("offer_lead") is not False
+    consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
+
+    if handling == "decline":
+        message_to_user = configured_text or _phrase(knowledge_base, "sensitive_decline")
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.REGULATED_ADVICE,
+            service_id=service.id if service else None,
+            confidence=0.98,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "restricted_category": restricted_category,
+                "sensitive_handling": "decline",
+            },
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
+        )
+
+    message_to_user = configured_text or _phrase(knowledge_base, "sensitive_escalate")
+    return PolicyResult(
+        action=PolicyAction.TRANSFER_OPERATOR,
+        reason=PolicyReason.REGULATED_ADVICE,
+        service_id=service.id if service else None,
+        confidence=0.98,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": message_to_user,
+            "handoff_message": message_to_user,
+            "restricted_category": restricted_category,
+            "sensitive_handling": "escalate",
+            "referral_service": consultation_service.model_dump() if consultation_service else None,
+        },
+        quick_actions=_medical_referral_quick_actions(consultation_service, offer_lead=offer_lead),
+    )
+
+
+def _equipment_matches(message: str, service, equipment: dict[str, object]) -> bool:
+    service_id = equipment.get("service_id")
+    if service is not None and service_id and service.id == service_id:
+        return True
+
+    normalized_message = normalize_text(message)
+    aliases = equipment.get("question_aliases")
+    if isinstance(aliases, list):
+        for alias in aliases:
+            normalized_alias = normalize_text(str(alias))
+            if normalized_alias and normalized_alias in normalized_message:
+                return True
+    return False
+
+
+def _equipment_result(
+    message: str,
+    normalized_message: str,
+    knowledge_base: KnowledgeBase,
+    service,
+) -> PolicyResult | None:
+    if not contains_keyword(normalized_message, EQUIPMENT_QUESTION_KEYWORDS):
+        return None
+
+    matched_equipment = None
+    for equipment in _clinic_equipment(knowledge_base):
+        if _equipment_matches(message, service, equipment):
+            matched_equipment = equipment
+            break
+
+    if matched_equipment is not None:
+        service_id = str(matched_equipment.get("service_id") or "") or None
+        equipment_name = str(matched_equipment.get("equipment_name") or "").strip()
+        public_answer = str(matched_equipment.get("public_answer") or "").strip()
+        disclose = matched_equipment.get("disclose") is True
+        if disclose and equipment_name:
+            message_to_user = public_answer or f"Используется аппарат: {equipment_name}."
+            action = PolicyAction.ANSWER
+        else:
+            message_to_user = public_answer or _phrase(knowledge_base, "equipment_deferred")
+            action = PolicyAction.CLARIFY
+        return PolicyResult(
+            action=action,
+            reason=PolicyReason.OK,
+            service_id=service_id,
+            confidence=0.92,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "equipment": matched_equipment,
+            },
+            quick_actions=["Оставить телефон", "Позвать менеджера"],
+        )
+
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.OK,
+        confidence=0.86,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": _phrase(knowledge_base, "equipment_deferred"),
+        },
+        quick_actions=["Оставить телефон", "Позвать менеджера"],
+    )
 
 
 def _doctor_matches(message: str, doctor: dict[str, str]) -> bool:
@@ -571,17 +821,20 @@ def analyze_message(
     city_in_text = city_prepositional(knowledge_base.company.city)
 
     if medical_requested:
-        return PolicyResult(
-            action=PolicyAction.TRANSFER_OPERATOR,
-            reason=PolicyReason.REGULATED_ADVICE,
-            service_id=service.id if service else None,
-            confidence=0.98,
-            safe_context={
-                "message_to_user": knowledge_base.company.safety_disclaimer,
-                "handoff_message": _phrase(knowledge_base, "handoff_message"),
-                "restricted_category": restricted_category,
-            },
-            quick_actions=["Позвать менеджера", "Оставить телефон"],
+        sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
+        if sensitive_topic is not None:
+            return _sensitive_topic_result(
+                sensitive_topic,
+                normalized_message,
+                knowledge_base,
+                service,
+                restricted_category,
+            )
+        return _medical_referral_result(
+            normalized_message,
+            knowledge_base,
+            service,
+            restricted_category,
         )
 
     if session.pending_action == PendingAction.COLLECT_CONTACT.value and contains_keyword(
@@ -837,6 +1090,10 @@ def analyze_message(
                 ]
                 + ["Позвать менеджера"],
             )
+
+    equipment_result = _equipment_result(message, normalized_message, knowledge_base, service)
+    if equipment_result is not None:
+        return equipment_result
 
     if intent == "faq_question" and not price_requested and not duration_requested:
         article_query = f"{service.name} {message}" if service is not None else message

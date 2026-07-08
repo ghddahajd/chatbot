@@ -91,6 +91,58 @@ def test_medical_compound_beats_consultation_service(policy_session, resolver, m
         assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_medical_procedure_refers_to_consultation_without_claims(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("можно у вас удалить родинку", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context["force_direct_answer"] is True
+    assert result.safe_context["handoff_message"] == result.safe_context["message_to_user"]
+    assert "очной консультации" in result.safe_context["message_to_user"]
+    assert "рубц" not in result.safe_context["message_to_user"].lower()
+    assert result.safe_context["referral_service"]["id"] == "konsultacii_b8520924"
+    assert {"label": "Консультации", "type": "message", "value": "Консультации"} in result.quick_actions
+    assert "Оставить телефон" in result.quick_actions
+
+
+def test_sensitive_topic_defaults_to_escalate_not_decline(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("можно ли сделать у вас аборт", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context["sensitive_handling"] == "escalate"
+    assert "деликатная тема" in result.safe_context["message_to_user"].lower()
+    assert "не проводим" not in result.safe_context["message_to_user"].lower()
+    assert "Оставить телефон" in result.quick_actions
+
+
+def test_sensitive_topic_can_decline_from_config(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(
+        resolver,
+        managed_env,
+        config_append="""
+clinic_info:
+  sensitive_topics:
+    - keywords: ["аборт", "прерывание беременности"]
+      handling: decline
+      text: "Такие процедуры в центре не проводятся."
+      offer_lead: false
+""",
+    )
+
+    result = _analyze("можно ли сделать у вас аборт", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context["sensitive_handling"] == "decline"
+    assert result.safe_context["message_to_user"] == "Такие процедуры в центре не проводятся."
+    assert "Оставить телефон" not in result.quick_actions
+
+
 def test_consultation_service_does_not_false_escalate(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
@@ -187,6 +239,78 @@ def test_clinic_info_does_not_intercept_core_flows(policy_session, resolver, man
     assert city_result.reason == PolicyReason.LOCATION_MISMATCH
     assert medical_result.action == PolicyAction.TRANSFER_OPERATOR
     assert medical_result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_equipment_question_defers_from_config_without_rag(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message in [
+        "какой аппарат для эпиляции",
+        "название лазера для эпиляции",
+        "назовите название лазера",
+        "какой аппарат для Skin Tyte",
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.CLARIFY
+        assert result.reason == PolicyReason.OK
+        assert result.safe_context["force_direct_answer"] is True
+        assert "article_context" not in result.safe_context
+        assert "Palomar" not in result.safe_context["message_to_user"]
+        assert "Sciton" not in result.safe_context["message_to_user"]
+
+
+def test_equipment_question_can_disclose_approved_config_value(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(
+        resolver,
+        managed_env,
+        config_append="""
+clinic_info:
+  equipment:
+    - service_id: "lazernaya_epilyaciya_bc614e41"
+      question_aliases: ["лазерная эпиляция", "эпиляция"]
+      equipment_name: "TestLaser Approved"
+      disclose: true
+      public_answer: "Для лазерной эпиляции используется TestLaser Approved."
+  facts:
+    oms: false
+    ambulance_brings: false
+    sells_products: false
+    discloses_doctor_schedule: false
+""",
+    )
+
+    result = _analyze("какой аппарат для эпиляции", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "TestLaser Approved" in result.safe_context["message_to_user"]
+
+
+def test_equipment_route_does_not_intercept_price_or_booking(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    price_result = _analyze("сколько стоит лазерная эпиляция", policy_session, knowledge_base)
+    booking_result = _analyze("записаться на лазерную эпиляцию", policy_session, knowledge_base)
+
+    assert price_result.action == PolicyAction.ANSWER
+    assert price_result.reason == PolicyReason.PRICE_QUESTION
+    assert booking_result.reason == PolicyReason.BOOKING_REQUEST
+
+
+def test_equipment_route_does_not_intercept_apparatnaya_cleaning(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    price_result = _analyze("аппаратная чистка лица сколько стоит", policy_session, knowledge_base)
+    mention_result = _analyze("аппаратная чистка", policy_session, knowledge_base)
+
+    assert price_result.action == PolicyAction.ANSWER
+    assert price_result.reason == PolicyReason.PRICE_QUESTION
+    assert price_result.service_id == "chistki_e744e513"
+    assert mention_result.action == PolicyAction.ANSWER
+    assert mention_result.service_id == "chistki_e744e513"
 
 
 def test_generic_profile_does_not_auto_block_medical_phrase(resolver, managed_env) -> None:

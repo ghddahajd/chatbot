@@ -7,6 +7,7 @@ def test_consultation_validator_blocks_medical_terms_for_medical_profile() -> No
     context = {"domain_profile": {"type": "medical", "restricted_advice": ["medical_treatment"]}}
 
     assert not validate_consultation_response("Это безопасно и не опасно после процедуры.", context)
+    assert not validate_consultation_response("Рубца обычно не будет после удаления.", context)
 
 
 def test_consultation_validator_allows_same_words_for_auto_profile() -> None:
@@ -89,20 +90,23 @@ def test_faq_validator_blocks_ungrounded_equipment_brand() -> None:
     }
 
     assert not validate_response(
-        "Мужская лазерная эпиляция выполняется на эффективных диодных системах Palo.",
+        "Мужская лазерная эпиляция выполняется на эффективных диодных системах Palomar Vectus.",
         context,
     )
 
 
-def test_faq_validator_allows_equipment_brand_grounded_in_source() -> None:
+def test_faq_validator_blocks_equipment_brand_even_when_grounded_in_source() -> None:
     context = {
         "question_type": "faq_question",
         "article_context": [
-            {"title": "Лазерная эпиляция", "snippet": "Используется диодный лазер Palo для всех типов кожи."}
+            {
+                "title": "Лазерная эпиляция",
+                "snippet": "Используется аппарат Sciton Joule и BBL Forever Clear.",
+            }
         ],
     }
 
-    assert validate_response(
-        "Используется диодный лазер Palo для всех типов кожи.",
+    assert not validate_response(
+        "Используется аппарат Sciton Joule и BBL Forever Clear.",
         context,
     )

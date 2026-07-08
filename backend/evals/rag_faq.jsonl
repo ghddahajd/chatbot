@@ -1,5 +1,5 @@
 {"id":"rag_laser_shlifovka_aftercare","company":"rosh_import_demo","message":"что нельзя после лазерной шлифовки?","expected_action":"answer","expected_marker":"faq_question"}
 {"id":"rag_kolposkopiya_flow","company":"rosh_import_demo","message":"как проходит кольпоскопия?","expected_action":"answer","expected_marker":"faq_question"}
 {"id":"rag_skin_after_summer","company":"rosh_import_demo","message":"как ухаживать за кожей после лета?","expected_action":"answer","expected_marker":"faq_question"}
-{"id":"rag_laser_epilation_device","company":"rosh_import_demo","message":"какой лазер используется для эпиляции?","expected_action":"answer","expected_marker":"faq_question"}
+{"id":"rag_laser_epilation_device","company":"rosh_import_demo","message":"какой лазер используется для эпиляции?","expected_action":"clarify"}
 {"id":"rag_offtopic_weather_control","company":"rosh_import_demo","message":"какая погода в москве","expected_action":"off_topic","expected_marker":"off_topic"}

@@ -40,11 +40,18 @@ UNSUPPORTED_EQUIPMENT_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+UNSUPPORTED_EFFICACY_CLAIM_PATTERNS = (
+    re.compile(
+        r"(?:помогает\s+от|лечит|лечить|разрушает\s+бактерии|эффективен\s+(?:при|от)|эффективна\s+(?:при|от))",
+        re.IGNORECASE,
+    ),
+)
 CONSULTATION_FORBIDDEN_PATTERNS = (
     *RAW_CONTEXT_PATTERNS,
     re.compile(r"\d"),
     re.compile(r"(?:₽|руб|рублей)", re.IGNORECASE),
     *UNSUPPORTED_DETAIL_PATTERNS,
+    *UNSUPPORTED_EFFICACY_CLAIM_PATTERNS,
 )
 MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS = (
     re.compile(
@@ -129,6 +136,8 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         if safe_words and not (_significant_words(answer) & safe_words):
             return False
         if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
+            return False
+        if any(pattern.search(answer) for pattern in UNSUPPORTED_EFFICACY_CLAIM_PATTERNS):
             return False
 
     return True

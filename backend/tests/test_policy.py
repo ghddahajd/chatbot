@@ -259,6 +259,74 @@ def test_equipment_question_defers_from_config_without_rag(policy_session, resol
         assert "Sciton" not in result.safe_context["message_to_user"]
 
 
+def test_ambulance_question_uses_clinic_fact_before_medical(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("привезет ли меня скорая помощь в клинику если я ее вызову", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.OK
+    assert "дежурный стационар" in result.safe_context["message_to_user"]
+
+
+def test_unknown_doctor_specialty_uses_clinic_defer_not_offtopic(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("напишите фамилию остеопата", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.OK
+    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+
+
+def test_unknown_medical_product_is_clarify_not_offtopic(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("PDRN из молок лосося", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason != PolicyReason.OFF_TOPIC
+
+
+def test_similar_services_message_deduplicates_names(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("лазерная терапия", policy_session, knowledge_base)
+    message_to_user = str(result.safe_context.get("message_to_user") or "")
+    names = [
+        str(item.get("name") or "")
+        for item in result.safe_context.get("similar", [])
+        if isinstance(item, dict)
+    ]
+
+    assert result.action == PolicyAction.CLARIFY
+    assert len(names) == len(set(names))
+    assert message_to_user.count("Лазерная Терапия Skin Tyte") <= 1
+
+
+def test_efficacy_claim_question_defers_without_rag(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("от чего помогает эксимерный лазер?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context["force_direct_answer"] is True
+    assert "очной консультации" in result.safe_context["message_to_user"]
+    assert "article_context" not in result.safe_context
+
+
+def test_post_lead_short_followup_is_not_offtopic(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    policy_session.lead_requested = True
+
+    result = _analyze("утро", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+    assert "Заявку уже передали" in result.safe_context["message_to_user"]
+
+
 def test_equipment_question_can_disclose_approved_config_value(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(
         resolver,

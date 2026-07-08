@@ -32,4 +32,9 @@
 {"id":"rosh_import_clinic_schedule_deferred","company":"rosh_import_demo","message":"какое расписание у молотиловой","expected_action":"clarify"}
 {"id":"rosh_import_clinic_oms_no","company":"rosh_import_demo","message":"можно к вам попасть по ОМС?","expected_action":"clarify"}
 {"id":"rosh_import_clinic_ambulance_no","company":"rosh_import_demo","message":"а на скорой меня к вам привезут?","expected_action":"clarify"}
+{"id":"rosh_import_clinic_ambulance_called","company":"rosh_import_demo","message":"привезет ли меня скорая помощь в клинику если я ее вызову","expected_action":"clarify"}
 {"id":"rosh_import_clinic_products_no","company":"rosh_import_demo","message":"продается ли у вас косметика","expected_action":"clarify"}
+{"id":"rosh_import_osteopath_surname_defer","company":"rosh_import_demo","message":"напишите фамилию остеопата","expected_action":"clarify"}
+{"id":"rosh_import_pdrn_unknown_defer","company":"rosh_import_demo","message":"PDRN из молок лосося","expected_action":"clarify"}
+{"id":"rosh_import_excimer_efficacy_defer","company":"rosh_import_demo","message":"от чего помогает эксимерный лазер?","expected_action":"clarify"}
+{"id":"rosh_import_lead_followup_morning","company":"rosh_import_demo","history":[{"role":"user","text":"Леонид +7 000 000-00-00 хочу записаться"},{"role":"assistant","text":"Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали."}],"message":"утро","expected_action":"clarify","expected_marker":"contact_provided"}

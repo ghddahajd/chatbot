@@ -18,6 +18,15 @@ def similar_services_result(
     similar_services = knowledge_base.find_similar_services(message)
     if not similar_services:
         return None
+    unique_services: list[Any] = []
+    seen_names: set[str] = set()
+    for service in similar_services:
+        service_name = normalize_text(service.name)
+        if not service_name or service_name in seen_names:
+            continue
+        unique_services.append(service)
+        seen_names.add(service_name)
+    similar_services = unique_services
 
     service_names = ", ".join(service.name for service in similar_services)
     # если совпадение ровно одно — запоминаем услугу как контекст, чтобы follow-up

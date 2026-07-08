@@ -110,3 +110,12 @@ def test_faq_validator_blocks_equipment_brand_even_when_grounded_in_source() -> 
         "Используется аппарат Sciton Joule и BBL Forever Clear.",
         context,
     )
+
+
+def test_faq_validator_blocks_medical_efficacy_claim_even_when_grounded() -> None:
+    context = {
+        "question_type": "faq_question",
+        "article_context": [{"title": "Лазер", "snippet": "Эксимерный лазер разрушает бактерии."}],
+    }
+
+    assert not validate_response("Эксимерный лазер разрушает бактерии.", context)

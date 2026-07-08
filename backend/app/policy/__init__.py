@@ -18,9 +18,11 @@ from .constants import (
     DOCTOR_SCHEDULE_KEYWORDS,
     DURATION_KEYWORDS,
     EQUIPMENT_QUESTION_KEYWORDS,
+    EFFICACY_CLAIM_KEYWORDS,
     EXPLANATION_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
+    LEAD_FOLLOWUP_SHORT_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
     OMS_FACT_KEYWORDS,
@@ -433,6 +435,36 @@ def _looks_like_placeholder_address(address: str) -> bool:
     return not normalized or "уточняется" in normalized or "уточнит" in normalized
 
 
+URGENT_SYMPTOM_KEYWORDS = {
+    "кров",
+    "болит",
+    "больно",
+    "гной",
+    "температура",
+    "тошнит",
+    "головокруж",
+    "немеет",
+    "онем",
+    "отек",
+    "отёк",
+    "аллерг",
+    "зуд",
+    "жжение",
+    "воспален",
+}
+
+
+def _is_ambulance_fact_question(normalized_message: str) -> bool:
+    return contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS) and contains_keyword(
+        normalized_message,
+        AMBULANCE_ACTION_KEYWORDS,
+    )
+
+
+def _has_urgent_symptom(normalized_message: str) -> bool:
+    return contains_keyword(normalized_message, URGENT_SYMPTOM_KEYWORDS)
+
+
 def _clinic_info_result(
     message: str,
     normalized_message: str,
@@ -551,6 +583,60 @@ def _clinic_info_result(
         )
 
     return None
+
+
+def _efficacy_claim_result(normalized_message: str, knowledge_base: KnowledgeBase, service) -> PolicyResult | None:
+    if not contains_keyword(normalized_message, EFFICACY_CLAIM_KEYWORDS):
+        return None
+
+    consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
+    message_to_user = _phrase(knowledge_base, "efficacy_claim_deferred") or _phrase(
+        knowledge_base,
+        "medical_referral",
+    )
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.REGULATED_ADVICE,
+        service_id=service.id if service else None,
+        confidence=0.9,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": message_to_user,
+            "referral_service": consultation_service.model_dump() if consultation_service else None,
+            "claim_deferred": True,
+        },
+        quick_actions=_medical_referral_quick_actions(consultation_service),
+    )
+
+
+def _history_indicates_lead_sent(session: Session) -> bool:
+    for item in session.messages[-6:]:
+        if str(item.role) not in {"MessageRole.ASSISTANT", "assistant"}:
+            continue
+        normalized_text = normalize_text(item.text)
+        if any(marker in normalized_text for marker in ("заявку передали", "контакты передали", "зафиксировал")):
+            return True
+    return False
+
+
+def _lead_followup_result(normalized_message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
+    if "?" in normalized_message:
+        return None
+    tokens = normalized_message.split()
+    if not tokens or len(tokens) > 3:
+        return None
+    if not contains_keyword(normalized_message, LEAD_FOLLOWUP_SHORT_KEYWORDS):
+        return None
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.CONTACT_PROVIDED,
+        confidence=0.86,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": _phrase(knowledge_base, "lead_followup"),
+        },
+        quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+    )
 
 
 FACT_VALUE_QUESTION_KEYWORDS = {
@@ -820,6 +906,11 @@ def analyze_message(
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
 
+    if _is_ambulance_fact_question(normalized_message) and not _has_urgent_symptom(normalized_message):
+        clinic_info_result = _clinic_info_result(message, normalized_message, knowledge_base)
+        if clinic_info_result is not None:
+            return clinic_info_result
+
     if medical_requested:
         sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
         if sensitive_topic is not None:
@@ -950,6 +1041,11 @@ def analyze_message(
     clinic_info_result = _clinic_info_result(message, normalized_message, knowledge_base)
     if clinic_info_result is not None:
         return clinic_info_result
+
+    if session.lead_requested or _history_indicates_lead_sent(session):
+        lead_followup_result = _lead_followup_result(normalized_message, knowledge_base)
+        if lead_followup_result is not None:
+            return lead_followup_result
 
     if intent == "small_talk":
         return PolicyResult(
@@ -1090,6 +1186,10 @@ def analyze_message(
                 ]
                 + ["Позвать менеджера"],
             )
+
+    efficacy_claim_result = _efficacy_claim_result(normalized_message, knowledge_base, service)
+    if efficacy_claim_result is not None:
+        return efficacy_claim_result
 
     equipment_result = _equipment_result(message, normalized_message, knowledge_base, service)
     if equipment_result is not None:

@@ -34,6 +34,7 @@ from ..policy.restricted import (
     has_medical_restricted_category,
     is_restricted_question,
 )
+from ..policy.variants import find_variant_matches, is_variant_list_question
 
 
 fallback_llm_client = MockLLMClient()
@@ -273,6 +274,7 @@ def _contextual_frame_classification(
     message: str,
     session: Session | None,
     local_result: dict[str, object],
+    knowledge_base: KnowledgeBase | None = None,
 ) -> dict[str, object] | None:
     frame = _active_frame(session)
     if frame is None:
@@ -292,7 +294,26 @@ def _contextual_frame_classification(
                 "context_topic": "doctors",
             }
 
+    contextual_service = None
+    if knowledge_base is not None and frame.entity_id:
+        contextual_service = knowledge_base.find_service_by_id(frame.entity_id)
+
     if local_intent in {"unknown_service", "off_topic"}:
+        if (
+            frame.frame_type in {"service_interest", "fact_question"}
+            and frame.entity_id
+            and contextual_service is not None
+            and (
+                is_variant_list_question(message)
+                or find_variant_matches(contextual_service, message, limit=1)
+            )
+        ):
+            return {
+                "intent": "service_mention",
+                "service_id": frame.entity_id,
+                "confidence": 0.9,
+                "context_topic": "variants_list" if is_variant_list_question(message) else "variant_lookup",
+            }
         return None
 
     local_service_id = str(local_result.get("service_id") or "").strip()
@@ -300,6 +321,48 @@ def _contextual_frame_classification(
         return local_result
 
     if frame.frame_type in {"service_interest", "fact_question"} and frame.entity_id:
+        if local_intent == "booking_request":
+            return {"intent": "booking_request", "service_id": frame.entity_id, "confidence": 0.9}
+        frame_variant = frame.slots.get("variant") if isinstance(frame.slots.get("variant"), dict) else None
+        if (
+            frame_variant is not None
+            and str(frame.slots.get("question_type") or "") == "variant_price"
+            and (
+                fuzzy_contains(normalized_message, PRICE_KEYWORDS)
+                or normalized_message
+                in {
+                    "а сколько",
+                    "сколько",
+                    "почем",
+                    "почём",
+                    "а почем",
+                    "а почём",
+                    "а по деньгам",
+                    "по деньгам",
+                }
+            )
+        ):
+            return {
+                "intent": "service_mention",
+                "service_id": frame.entity_id,
+                "confidence": 0.92,
+                "context_topic": "variant_repeat_price",
+                "context_variant": frame_variant,
+            }
+        if is_variant_list_question(message):
+            return {
+                "intent": "service_mention",
+                "service_id": frame.entity_id,
+                "confidence": 0.9,
+                "context_topic": "variants_list",
+            }
+        if contextual_service is not None and find_variant_matches(contextual_service, message, limit=1):
+            return {
+                "intent": "service_mention",
+                "service_id": frame.entity_id,
+                "confidence": 0.9,
+                "context_topic": "variant_lookup",
+            }
         if fuzzy_contains(normalized_message, PRICE_KEYWORDS) or normalized_message in {
             "а сколько",
             "сколько",
@@ -385,7 +448,7 @@ async def resolve_classification(
     clarify_result = _clarify_without_model(message)
     if clarify_result is not None:
         return clarify_result
-    frame_result = _contextual_frame_classification(message, session, local_result)
+    frame_result = _contextual_frame_classification(message, session, local_result, selected_knowledge_base)
     if frame_result is not None:
         return frame_result
     contextual_result = _contextual_service_classification(message, session, selected_knowledge_base, local_result)

@@ -1,6 +1,8 @@
 """интеграционные проверки chat message flow."""
 
 import json
+import shutil
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -89,6 +91,49 @@ def test_cancel_after_price_booking_compound_does_not_become_unknown_service(tes
     assert "ничего не оформляем" in second_payload["answer"].lower()
     assert "такой услуги" not in second_payload["answer"].lower()
     assert second_payload["lead_created"] is False
+
+
+def test_price_followup_after_variant_reuses_last_variant(managed_env) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    target_dir = managed_env["clients_dir"] / "rosh_import_demo"
+    shutil.copytree(source_dir, target_dir)
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        first_response = test_client.post(
+            "/api/chat/message",
+            json={"company_id": "rosh_import_demo", "session_id": None, "message": "лазерная эпиляция"},
+        )
+        first_payload = first_response.json()
+
+        second_response = test_client.post(
+            "/api/chat/message",
+            json={
+                "company_id": "rosh_import_demo",
+                "session_id": first_payload["session_id"],
+                "message": "а на ногах?",
+            },
+        )
+        second_payload = second_response.json()
+
+        third_response = test_client.post(
+            "/api/chat/message",
+            json={
+                "company_id": "rosh_import_demo",
+                "session_id": first_payload["session_id"],
+                "message": "а по деньгам?",
+            },
+        )
+        third_payload = third_response.json()
+
+    assert second_response.status_code == 200
+    assert third_response.status_code == 200
+    assert "ноги полностью" in second_payload["answer"].lower()
+    assert "21 600" in second_payload["answer"]
+    assert "ноги полностью" in third_payload["answer"].lower()
+    assert "21 600" in third_payload["answer"]
+    assert "от 1 800 до 24 000" not in third_payload["answer"]
 
 
 def test_chat_rate_limit_blocks_single_ip_but_not_other_ips(managed_env, monkeypatch) -> None:

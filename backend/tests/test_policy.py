@@ -278,6 +278,86 @@ def test_equipment_question_defers_from_config_without_rag(policy_session, resol
         assert "Sciton" not in result.safe_context["message_to_user"]
 
 
+def test_variant_list_followup_answers_from_service_variants(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    service_id = "lazernaya_epilyaciya_bc614e41"
+
+    result = analyze_message(
+        "а какие зоны?",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "service_mention",
+            "service_id": service_id,
+            "confidence": 0.9,
+            "context_topic": "variants_list",
+        },
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.service_id == service_id
+    assert result.safe_context["force_direct_answer"] is True
+    assert result.safe_context["question_type"] == "variants_list"
+    assert "бедра" in result.safe_context["message_to_user"].lower()
+    assert "голени" in result.safe_context["message_to_user"].lower()
+
+
+def test_specific_variant_followup_answers_variant_price(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    service_id = "lazernaya_epilyaciya_bc614e41"
+
+    result = analyze_message(
+        "а на ногах?",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "service_mention",
+            "service_id": service_id,
+            "confidence": 0.9,
+            "context_topic": "variant_lookup",
+        },
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.service_id == service_id
+    assert result.safe_context["force_direct_answer"] is True
+    assert result.safe_context["question_type"] == "variant_price"
+    assert "ноги полностью" in result.safe_context["message_to_user"].lower()
+    assert "21 600" in result.safe_context["message_to_user"]
+
+
+def test_duration_followup_without_kb_duration_is_direct(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = analyze_message(
+        "а по времени?",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "service_mention",
+            "service_id": "lazernaya_epilyaciya_bc614e41",
+            "confidence": 0.9,
+        },
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.DURATION_QUESTION
+    assert result.safe_context["force_direct_answer"] is True
+    assert "точную длительность" in result.safe_context["message_to_user"].lower()
+
+
+def test_booking_followup_uses_last_service_id(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    policy_session.last_service_id = "lazernaya_epilyaciya_bc614e41"
+
+    result = _analyze("записаться", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.BOOKING_REQUEST
+    assert result.service_id == "lazernaya_epilyaciya_bc614e41"
+
+
 def test_ambulance_question_uses_clinic_fact_before_medical(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 

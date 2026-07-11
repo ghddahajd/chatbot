@@ -51,6 +51,7 @@ from .rules import (
     mentions_unknown_service,
     similar_services_result,
 )
+from .variants import find_variant_matches, is_variant_list_question, variant_list_labels, variant_price_line
 
 
 logger = logging.getLogger(__name__)
@@ -685,6 +686,69 @@ def _known_service_price_result(
     )
 
 
+def _variant_followup_result(
+    message: str,
+    knowledge_base: KnowledgeBase,
+    service,
+    context_topic: str,
+    context_variant: dict[str, object] | None = None,
+) -> PolicyResult | None:
+    variants = getattr(service, "variants", []) or []
+    if not variants:
+        return None
+
+    if context_topic == "variants_list" or is_variant_list_question(message):
+        labels = variant_list_labels(service, limit=8)
+        if not labels:
+            return None
+        remaining = max(0, len(variants) - len(labels))
+        tail = f" и ещё {remaining}" if remaining else ""
+        message_to_user = (
+            f"По услуге «{service.name}» есть варианты: {', '.join(labels)}{tail}. "
+            "Могу подсказать цену по конкретной зоне или позиции."
+        )
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            service_id=service.id,
+            confidence=0.9,
+            safe_context={
+                **knowledge_base.get_service_context(service),
+                "force_direct_answer": True,
+                "question_type": "variants_list",
+                "message_to_user": message_to_user,
+            },
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
+        )
+
+    if context_topic == "variant_repeat_price" and context_variant is not None:
+        matches = [context_variant]
+    else:
+        matches = find_variant_matches(service, message)
+    if not matches:
+        return None
+
+    lines = [variant_price_line(service, variant) for variant in matches]
+    message_to_user = (
+        f"По услуге «{service.name}»: {'; '.join(line for line in lines if line)}. "
+        "Это предварительно, точнее подскажет менеджер после уточнения деталей."
+    )
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.PRICE_QUESTION,
+        service_id=service.id,
+        confidence=0.92,
+        safe_context={
+            **knowledge_base.get_service_context(service),
+            "force_direct_answer": True,
+            "question_type": "variant_price",
+            "message_to_user": message_to_user,
+            "variant_matches": matches,
+        },
+        quick_actions=_service_quick_actions(service, "Оставить телефон"),
+    )
+
+
 FACT_VALUE_QUESTION_KEYWORDS = {
     "какие препараты",
     "какой препарат",
@@ -1265,6 +1329,17 @@ def analyze_message(
     if equipment_result is not None:
         return equipment_result
 
+    if service is not None and not booking_requested:
+        variant_result = _variant_followup_result(
+            message,
+            knowledge_base,
+            service,
+            str(classification.get("context_topic") or ""),
+            classification.get("context_variant") if isinstance(classification.get("context_variant"), dict) else None,
+        )
+        if variant_result is not None:
+            return variant_result
+
     if intent == "faq_question" and not price_requested and not duration_requested:
         article_query = f"{service.name} {message}" if service is not None else message
         article_matches = _retrieve_article_context_safe(article_query)
@@ -1527,12 +1602,39 @@ def analyze_message(
             )
 
         context = knowledge_base.get_service_context(service)
+        duration = str(getattr(service, "duration", "") or "").strip()
+        if not duration:
+            return PolicyResult(
+                action=PolicyAction.ANSWER,
+                reason=PolicyReason.DURATION_QUESTION,
+                service_id=service.id,
+                confidence=0.9,
+                safe_context={
+                    **context,
+                    "force_direct_answer": True,
+                    "question_type": "duration",
+                    "message_to_user": (
+                        f"Точную длительность по услуге «{service.name}» уточнит менеджер. "
+                        "Могу подсказать цену или оформить заявку."
+                    ),
+                },
+                quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
+            )
         return PolicyResult(
             action=PolicyAction.ANSWER,
             reason=PolicyReason.DURATION_QUESTION,
             service_id=service.id,
             confidence=0.9,
-            safe_context={**context, "question_type": "duration"},
+            safe_context={
+                **context,
+                "force_direct_answer": True,
+                "question_type": "duration",
+                "message_to_user": (
+                    f"По услуге «{service.name}» длительность: {duration}. "
+                    "Точное время подтвердит менеджер."
+                ),
+            },
+            quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
         )
 
     if service is not None:

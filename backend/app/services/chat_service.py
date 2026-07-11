@@ -388,12 +388,16 @@ class ChatService:
             )
 
         if service_id:
+            slots = {"question_type": safe_context.get("question_type")}
+            variant_matches = safe_context.get("variant_matches")
+            if isinstance(variant_matches, list) and variant_matches and isinstance(variant_matches[0], dict):
+                slots["variant"] = variant_matches[0]
             return ContextFrame(
                 frame_type="service_interest",
                 entity_type="service",
                 entity_id=service_id,
                 entity_label=service_name,
-                slots={"question_type": safe_context.get("question_type")},
+                slots=slots,
                 last_intent=last_intent,
                 expires_at_turn=expires_at_turn,
             )

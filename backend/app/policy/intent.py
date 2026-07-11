@@ -115,6 +115,9 @@ def normalize_classification(raw_result: dict[str, Any]) -> dict[str, object]:
     context_topic = str(raw_result.get("context_topic") or "").strip()
     if context_topic:
         normalized["context_topic"] = context_topic
+    context_variant = raw_result.get("context_variant")
+    if isinstance(context_variant, dict):
+        normalized["context_variant"] = context_variant
     return normalized
 
 

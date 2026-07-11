@@ -10,6 +10,7 @@ from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_
 from ..knowledge import normalize_text
 from ..models import (
     ChatMessageResponse,
+    ContextFrame,
     MessageRole,
     PendingAction,
     PolicyAction,
@@ -316,10 +317,13 @@ class ChatService:
 
     async def _remember_policy_context(self, session_store, session, policy_result) -> None:
         last_intent = str(policy_result.reason.value if hasattr(policy_result.reason, "value") else policy_result.reason)
+        active_frame = self._context_frame_from_policy_result(session, policy_result, last_intent)
         await session_store.update_context(
             session.session_id,
             last_service_id=policy_result.service_id,
             last_intent=last_intent,
+            active_frame=active_frame,
+            clear_active_frame=active_frame is None and policy_result.action in {PolicyAction.OFF_TOPIC, PolicyAction.REJECT},
         )
 
         if (
@@ -350,6 +354,50 @@ class ChatService:
 
         if policy_result.action in {PolicyAction.ANSWER, PolicyAction.SMALL_TALK, PolicyAction.OFF_TOPIC}:
             await self._clear_contact_state(session_store, session.session_id)
+
+    def _context_frame_from_policy_result(self, session, policy_result, last_intent: str) -> ContextFrame | None:
+        safe_context = policy_result.safe_context or {}
+        service = safe_context.get("service") if isinstance(safe_context.get("service"), dict) else None
+        service_id = policy_result.service_id or (str(service.get("id") or "").strip() if service else None)
+        service_name = str(service.get("name") or "").strip() if service else None
+        expires_at_turn = session.message_count + 5
+
+        fact_guard = safe_context.get("fact_guard") if isinstance(safe_context.get("fact_guard"), dict) else None
+        if fact_guard is not None:
+            return ContextFrame(
+                frame_type="fact_question",
+                entity_type="service" if service_id else None,
+                entity_id=service_id,
+                entity_label=service_name,
+                slots={
+                    "topic": str(fact_guard.get("topic") or "").strip(),
+                    "question_type": safe_context.get("question_type"),
+                },
+                last_intent=last_intent,
+                expires_at_turn=expires_at_turn,
+            )
+
+        clinic_info_topic = str(safe_context.get("clinic_info_topic") or "").strip()
+        if clinic_info_topic:
+            return ContextFrame(
+                frame_type="clinic_info",
+                slots={"topic": clinic_info_topic},
+                last_intent=last_intent,
+                expires_at_turn=expires_at_turn,
+            )
+
+        if service_id:
+            return ContextFrame(
+                frame_type="service_interest",
+                entity_type="service",
+                entity_id=service_id,
+                entity_label=service_name,
+                slots={"question_type": safe_context.get("question_type")},
+                last_intent=last_intent,
+                expires_at_turn=expires_at_turn,
+            )
+
+        return None
 
     async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> None:
         delivery_service = getattr(self.request.app.state, "delivery_service", None)

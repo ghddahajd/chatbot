@@ -107,11 +107,15 @@ def normalize_classification(raw_result: dict[str, Any]) -> dict[str, object]:
     except (TypeError, ValueError):
         confidence = 0.0
 
-    return {
+    normalized = {
         "intent": intent,
         "service_id": service_id,
         "confidence": min(max(confidence, 0.0), 1.0),
     }
+    context_topic = str(raw_result.get("context_topic") or "").strip()
+    if context_topic:
+        normalized["context_topic"] = context_topic
+    return normalized
 
 
 def classify_and_extract(

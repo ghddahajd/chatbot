@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
 
-from .models import Message, MessageRole, OperatorSessionSummary, Session, SessionStatus
+from .models import ContextFrame, Message, MessageRole, OperatorSessionSummary, Session, SessionStatus
 
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,8 @@ class SessionStore:
         *,
         last_service_id: Optional[str] = None,
         last_intent: Optional[str] = None,
+        active_frame: Optional[ContextFrame] = None,
+        clear_active_frame: bool = False,
     ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
@@ -169,6 +171,10 @@ class SessionStore:
                 session.last_service_id = last_service_id
             if last_intent is not None:
                 session.last_intent = last_intent
+            if clear_active_frame:
+                session.active_frame = None
+            elif active_frame is not None:
+                session.active_frame = active_frame
             session.updated_at = datetime.utcnow()
             return session
 

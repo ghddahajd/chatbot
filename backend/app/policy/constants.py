@@ -577,6 +577,7 @@ ALLOWED_CLASSIFIER_INTENTS = {
     "booking_request",
     "clarify",
     "faq_question",
+    "clinic_info",
     "service_mention",
     "unknown_service",
     "location_mismatch",

@@ -469,6 +469,54 @@ def test_explicit_service_beats_previous_service_context(test_client) -> None:
     assert "Консультация дерматолога" in second_payload["answer"]
 
 
+def test_context_frame_keeps_service_for_short_price_followup(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "Консультация косметолога",
+        },
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "а всё-таки почём?",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "answer"
+    assert "Консультация косметолога" in second_payload["answer"]
+
+
+def test_context_frame_keeps_doctor_topic_for_followup(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "кто у вас гинеколог?"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "а дерматолог кто?",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] in {"answer", "clarify"}
+    assert "врач" in second_payload["answer"].lower() or "специалист" in second_payload["answer"].lower()
+
+
 def test_new_question_breaks_out_of_pending_booking_contact(test_client) -> None:
     """regression: до фикса любое сообщение после 'хочу записаться' (без телефона)
     навсегда перехватывалось запросом телефона, а extract_name вытаскивал случайное

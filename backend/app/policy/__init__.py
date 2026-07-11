@@ -469,6 +469,7 @@ def _clinic_info_result(
     message: str,
     normalized_message: str,
     knowledge_base: KnowledgeBase,
+    context_topic: str | None = None,
 ) -> PolicyResult | None:
     company = knowledge_base.company
     doctors = _clinic_doctors(knowledge_base)
@@ -498,7 +499,11 @@ def _clinic_info_result(
             action=PolicyAction.ANSWER,
             reason=PolicyReason.OK,
             confidence=0.9,
-            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "clinic_info_topic": "location",
+            },
             quick_actions=base_quick_actions,
         )
 
@@ -514,11 +519,15 @@ def _clinic_info_result(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,
             confidence=0.88,
-            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "clinic_info_topic": "doctors",
+            },
             quick_actions=base_quick_actions,
         )
 
-    if contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS):
+    if context_topic == "doctors" or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS):
         matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
         selected_doctors = matched_doctors or doctors
         if selected_doctors:
@@ -535,7 +544,11 @@ def _clinic_info_result(
             action=action,
             reason=PolicyReason.OK,
             confidence=0.88,
-            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "clinic_info_topic": "doctors",
+            },
             quick_actions=base_quick_actions,
         )
 
@@ -578,7 +591,11 @@ def _clinic_info_result(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,
             confidence=0.9,
-            safe_context={"force_direct_answer": True, "message_to_user": message_to_user},
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "clinic_info_topic": "facts",
+            },
             quick_actions=base_quick_actions,
         )
 
@@ -907,7 +924,12 @@ def analyze_message(
     city_in_text = city_prepositional(knowledge_base.company.city)
 
     if _is_ambulance_fact_question(normalized_message) and not _has_urgent_symptom(normalized_message):
-        clinic_info_result = _clinic_info_result(message, normalized_message, knowledge_base)
+        clinic_info_result = _clinic_info_result(
+            message,
+            normalized_message,
+            knowledge_base,
+            str(classification.get("context_topic") or "") or None,
+        )
         if clinic_info_result is not None:
             return clinic_info_result
 
@@ -1038,7 +1060,12 @@ def analyze_message(
             ],
         )
 
-    clinic_info_result = _clinic_info_result(message, normalized_message, knowledge_base)
+    clinic_info_result = _clinic_info_result(
+        message,
+        normalized_message,
+        knowledge_base,
+        str(classification.get("context_topic") or "") or None,
+    )
     if clinic_info_result is not None:
         return clinic_info_result
 

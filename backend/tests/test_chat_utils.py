@@ -4,10 +4,12 @@ import pytest
 
 from app.routes.chat_utils import (
     CONSULTATION_RISK_SAFE,
+    _contextual_frame_classification,
     classify_consultation_risk,
     should_ignore_model_location_mismatch,
     should_ignore_model_regulated_advice,
 )
+from app.models import ContextFrame, Session
 
 
 def test_ignore_model_location_mismatch_when_user_is_in_company_city() -> None:
@@ -44,6 +46,141 @@ def test_keep_model_regulated_for_medical_domain() -> None:
         {"intent": "service_mention", "service_id": None, "confidence": 0.0},
         {"intent": "regulated_advice", "service_id": None, "confidence": 0.97},
         {"type": "medical", "restricted_advice": ["medical", "diagnosis", "treatment"]},
+    )
+
+
+def test_context_frame_resolves_price_followup() -> None:
+    session = Session(
+        company_id="rosh_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="service_interest",
+            entity_type="service",
+            entity_id="consultation",
+            entity_label="Консультация",
+            expires_at_turn=8,
+        ),
+    )
+
+    result = _contextual_frame_classification(
+        "а всё-таки почём?",
+        session,
+        {"intent": "clarify", "service_id": None, "confidence": 0.1},
+    )
+
+    assert result == {"intent": "price_question", "service_id": "consultation", "confidence": 0.92}
+
+
+def test_context_frame_resolves_fact_followup() -> None:
+    session = Session(
+        company_id="rosh_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="fact_question",
+            entity_type="service",
+            entity_id="botulinotherapy",
+            entity_label="Ботулинотерапия",
+            slots={"topic": "botulinotherapy_preparations"},
+            expires_at_turn=8,
+        ),
+    )
+
+    result = _contextual_frame_classification(
+        "а какие препараты?",
+        session,
+        {"intent": "clarify", "service_id": None, "confidence": 0.1},
+    )
+
+    assert result == {"intent": "service_mention", "service_id": "botulinotherapy", "confidence": 0.9}
+
+
+def test_context_frame_resolves_doctor_followup_even_if_local_unknown() -> None:
+    session = Session(
+        company_id="rosh_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="clinic_info",
+            slots={"topic": "doctors"},
+            expires_at_turn=8,
+        ),
+    )
+
+    result = _contextual_frame_classification(
+        "а дерматолог кто?",
+        session,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.8},
+    )
+
+    assert result == {
+        "intent": "clinic_info",
+        "service_id": None,
+        "confidence": 0.9,
+        "context_topic": "doctors",
+    }
+
+
+def test_context_frame_resolves_short_doctor_specialty_followup() -> None:
+    session = Session(
+        company_id="rosh_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="clinic_info",
+            slots={"topic": "doctors"},
+            expires_at_turn=8,
+        ),
+    )
+
+    result = _contextual_frame_classification(
+        "а дерматолог?",
+        session,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.8},
+    )
+
+    assert result == {
+        "intent": "clinic_info",
+        "service_id": None,
+        "confidence": 0.9,
+        "context_topic": "doctors",
+    }
+
+
+def test_context_frame_expires_and_does_not_override_explicit_unknown() -> None:
+    expired_session = Session(
+        company_id="rosh_demo",
+        message_count=9,
+        active_frame=ContextFrame(
+            frame_type="service_interest",
+            entity_type="service",
+            entity_id="facial_cleaning",
+            expires_at_turn=8,
+        ),
+    )
+    active_session = Session(
+        company_id="rosh_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="service_interest",
+            entity_type="service",
+            entity_id="facial_cleaning",
+            expires_at_turn=8,
+        ),
+    )
+
+    assert (
+        _contextual_frame_classification(
+            "а сколько?",
+            expired_session,
+            {"intent": "clarify", "service_id": None, "confidence": 0.1},
+        )
+        is None
+    )
+    assert (
+        _contextual_frame_classification(
+            "ботокс",
+            active_session,
+            {"intent": "unknown_service", "service_id": None, "confidence": 0.8},
+        )
+        is None
     )
 
 

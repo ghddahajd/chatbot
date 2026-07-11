@@ -68,6 +68,16 @@ class Message(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ContextFrame(BaseModel):
+    frame_type: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    entity_label: Optional[str] = None
+    slots: dict[str, Any] = Field(default_factory=dict)
+    last_intent: Optional[str] = None
+    expires_at_turn: Optional[int] = None
+
+
 class Session(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     company_id: str
@@ -79,6 +89,7 @@ class Session(BaseModel):
     pending_action: Optional[str] = None
     last_service_id: Optional[str] = None
     last_intent: Optional[str] = None
+    active_frame: Optional[ContextFrame] = None
     contact_draft: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

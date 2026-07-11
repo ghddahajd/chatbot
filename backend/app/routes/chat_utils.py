@@ -240,6 +240,109 @@ def _contextual_service_classification(
     return None
 
 
+FACT_VALUE_FOLLOWUP_KEYWORDS = {
+    "какие препараты",
+    "а какие препараты",
+    "какой препарат",
+    "а какой препарат",
+    "что используете",
+    "а что используете",
+    "чем работаете",
+    "а чем работаете",
+}
+DOCTOR_FOLLOWUP_KEYWORDS = {
+    "дерматолог",
+    "гинеколог",
+    "косметолог",
+    "терапевт",
+    "врач",
+    "доктор",
+}
+
+
+def _active_frame(session: Session | None):
+    if session is None or session.active_frame is None:
+        return None
+    frame = session.active_frame
+    if frame.expires_at_turn is not None and session.message_count > frame.expires_at_turn:
+        return None
+    return frame
+
+
+def _contextual_frame_classification(
+    message: str,
+    session: Session | None,
+    local_result: dict[str, object],
+) -> dict[str, object] | None:
+    frame = _active_frame(session)
+    if frame is None:
+        return None
+
+    local_intent = str(local_result.get("intent") or "")
+    if local_intent in {"medical_advice", "regulated_advice", "operator_request", "location_mismatch"}:
+        return None
+
+    normalized_message = normalize_text(message)
+    if frame.frame_type == "clinic_info" and frame.slots.get("topic") == "doctors":
+        if contains_keyword(normalized_message, DOCTOR_FOLLOWUP_KEYWORDS):
+            return {
+                "intent": "clinic_info",
+                "service_id": None,
+                "confidence": 0.9,
+                "context_topic": "doctors",
+            }
+
+    if local_intent in {"unknown_service", "off_topic"}:
+        return None
+
+    local_service_id = str(local_result.get("service_id") or "").strip()
+    if local_service_id and frame.entity_id and local_service_id != frame.entity_id:
+        return local_result
+
+    if frame.frame_type in {"service_interest", "fact_question"} and frame.entity_id:
+        if fuzzy_contains(normalized_message, PRICE_KEYWORDS) or normalized_message in {
+            "а сколько",
+            "сколько",
+            "почем",
+            "почём",
+            "а почем",
+            "а почём",
+            "а все таки почем",
+            "а всё таки почём",
+            "а всё-таки почём",
+            "а все-таки почем",
+        }:
+            return {"intent": "price_question", "service_id": frame.entity_id, "confidence": 0.92}
+        if contains_keyword(normalized_message, DURATION_KEYWORDS):
+            return {"intent": "service_mention", "service_id": frame.entity_id, "confidence": 0.88}
+        if contains_keyword(normalized_message, EXPLANATION_KEYWORDS) or normalized_message in {
+            "а подробнее",
+            "можно подробнее",
+            "а можно подробнее",
+            "а что это",
+            "а что входит",
+        }:
+            return {"intent": "service_mention", "service_id": frame.entity_id, "confidence": 0.88}
+        if contains_keyword(normalized_message, FACT_VALUE_FOLLOWUP_KEYWORDS):
+            return {"intent": "service_mention", "service_id": frame.entity_id, "confidence": 0.9}
+
+    return None
+
+
+def _doctor_info_classification(message: str) -> dict[str, object] | None:
+    normalized_message = normalize_text(message)
+    if "кто" not in normalized_message:
+        return None
+    if not contains_keyword(normalized_message, DOCTOR_FOLLOWUP_KEYWORDS):
+        return None
+    return {
+        "intent": "clinic_info",
+        "service_id": None,
+        "confidence": 0.88,
+        "context_topic": "doctors",
+    }
+
+
 def _looks_like_unknown_service_question(message: str) -> bool:
     normalized_message = normalize_text(message)
     return any(
@@ -276,9 +379,15 @@ async def resolve_classification(
         return local_result
     if extract_phone(message):
         return local_result
+    doctor_info_result = _doctor_info_classification(message)
+    if doctor_info_result is not None:
+        return doctor_info_result
     clarify_result = _clarify_without_model(message)
     if clarify_result is not None:
         return clarify_result
+    frame_result = _contextual_frame_classification(message, session, local_result)
+    if frame_result is not None:
+        return frame_result
     contextual_result = _contextual_service_classification(message, session, selected_knowledge_base, local_result)
     if contextual_result is not None:
         return contextual_result

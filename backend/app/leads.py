@@ -41,9 +41,16 @@ def classify_lead_reason(*, last_intent: Optional[str], is_booking_request: bool
     return "commercial_interest"
 
 
-def lead_trigger_for(*, is_booking_request: bool, is_operator_flow: bool) -> str:
+def lead_trigger_for(
+    *,
+    is_booking_request: bool,
+    is_operator_flow: bool,
+    is_regulated_flow: bool = False,
+) -> str:
     if is_booking_request:
         return "booking_request"
+    if is_regulated_flow:
+        return "regulated_advice"
     if is_operator_flow:
         return "operator_handoff"
     return "ask_contact"

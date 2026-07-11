@@ -152,7 +152,114 @@ def test_successful_booking_clears_pending_and_does_not_duplicate_lead(test_clie
     assert len(leads_after) == len(leads_before)
 
 
-def test_transfer_operator_enqueues_operator_requested_event(test_client, monkeypatch) -> None:
+def test_regulated_question_soft_offers_without_operator_event(test_client, monkeypatch) -> None:
+    events = []
+
+    async def fake_enqueue_event(**kwargs):
+        events.append(kwargs)
+        return []
+
+    monkeypatch.setattr(test_client.app.state.delivery_service, "enqueue_event", fake_enqueue_event)
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "у меня воспаление что делать",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "clarify"
+    assert payload["status"] == "AI_ACTIVE"
+    assert "103" in payload["answer"]
+    assert [action["label"] for action in payload["quick_actions"]] == [
+        "Оставить телефон",
+        "Подключить менеджера",
+    ]
+    assert events == []
+
+
+def test_regulated_soft_contact_creates_flagged_lead(test_client, managed_env) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "у меня воспаление что делать",
+        },
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+    second_payload = second_response.json()
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "ask_contact"
+    assert second_payload["lead_created"] is True
+    assert second_payload["status"] == "AI_ACTIVE"
+    assert lead["reason"] == "medical_risk"
+    assert lead["needs_operator"] is True
+    assert lead["lead_trigger"] == "regulated_advice"
+
+
+def test_regulated_lead_mode_normal_creates_default_lead(test_client, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").rstrip()
+        + "\n  regulated_lead_mode: normal\n",
+        encoding="utf-8",
+    )
+    test_client.app.state.knowledge_base_resolver._cache.clear()
+
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "у меня воспаление что делать",
+        },
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+    assert second_response.status_code == 200
+    assert lead["reason"] == "commercial_interest"
+    assert lead["needs_operator"] is False
+    assert lead["lead_trigger"] == "ask_contact"
+
+
+def test_regulated_instant_override_enqueues_operator_requested_event(
+    test_client,
+    managed_env,
+    monkeypatch,
+) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").rstrip()
+        + "\n  regulated_escalation: instant\n",
+        encoding="utf-8",
+    )
+    test_client.app.state.knowledge_base_resolver._cache.clear()
     events = []
 
     async def fake_enqueue_event(**kwargs):
@@ -173,6 +280,7 @@ def test_transfer_operator_enqueues_operator_requested_event(test_client, monkey
 
     assert response.status_code == 200
     assert payload["action"] == "transfer_operator"
+    assert payload["status"] == "WAITING_OPERATOR"
     assert events[-1]["event_type"] == "operator_requested"
     assert events[-1]["payload"]["last_message"] == "у меня воспаление что делать"
     operator_url = events[-1]["payload"]["operator_url"]

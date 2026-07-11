@@ -35,6 +35,17 @@ def test_lead_trigger_operator_handoff() -> None:
     assert lead_trigger_for(is_booking_request=False, is_operator_flow=True) == "operator_handoff"
 
 
+def test_lead_trigger_regulated_beats_operator_flow() -> None:
+    assert (
+        lead_trigger_for(
+            is_booking_request=False,
+            is_operator_flow=True,
+            is_regulated_flow=True,
+        )
+        == "regulated_advice"
+    )
+
+
 def test_lead_trigger_default_ask_contact() -> None:
     assert lead_trigger_for(is_booking_request=False, is_operator_flow=False) == "ask_contact"
 

@@ -35,6 +35,8 @@ DEFAULT_WIDGET_CONFIG = {
 DEFAULT_DOMAIN_PROFILE = {
     "type": "generic",
     "safety_level": "normal",
+    "regulated_escalation": "soft",
+    "regulated_lead_mode": "flagged",
     "restricted_advice": [],
     "hard_block_topics": [
         "self_harm",
@@ -60,6 +62,10 @@ DEFAULT_PHRASEBOOK = {
     "booking_contact_prompt": "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
     "handoff_message": "Передаю диалог менеджеру. Можете дописать детали, он увидит историю.",
     "operator_soft_offer": "Могу попробовать помочь здесь — опишите, что вас интересует. Или сразу соединю с менеджером.",
+    "regulated_soft_offer": (
+        "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
+        "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
+    ),
     "clarify": "Уточните, пожалуйста, что вас интересует? Могу рассказать про услуги, цены или оформить заявку.",
     "empty_message": "Похоже, сообщение пустое. Напишите вопрос, и я подскажу.",
     "empty_message_letters": "Не совсем понял вопрос. Можете переформулировать словами?",
@@ -135,6 +141,14 @@ def _domain_profile_from_payload(payload: dict[str, object]) -> dict[str, object
         value = raw_profile.get(key)
         if isinstance(value, str) and value.strip():
             profile[key] = value.strip()
+
+    regulated_escalation = raw_profile.get("regulated_escalation")
+    if isinstance(regulated_escalation, str) and regulated_escalation.strip() in {"soft", "instant"}:
+        profile["regulated_escalation"] = regulated_escalation.strip()
+
+    regulated_lead_mode = raw_profile.get("regulated_lead_mode")
+    if isinstance(regulated_lead_mode, str) and regulated_lead_mode.strip() in {"flagged", "normal"}:
+        profile["regulated_lead_mode"] = regulated_lead_mode.strip()
 
     for key in ("restricted_advice", "hard_block_topics"):
         value = raw_profile.get(key)

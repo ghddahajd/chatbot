@@ -13,12 +13,27 @@ def _send_message(test_client, message: str) -> dict:
     return response.json()
 
 
+def _request_operator_handoff(test_client) -> dict:
+    first_payload = _send_message(test_client, "оператор")
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "да, менеджера",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "transfer_operator"
+    return payload
+
+
 def test_handoff_message_marked_with_kind_for_panel(test_client) -> None:
     """P0-2 regression: сообщение о передаче оператору помечается kind='handoff'
     структурно, а не распознаётся панелью по тексту (тексты handoff у клиентов разные:
     'менеджеру'/'мастеру'/'вопрос менеджеру'), поэтому match по строке молча ломался."""
-    payload = _send_message(test_client, "у меня воспаление что делать")
-    assert payload["action"] == "transfer_operator"
+    payload = _request_operator_handoff(test_client)
 
     session = test_client.get(
         f"/api/operator/sessions/{payload['session_id']}", headers=OPERATOR_HEADERS
@@ -43,7 +58,7 @@ def test_regular_answer_has_no_handoff_kind(test_client) -> None:
 
 def test_operator_sessions_queue_scope_keeps_only_operator_queue(test_client) -> None:
     ai_payload = _send_message(test_client, "привет")
-    waiting_payload = _send_message(test_client, "у меня воспаление что делать")
+    waiting_payload = _request_operator_handoff(test_client)
 
     response = test_client.get("/api/operator/sessions", headers=OPERATOR_HEADERS)
     payload = response.json()
@@ -57,7 +72,7 @@ def test_operator_sessions_queue_scope_keeps_only_operator_queue(test_client) ->
 
 def test_operator_sessions_all_scope_includes_ai_active(test_client) -> None:
     ai_payload = _send_message(test_client, "привет")
-    waiting_payload = _send_message(test_client, "у меня воспаление что делать")
+    waiting_payload = _request_operator_handoff(test_client)
 
     response = test_client.get(
         "/api/operator/sessions?scope=all",

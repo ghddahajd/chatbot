@@ -54,6 +54,70 @@ class ChatService:
         value = phrasebook.get(key) if isinstance(phrasebook, dict) else None
         return str(value).strip() if value else fallback
 
+    def _domain_profile_value(self, knowledge_base, key: str, fallback: str) -> str:
+        domain_profile = getattr(knowledge_base, "domain_profile", {}) or {}
+        if not isinstance(domain_profile, dict):
+            return fallback
+        value = str(domain_profile.get(key) or "").strip()
+        return value or fallback
+
+    def _regulated_escalation_mode(self, knowledge_base) -> str:
+        mode = self._domain_profile_value(knowledge_base, "regulated_escalation", "soft")
+        return mode if mode in {"soft", "instant"} else "soft"
+
+    def _regulated_lead_mode(self, knowledge_base) -> str:
+        mode = self._domain_profile_value(knowledge_base, "regulated_lead_mode", "flagged")
+        return mode if mode in {"flagged", "normal"} else "flagged"
+
+    def _regulated_lead_metadata(self, knowledge_base) -> dict[str, object]:
+        if self._regulated_lead_mode(knowledge_base) == "normal":
+            return {
+                "needs_operator": False,
+                "lead_trigger": "ask_contact",
+                "reason": "commercial_interest",
+            }
+        return {
+            "needs_operator": True,
+            "lead_trigger": "regulated_advice",
+            "reason": "medical_risk",
+        }
+
+    def _regulated_soft_quick_actions(self) -> list[dict[str, str]]:
+        return [
+            {
+                "label": "Оставить телефон",
+                "type": "message",
+                "value": "Хочу оставить телефон",
+            },
+            {
+                "label": "Подключить менеджера",
+                "type": "message",
+                "value": "Да, менеджера",
+            },
+        ]
+
+    async def _regulated_soft_offer_response(
+        self,
+        *,
+        session_store,
+        session,
+        knowledge_base,
+    ) -> tuple[PolicyAction, str, list[dict[str, str]]]:
+        await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
+        await session_store.update_context(session.session_id, last_intent=PolicyReason.REGULATED_ADVICE.value)
+        await session_store.update_contact_draft(
+            session.session_id,
+            metadata=self._regulated_lead_metadata(knowledge_base),
+        )
+        answer = self._phrase(
+            "regulated_soft_offer",
+            (
+                "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
+                "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
+            ),
+        )
+        return PolicyAction.CLARIFY, answer, self._regulated_soft_quick_actions()
+
     def _operator_url(self) -> str:
         try:
             base_url = str(self.request.url_for("operator_page"))
@@ -199,6 +263,9 @@ class ChatService:
         await session_store.update_contact_draft(session.session_id, name=name, phone=phone)
 
         is_booking_request = session.pending_action == PendingAction.BOOKING_CONTACT.value
+        draft_needs_operator = bool(session.contact_draft.get("needs_operator"))
+        draft_lead_trigger = str(session.contact_draft.get("lead_trigger") or "").strip()
+        draft_reason = str(session.contact_draft.get("reason") or "").strip()
         contact = {"name": name, "phone": phone}
         lead = build_lead_from_contact(
             company_id=session.company_id,
@@ -206,11 +273,14 @@ class ChatService:
             contact=contact,
             summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
             service_id=session.last_service_id,
-            reason=classify_lead_reason(last_intent=session.last_intent, is_booking_request=is_booking_request),
-            needs_operator=session.operator_requested,
-            lead_trigger=lead_trigger_for(
+            reason=draft_reason
+            or classify_lead_reason(last_intent=session.last_intent, is_booking_request=is_booking_request),
+            needs_operator=draft_needs_operator or session.operator_requested,
+            lead_trigger=draft_lead_trigger
+            or lead_trigger_for(
                 is_booking_request=is_booking_request,
                 is_operator_flow=session.operator_requested,
+                is_regulated_flow=draft_needs_operator,
             ),
             recent_messages=recent_messages_for(session),
             operator_url=self._operator_session_url(session.session_id),
@@ -279,7 +349,7 @@ class ChatService:
             return
 
         if policy_result.action in {PolicyAction.ANSWER, PolicyAction.SMALL_TALK, PolicyAction.OFF_TOPIC}:
-            await session_store.set_pending_action(session.session_id, None)
+            await self._clear_contact_state(session_store, session.session_id)
 
     async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> None:
         delivery_service = getattr(self.request.app.state, "delivery_service", None)
@@ -475,6 +545,7 @@ class ChatService:
             policy_result=policy_result,
         )
         prior_last_intent = session.last_intent
+        prior_contact_draft = dict(session.contact_draft)
         await self._remember_policy_context(session_store, session, policy_result)
 
         lead_created = False
@@ -486,17 +557,23 @@ class ChatService:
             contact = policy_result.safe_context.get("contact")
             if contact:
                 is_booking_request = bool(policy_result.safe_context.get("booking_request"))
+                draft_needs_operator = bool(prior_contact_draft.get("needs_operator"))
+                draft_lead_trigger = str(prior_contact_draft.get("lead_trigger") or "").strip()
+                draft_reason = str(prior_contact_draft.get("reason") or "").strip()
                 lead = build_lead_from_contact(
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
                     summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
                     service_id=policy_result.service_id or session.last_service_id,
-                    reason=classify_lead_reason(last_intent=prior_last_intent, is_booking_request=is_booking_request),
-                    needs_operator=session.operator_requested,
-                    lead_trigger=lead_trigger_for(
+                    reason=draft_reason
+                    or classify_lead_reason(last_intent=prior_last_intent, is_booking_request=is_booking_request),
+                    needs_operator=draft_needs_operator or session.operator_requested,
+                    lead_trigger=draft_lead_trigger
+                    or lead_trigger_for(
                         is_booking_request=is_booking_request,
                         is_operator_flow=session.operator_requested,
+                        is_regulated_flow=draft_needs_operator,
                     ),
                     recent_messages=recent_messages_for(session),
                     operator_url=self._operator_session_url(session.session_id),
@@ -528,21 +605,31 @@ class ChatService:
         elif policy_result.action == PolicyAction.OFF_TOPIC:
             answer = str(policy_result.safe_context.get("message_to_user") or "")
         elif policy_result.action == PolicyAction.TRANSFER_OPERATOR:
-            await session_store.set_operator_requested(session.session_id, True)
-            await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
-            await self._enqueue_operator_requested(
-                company_id=session.company_id,
-                session_id=session.session_id,
-                message=message,
-            )
-            answer = str(
-                policy_result.safe_context.get("handoff_message")
-                or policy_result.safe_context.get("message_to_user")
-                or self._phrase(
-                    "handoff_message",
-                    "Передаю диалог менеджеру. Он увидит историю переписки.",
+            if (
+                policy_result.reason == PolicyReason.REGULATED_ADVICE
+                and self._regulated_escalation_mode(knowledge_base) == "soft"
+            ):
+                response_action, answer, response_quick_actions = await self._regulated_soft_offer_response(
+                    session_store=session_store,
+                    session=session,
+                    knowledge_base=knowledge_base,
                 )
-            )
+            else:
+                await session_store.set_operator_requested(session.session_id, True)
+                await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+                await self._enqueue_operator_requested(
+                    company_id=session.company_id,
+                    session_id=session.session_id,
+                    message=message,
+                )
+                answer = str(
+                    policy_result.safe_context.get("handoff_message")
+                    or policy_result.safe_context.get("message_to_user")
+                    or self._phrase(
+                        "handoff_message",
+                        "Передаю диалог менеджеру. Он увидит историю переписки.",
+                    )
+                )
         elif policy_result.action == PolicyAction.CLARIFY:
             direct_clarify_reasons = {
                 PolicyReason.OPERATOR_REQUESTED,
@@ -601,23 +688,30 @@ class ChatService:
                     message=message,
                     metadata={"source": "consultation_risk_classifier"},
                 )
-                await analytics_service.track_event(
-                    company_id=session.company_id,
-                    session_id=session.session_id,
-                    event_type="operator_requested",
-                    message=message,
-                    metadata={"source": "consultation_risk_classifier"},
-                )
-                await session_store.set_operator_requested(session.session_id, True)
-                await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
-                await self._enqueue_operator_requested(
-                    company_id=session.company_id,
-                    session_id=session.session_id,
-                    message=message,
-                )
-                answer = await safe_restricted_handoff(request, message)
-                response_action = PolicyAction.TRANSFER_OPERATOR
-                response_quick_actions = ["Оставить телефон"]
+                if self._regulated_escalation_mode(knowledge_base) == "soft":
+                    response_action, answer, response_quick_actions = await self._regulated_soft_offer_response(
+                        session_store=session_store,
+                        session=session,
+                        knowledge_base=knowledge_base,
+                    )
+                else:
+                    await analytics_service.track_event(
+                        company_id=session.company_id,
+                        session_id=session.session_id,
+                        event_type="operator_requested",
+                        message=message,
+                        metadata={"source": "consultation_risk_classifier"},
+                    )
+                    await session_store.set_operator_requested(session.session_id, True)
+                    await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+                    await self._enqueue_operator_requested(
+                        company_id=session.company_id,
+                        session_id=session.session_id,
+                        message=message,
+                    )
+                    answer = await safe_restricted_handoff(request, message)
+                    response_action = PolicyAction.TRANSFER_OPERATOR
+                    response_quick_actions = ["Оставить телефон"]
             else:
                 answer = await safe_complete(
                     request,

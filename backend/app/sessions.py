@@ -178,6 +178,7 @@ class SessionStore:
         *,
         name: Optional[str] = None,
         phone: Optional[str] = None,
+        metadata: Optional[dict[str, object]] = None,
         clear: bool = False,
     ) -> Optional[Session]:
         async with self._lock:
@@ -192,6 +193,8 @@ class SessionStore:
                     draft["name"] = name
                 if phone:
                     draft["phone"] = phone
+                if metadata:
+                    draft.update(metadata)
                 session.contact_draft = draft
             session.updated_at = datetime.utcnow()
             return session

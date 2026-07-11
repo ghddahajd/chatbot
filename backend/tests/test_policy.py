@@ -120,6 +120,24 @@ def test_sensitive_topic_defaults_to_escalate_not_decline(policy_session, resolv
     assert "Оставить телефон" in result.quick_actions
 
 
+def test_sensitive_phrase_without_medical_keyword_escalates(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("прерывание на позднем сроке", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context["sensitive_handling"] == "escalate"
+
+
+def test_generic_interruption_phrase_is_not_sensitive(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("прерывание связи", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.REGULATED_ADVICE
+
+
 def test_sensitive_topic_can_decline_from_config(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(
         resolver,
@@ -217,6 +235,7 @@ def test_clinic_facts_answer_from_config(policy_session, resolver, managed_env) 
     cases = [
         ("можно к вам попасть по ОМС?", "По ОМС приём не ведём"),
         ("а на скорой меня к вам привезут?", "не в частную клинику"),
+        ("если вызову скорую, меня привезут?", "не в частную клинику"),
         ("продается ли у вас косметика", "Продаём только услуги"),
     ]
     for message, expected_text in cases:
@@ -619,6 +638,24 @@ def test_custom_booking_prompt_keeps_next_contact_as_booking(policy_session, kno
     assert result.reason == PolicyReason.BOOKING_REQUEST
 
 
+def test_booking_typo_triggers_booking_flow(policy_session, knowledge_base) -> None:
+    result = _analyze("хочу заптсаьбся на чистку лица", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.BOOKING_REQUEST
+    assert result.service_id == "facial_cleansing"
+
+
+def test_price_and_booking_compound_answers_price_first(policy_session, knowledge_base) -> None:
+    result = _analyze("сколько стоит чистка лица и можно записаться", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.service_id == "facial_cleansing"
+    assert result.safe_context["question_type"] == "price"
+    assert "Оставить телефон" in result.quick_actions
+
+
 def test_new_question_after_booking_prompt_is_not_re_nagged(policy_session, knowledge_base) -> None:
     """Новый вопрос не должен зависеть от текста прошлого prompt."""
     policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
@@ -641,6 +678,16 @@ def test_lead_request_with_reversed_word_order_asks_for_contact(policy_session, 
 
     assert result.action == PolicyAction.ASK_CONTACT
     assert result.reason == PolicyReason.CONTACT_PROVIDED
+
+
+def test_short_note_after_lead_is_not_offtopic(policy_session, knowledge_base) -> None:
+    policy_session.lead_requested = True
+
+    result = _analyze("лучше после 15", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+    assert result.safe_context["message_to_user"]
 
 
 def test_contact_prompt_can_be_cancelled(policy_session, knowledge_base) -> None:

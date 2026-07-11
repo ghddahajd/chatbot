@@ -656,6 +656,35 @@ def _lead_followup_result(normalized_message: str, knowledge_base: KnowledgeBase
     )
 
 
+def _known_service_price_result(
+    knowledge_base: KnowledgeBase,
+    service,
+    *,
+    confidence: float = 0.95,
+) -> PolicyResult:
+    context = knowledge_base.get_service_context(service)
+    if context.get("price") is None:
+        return PolicyResult(
+            action=PolicyAction.ASK_CONTACT,
+            reason=PolicyReason.PRICE_QUESTION,
+            service_id=service.id,
+            confidence=confidence,
+            safe_context={
+                **context,
+                "message_to_user": _phrase(knowledge_base, "contact_prompt"),
+            },
+        )
+
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.PRICE_QUESTION,
+        service_id=service.id,
+        confidence=confidence,
+        safe_context={**context, "question_type": "price"},
+        quick_actions=_service_quick_actions(service, "Оставить телефон"),
+    )
+
+
 FACT_VALUE_QUESTION_KEYWORDS = {
     "какие препараты",
     "какой препарат",
@@ -922,6 +951,7 @@ def analyze_message(
         medical_requested = False
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
     city_in_text = city_prepositional(knowledge_base.company.city)
+    sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
 
     if _is_ambulance_fact_question(normalized_message) and not _has_urgent_symptom(normalized_message):
         clinic_info_result = _clinic_info_result(
@@ -933,16 +963,16 @@ def analyze_message(
         if clinic_info_result is not None:
             return clinic_info_result
 
+    if sensitive_topic is not None:
+        return _sensitive_topic_result(
+            sensitive_topic,
+            normalized_message,
+            knowledge_base,
+            service,
+            restricted_category,
+        )
+
     if medical_requested:
-        sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
-        if sensitive_topic is not None:
-            return _sensitive_topic_result(
-                sensitive_topic,
-                normalized_message,
-                knowledge_base,
-                service,
-                restricted_category,
-            )
         return _medical_referral_result(
             normalized_message,
             knowledge_base,
@@ -976,6 +1006,19 @@ def analyze_message(
                 "force_direct_answer": True,
                 "booking_request_cancelled": True,
                 "message_to_user": _phrase(knowledge_base, "booking_cancelled"),
+            },
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
+        )
+
+    if contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=0.86,
+            safe_context={
+                "force_direct_answer": True,
+                "general_cancelled": True,
+                "message_to_user": _phrase(knowledge_base, "general_cancelled"),
             },
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
@@ -1314,6 +1357,9 @@ def analyze_message(
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
+    if price_requested and booking_requested and service is not None:
+        return _known_service_price_result(knowledge_base, service, confidence=0.95)
+
     if booking_requested:
         if service is None:
             service = knowledge_base.find_service_by_id(
@@ -1436,27 +1482,7 @@ def analyze_message(
                 quick_actions=["Позвать менеджера", "Посмотреть услуги"],
             )
 
-        context = knowledge_base.get_service_context(service)
-        if context.get("price") is None:
-            return PolicyResult(
-                action=PolicyAction.ASK_CONTACT,
-                reason=PolicyReason.PRICE_QUESTION,
-                service_id=service.id,
-                confidence=0.92,
-                safe_context={
-                    **context,
-                    "message_to_user": _phrase(knowledge_base, "contact_prompt"),
-                },
-            )
-
-        return PolicyResult(
-            action=PolicyAction.ANSWER,
-            reason=PolicyReason.PRICE_QUESTION,
-            service_id=service.id,
-            confidence=0.95,
-            safe_context={**context, "question_type": "price"},
-            quick_actions=_service_quick_actions(service, "Оставить телефон"),
-        )
+        return _known_service_price_result(knowledge_base, service)
 
     if explanation_requested:
         if service is None:

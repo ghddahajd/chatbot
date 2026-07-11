@@ -329,6 +329,7 @@ class ChatService:
         if (
             policy_result.safe_context.get("contact_request_cancelled")
             or policy_result.safe_context.get("booking_request_cancelled")
+            or policy_result.safe_context.get("general_cancelled")
             or policy_result.safe_context.get("contact")
             or policy_result.action == PolicyAction.TRANSFER_OPERATOR
         ):

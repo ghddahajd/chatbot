@@ -33,6 +33,64 @@ def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> Non
     assert "контакт не оставляем" in second_payload["answer"].lower()
 
 
+def test_booking_prompt_can_be_cancelled_with_common_typo(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу заптсаьбся на чистку лица"},
+    )
+    first_payload = first_response.json()
+
+    assert first_response.status_code == 200
+    assert first_payload["action"] == "clarify"
+    assert "телефон" in first_payload["answer"].lower()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "омтена",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "clarify"
+    assert "заявку не оформляем" in second_payload["answer"].lower()
+    assert second_payload["lead_created"] is False
+
+
+def test_cancel_after_price_booking_compound_does_not_become_unknown_service(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "сколько стоит чистка лица и можно записаться",
+        },
+    )
+    first_payload = first_response.json()
+
+    assert first_response.status_code == 200
+    assert first_payload["action"] == "answer"
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "отмена",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "clarify"
+    assert "ничего не оформляем" in second_payload["answer"].lower()
+    assert "такой услуги" not in second_payload["answer"].lower()
+    assert second_payload["lead_created"] is False
+
+
 def test_chat_rate_limit_blocks_single_ip_but_not_other_ips(managed_env, monkeypatch) -> None:
     monkeypatch.setenv("CHAT_RATE_LIMIT_ENABLED", "true")
     monkeypatch.setenv("CHAT_RATE_LIMIT_PER_MINUTE", "2")

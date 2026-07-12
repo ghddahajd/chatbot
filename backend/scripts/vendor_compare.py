@@ -22,6 +22,13 @@ REPO_ROOT = BACKEND_DIR.parent
 EVALS_DIR = BACKEND_DIR / "evals"
 DEFAULT_EVAL = EVALS_DIR / "vendor_comparison.jsonl"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "tasks" / "vendor_compare_runs"
+DEMO_GATE_OUTPUT_DIR = REPO_ROOT / "tasks" / "demo_gate_runs"
+DEMO_GATE_EVALS = (
+    EVALS_DIR / "vendor_comparison.jsonl",
+    EVALS_DIR / "client_bug_regressions.jsonl",
+    EVALS_DIR / "vendor_reference_regressions.jsonl",
+)
+FULL_EVAL = EVALS_DIR / "manual_test_scenarios.jsonl"
 
 sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(REPO_ROOT))
@@ -29,6 +36,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 @dataclass(frozen=True)
 class VendorCase:
+    source: str
     id: str
     company: str
     message: str
@@ -109,6 +117,7 @@ def _load_cases(path: Path, company_id: str) -> list[VendorCase]:
         cases.append(
             VendorCase(
                 id=str(payload.get("id") or f"{path.stem}:{line_number}"),
+                source=path.name,
                 company=case_company,
                 message=str(payload.get("message") or ""),
                 history=history,
@@ -120,16 +129,30 @@ def _load_cases(path: Path, company_id: str) -> list[VendorCase]:
     return cases
 
 
-async def _seed_history(app: Any, company_id: str, history: list[dict[str, str]]) -> str:
-    from app.models import MessageRole  # noqa: WPS433
+def _post_chat_message(client: Any, company_id: str, session_id: str | None, message: str) -> dict[str, Any]:
+    response = client.post(
+        "/api/chat/message",
+        json={"company_id": company_id, "session_id": session_id, "message": message},
+    )
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"answer": response.text}
+    payload["_status_code"] = response.status_code
+    return payload
 
-    session_store = app.state.session_store
-    session = await session_store.get_or_create(None, company_id)
+
+def _replay_history(client: Any, company_id: str, history: list[dict[str, str]]) -> str | None:
+    session_id: str | None = None
     for item in history:
-        role = MessageRole.ASSISTANT if item["role"] == "assistant" else MessageRole.USER
-        if item["text"].strip():
-            await session_store.append_message(session.session_id, role, item["text"])
-    return str(session.session_id)
+        if item["role"] != "user":
+            continue
+        text = item["text"].strip()
+        if not text:
+            continue
+        payload = _post_chat_message(client, company_id, session_id, text)
+        session_id = str(payload.get("session_id") or session_id or "")
+    return session_id or None
 
 
 def _quick_action_labels(payload: dict[str, Any]) -> list[str]:
@@ -171,25 +194,18 @@ def _verdict(case: VendorCase, action: str, answer: str) -> str:
 
 
 def _run_case(client: Any, app: Any, company_id: str, case: VendorCase) -> CompareResult:
-    import anyio
-
-    session_id = anyio.run(_seed_history, app, company_id, case.history)
-    response = client.post(
-        "/api/chat/message",
-        json={"company_id": company_id, "session_id": session_id, "message": case.message},
-    )
-    try:
-        payload = response.json()
-    except Exception:
-        payload = {"answer": response.text}
-    action = str(payload.get("action") or f"http_{response.status_code}")
+    del app
+    session_id = _replay_history(client, company_id, case.history)
+    payload = _post_chat_message(client, company_id, session_id, case.message)
+    status_code = int(payload.get("_status_code") or 0)
+    action = str(payload.get("action") or f"http_{status_code}")
     answer = str(payload.get("answer") or "")
     quick_actions = _quick_action_labels(payload)
     if quick_actions:
         answer = f"{answer}\nКнопки: {', '.join(quick_actions)}"
     return CompareResult(
         case=case,
-        status_code=response.status_code,
+        status_code=status_code,
         action=action,
         answer=answer,
         quick_actions=quick_actions,
@@ -210,8 +226,8 @@ def _render_markdown(company_id: str, results: list[CompareResult]) -> str:
         "",
         f"Generated: {datetime.now().isoformat(timespec='seconds')}",
         "",
-        "| # | ID | Вопрос | Вендор | Наш | Verdict | Клиент |",
-        "|---:|---|---|---|---|---|---|",
+        "| # | Файл | ID | Компания | Вопрос | Вендор | Наш | Ожидаемо | Verdict | Заметка |",
+        "|---:|---|---|---|---|---|---|---|---|---|",
     ]
     for index, result in enumerate(results, start=1):
         lines.append(
@@ -219,10 +235,13 @@ def _render_markdown(company_id: str, results: list[CompareResult]) -> str:
             + " | ".join(
                 [
                     str(index),
+                    _md_cell(result.case.source),
                     _md_cell(result.case.id),
+                    _md_cell(result.case.company),
                     _md_cell(result.case.message),
                     _md_cell(result.case.vendor_answer),
                     _md_cell(f"[{result.action}] {result.answer}"),
+                    _md_cell(result.case.expected_action or "eyeball"),
                     _md_cell(result.verdict),
                     _md_cell(result.case.client_note),
                 ]
@@ -235,7 +254,7 @@ def _render_markdown(company_id: str, results: list[CompareResult]) -> str:
 
 def _print_result(result: CompareResult) -> None:
     print("─" * 80)
-    print(f"{result.case.id} | action={result.action} | verdict={result.verdict}")
+    print(f"{result.case.source}:{result.case.id} | action={result.action} | verdict={result.verdict}")
     print(f"U: {result.case.message}")
     print(f"НАШ: {result.answer}")
     print(f"VENDOR: {result.case.vendor_answer or '—'}")
@@ -246,7 +265,15 @@ def _print_result(result: CompareResult) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Side-by-side vendor dialog comparison.")
     parser.add_argument("--company", default="rosh_import_demo")
-    parser.add_argument("--eval", default=str(DEFAULT_EVAL), help="JSONL path or name under backend/evals")
+    parser.add_argument(
+        "--eval",
+        action="append",
+        default=None,
+        help="JSONL path or name under backend/evals. Can be passed multiple times.",
+    )
+    parser.add_argument("--full", action="store_true", help="Add manual_test_scenarios.jsonl to the eval set.")
+    parser.add_argument("--demo-gate", action="store_true", help="Use the default demo gate eval pack.")
+    parser.add_argument("--strict", action="store_true", help="Exit 1 if any result needs review.")
     parser.add_argument("--output", default="", help="Markdown output path. Defaults to tasks/vendor_compare_runs/.")
     parser.add_argument("--limit", type=int, default=0, help="Limit cases for quick checks.")
     parser.add_argument("--real-llm", action="store_true")
@@ -257,18 +284,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _output_path(value: str, company_id: str) -> Path:
+def _eval_paths(args: argparse.Namespace) -> list[Path]:
+    if args.eval:
+        paths = [_resolve_eval_path(value) for value in args.eval]
+    elif args.demo_gate:
+        paths = list(DEMO_GATE_EVALS)
+    else:
+        paths = [DEFAULT_EVAL]
+    if args.full:
+        paths.append(FULL_EVAL)
+    return paths
+
+
+def _output_path(value: str, company_id: str, *, demo_gate: bool = False) -> Path:
     if value:
         return Path(value)
-    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir = DEMO_GATE_OUTPUT_DIR if demo_gate else DEFAULT_OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return DEFAULT_OUTPUT_DIR / f"vendor_compare_{company_id}_{stamp}.md"
+    prefix = "demo_gate" if demo_gate else "vendor_compare"
+    return output_dir / f"{prefix}_{company_id}_{stamp}.md"
 
 
 def main() -> int:
     args = parse_args()
-    eval_path = _resolve_eval_path(args.eval)
-    cases = _load_cases(eval_path, args.company)
+    eval_paths = _eval_paths(args)
+    cases: list[VendorCase] = []
+    for eval_path in eval_paths:
+        cases.extend(_load_cases(eval_path, args.company))
     if args.limit > 0:
         cases = cases[: args.limit]
 
@@ -284,8 +327,11 @@ def main() -> int:
 
         from app.main import app  # noqa: WPS433
 
-        print(f"Vendor Comparison — {args.company}")
-        print(f"eval: {eval_path}")
+        title = "Demo Gate" if args.demo_gate else "Vendor Comparison"
+        print(f"{title} — {args.company}")
+        print("evals:")
+        for eval_path in eval_paths:
+            print(f"  - {eval_path}")
         print(f"provider: {'real' if args.real_llm else 'mock'}")
         print("═" * 80)
         results: list[CompareResult] = []
@@ -296,18 +342,26 @@ def main() -> int:
                 results.append(result)
                 _print_result(result)
 
-        output_path = _output_path(args.output, args.company)
+        output_path = _output_path(args.output, args.company, demo_gate=args.demo_gate)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(_render_markdown(args.company, results), encoding="utf-8")
 
         better = sum(1 for result in results if result.verdict in {"наш безопаснее", "наш осторожнее"})
-        worse = sum(1 for result in results if "хуже" in result.verdict or result.verdict.startswith("проверить"))
+        eyeball = sum(1 for result in results if result.verdict == "eyeball")
+        needs_review = sum(
+            1
+            for result in results
+            if "хуже" in result.verdict or result.verdict.startswith("проверить")
+        )
+        ok = sum(1 for result in results if result.verdict == "ok")
         print("═" * 80)
         print(f"cases: {len(results)}")
+        print(f"ok: {ok}")
         print(f"better_or_safer: {better}")
-        print(f"needs_review: {worse}")
+        print(f"eyeball: {eyeball}")
+        print(f"needs_review: {needs_review}")
         print(f"saved: {output_path}")
-    return 0
+    return 1 if args.strict and needs_review else 0
 
 
 if __name__ == "__main__":

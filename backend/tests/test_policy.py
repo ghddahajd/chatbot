@@ -480,6 +480,34 @@ def test_equipment_route_does_not_intercept_apparatnaya_cleaning(
     assert mention_result.service_id == "chistki_e744e513"
 
 
+def test_service_mention_suppresses_variant_examples_for_hidden_equipment(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("лазерная эпиляция", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.service_id == "lazernaya_epilyaciya_bc614e41"
+    assert result.safe_context["service"]["suppress_variant_examples"] is True
+
+
+def test_service_mention_keeps_variant_examples_without_hidden_equipment(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("ботулинотерапия", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.service_id == "botulinoterapiya_9d5734af"
+    assert "suppress_variant_examples" not in result.safe_context["service"]
+
+
 def test_generic_profile_does_not_auto_block_medical_phrase(resolver, managed_env) -> None:
     from app.models import Session
 

@@ -156,10 +156,13 @@ def service_consultation_template(
 def _service_mention_variants(service_name: str, service: dict[str, Any]) -> list[str]:
     variants_payload = service.get("variants")
     variants_count = len(variants_payload) if isinstance(variants_payload, list) else 0
-    variant_examples = [
-        item.split(" — ", 1)[0]
-        for item in _variant_examples(service, limit=2)
-    ]
+    suppress_variant_examples = service.get("suppress_variant_examples") is True
+    variant_examples = []
+    if not suppress_variant_examples:
+        variant_examples = [
+            item.split(" — ", 1)[0]
+            for item in _variant_examples(service, limit=2)
+        ]
 
     variants = [
         f"«{service_name}» есть у нас.",

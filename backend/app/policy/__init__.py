@@ -194,6 +194,32 @@ def _clinic_equipment(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     return equipment
 
 
+def _should_suppress_service_variant_examples(
+    knowledge_base: KnowledgeBase,
+    service,
+) -> bool:
+    if service is None:
+        return False
+    for equipment in _clinic_equipment(knowledge_base):
+        if equipment.get("service_id") == service.id and equipment.get("disclose") is not True:
+            return True
+    return False
+
+
+def _service_mention_context(knowledge_base: KnowledgeBase, service) -> dict[str, object]:
+    context = knowledge_base.get_service_context(service)
+    if not _should_suppress_service_variant_examples(knowledge_base, service):
+        return context
+
+    service_payload = context.get("service")
+    if isinstance(service_payload, dict):
+        context["service"] = {
+            **service_payload,
+            "suppress_variant_examples": True,
+        }
+    return context
+
+
 def _clinic_sensitive_topics(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     raw_topics = _clinic_info(knowledge_base).get("sensitive_topics")
     if not isinstance(raw_topics, list):
@@ -1643,7 +1669,7 @@ def analyze_message(
             reason=PolicyReason.OK,
             service_id=service.id,
             confidence=0.88,
-            safe_context=knowledge_base.get_service_context(service),
+            safe_context=_service_mention_context(knowledge_base, service),
             quick_actions=_service_quick_actions(service, "Уточнить цену", "Позвать менеджера"),
         )
 

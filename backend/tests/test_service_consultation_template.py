@@ -65,3 +65,21 @@ def test_service_template_variants_do_not_start_with_understood_phrase() -> None
     assert answers
     assert all(not answer.startswith("Понял, вы про") for answer in answers)
     assert all("Могу коротко сориентировать" not in answer for answer in answers)
+
+
+def test_service_template_suppresses_variant_examples_when_requested() -> None:
+    service = {
+        "name": "Лазерная эпиляция",
+        "suppress_variant_examples": True,
+        "variants": [
+            {"name": "Palomar Vectus зона A", "price_text": "1000 ₽"},
+            {"name": "ApprovedLaser зона B", "price_text": "2000 ₽"},
+        ],
+    }
+
+    answers = _service_mention_variants("Лазерная эпиляция", service)
+
+    assert answers
+    assert any("2 вариантами" in answer or "несколько вариантов" in answer for answer in answers)
+    assert all("Palomar" not in answer for answer in answers)
+    assert all("ApprovedLaser" not in answer for answer in answers)

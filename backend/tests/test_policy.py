@@ -551,6 +551,14 @@ def test_unknown_service_suggests_similar(policy_session, knowledge_base) -> Non
     assert result.safe_context["similar"]
 
 
+def test_booking_date_target_does_not_become_unknown_service(policy_session, knowledge_base) -> None:
+    result = _analyze("хочу записаться на завтра", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.BOOKING_REQUEST
+    assert "услуг" in result.safe_context["message_to_user"].lower()
+
+
 def test_single_similar_service_binds_context_for_followup(
     policy_session,
     resolver,

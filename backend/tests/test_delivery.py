@@ -310,6 +310,33 @@ def test_telegram_lead_text_includes_reason_service_and_dialog_link() -> None:
     assert "Открыть диалог: http://localhost:8000/operator?session\\_id=abc" in text
 
 
+def test_telegram_unknown_service_lead_text_highlights_original_query() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={
+            "name": "Иван",
+            "phone": "+7999",
+            "summary": "Пользователь спрашивал неподтверждённую услугу: «татуаж». Оставил контакт.",
+            "reason": "unknown_service",
+            "lead_trigger": "unknown_service",
+            "unresolved_query": "татуаж",
+            "recent_messages": [
+                {"role": "user", "text": "татуаж"},
+                {"role": "user", "text": "Иван +7999"},
+            ],
+            "operator_url": "http://localhost:8000/operator?session_id=abc",
+        },
+    )
+
+    assert "Тип: Неизвестная услуга" in text
+    assert "Запрос: татуаж" in text
+    assert "Услуга в базе: не найдена" in text
+    assert "Тип запроса:" not in text
+    assert "Услуга: не указана" not in text
+
+
 def test_telegram_text_escapes_unpaired_markdown_chars_in_dynamic_values() -> None:
     """regression: живой прогон на реальный Telegram API дал 400 "can't parse
     entities: Can't find end of the entity starting at byte offset 149" — голый "_"

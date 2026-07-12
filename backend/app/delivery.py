@@ -104,10 +104,25 @@ def _telegram_text(
         )
 
     reason_line = REASON_LABELS.get(str(payload.get("reason") or ""), "Оператор/контакт")
-    service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else "✂️ Услуга: не указана\n"
     last_message = _last_user_message_text(payload)
     operator_url = _escape_markdown(str(payload.get("operator_url") or "").strip())
     dialog_line = f"\n\n🔗 Открыть диалог: {operator_url}" if operator_url else ""
+
+    if str(payload.get("lead_trigger") or "") == "unknown_service":
+        unresolved_query = str(payload.get("unresolved_query") or "").strip()
+        return (
+            f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
+            f"👤 {_text_value(payload.get('name'))}\n"
+            f"📞 {_text_value(payload.get('phone'))}\n\n"
+            f"🏷 Тип: {_text_value(REASON_LABELS['unknown_service'])}\n"
+            f"❓ Запрос: {_text_value(unresolved_query)}\n"
+            f"✂️ Услуга в базе: не найдена\n\n"
+            f"🗨 Последнее сообщение: {_text_value(last_message)}\n"
+            f"🕐 {_text_value(timestamp)}"
+            f"{dialog_line}"
+        )
+
+    service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else "✂️ Услуга: не указана\n"
     return (
         f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
         f"👤 Имя: {_text_value(payload.get('name'))}\n"

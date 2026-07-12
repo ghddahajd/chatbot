@@ -171,7 +171,36 @@ class ChatService:
             return f"{prefix}{prior_message} | Контакт: {message}"
         return f"{prefix}{message}"
 
+    def _unresolved_lead_metadata(
+        self,
+        session,
+        current_message: str,
+        *,
+        last_intent: str | None = None,
+    ) -> dict[str, object]:
+        intent = last_intent if last_intent is not None else session.last_intent
+        if intent not in {
+            PolicyReason.UNKNOWN_SERVICE.value,
+            PolicyReason.SIMILAR_SERVICES_FOUND.value,
+        }:
+            return {}
+        unresolved_query = self._last_user_message_before_current(session, current_message)
+        if not unresolved_query:
+            return {}
+        return {
+            "unresolved_service_mention": True,
+            "unresolved_query": unresolved_query,
+            "lead_trigger": "unknown_service",
+            "reason": "unknown_service",
+        }
+
     async def _finalize_lead_summary(self, session, lead) -> None:
+        if lead.lead_trigger == "unknown_service" and lead.unresolved_query:
+            lead.summary = (
+                f"Пользователь спрашивал неподтверждённую услугу: «{lead.unresolved_query}». "
+                "Оставил контакт."
+            )
+            return
         llm_client = getattr(self.request.app.state, "llm_client", None)
         if llm_client is None:
             return
@@ -267,6 +296,7 @@ class ChatService:
         draft_needs_operator = bool(session.contact_draft.get("needs_operator"))
         draft_lead_trigger = str(session.contact_draft.get("lead_trigger") or "").strip()
         draft_reason = str(session.contact_draft.get("reason") or "").strip()
+        draft_unresolved_query = str(session.contact_draft.get("unresolved_query") or "").strip()
         contact = {"name": name, "phone": phone}
         lead = build_lead_from_contact(
             company_id=session.company_id,
@@ -283,6 +313,7 @@ class ChatService:
                 is_operator_flow=session.operator_requested,
                 is_regulated_flow=draft_needs_operator,
             ),
+            unresolved_query=draft_unresolved_query,
             recent_messages=recent_messages_for(session),
             operator_url=self._operator_session_url(session.session_id),
         )
@@ -343,6 +374,9 @@ class ChatService:
                 else PendingAction.COLLECT_CONTACT.value
             )
             await session_store.set_pending_action(session.session_id, pending_action)
+            unresolved_metadata = self._unresolved_lead_metadata(session, "")
+            if unresolved_metadata:
+                await session_store.update_contact_draft(session.session_id, metadata=unresolved_metadata)
             return
 
         if policy_result.action == PolicyAction.CLARIFY and policy_result.safe_context.get("booking_request"):
@@ -527,15 +561,23 @@ class ChatService:
             )
             contact = waiting_policy_result.safe_context.get("contact")
             if waiting_policy_result.action == PolicyAction.ASK_CONTACT and contact:
+                unresolved_metadata = self._unresolved_lead_metadata(
+                    session,
+                    message,
+                    last_intent=session.last_intent,
+                )
                 lead = build_lead_from_contact(
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
                     summary=self._lead_summary(session, message, is_booking_request=False),
                     service_id=waiting_policy_result.service_id,
-                    reason=classify_lead_reason(last_intent=session.last_intent, is_booking_request=False),
+                    reason=str(unresolved_metadata.get("reason") or "")
+                    or classify_lead_reason(last_intent=session.last_intent, is_booking_request=False),
                     needs_operator=True,
-                    lead_trigger=lead_trigger_for(is_booking_request=False, is_operator_flow=True),
+                    lead_trigger=str(unresolved_metadata.get("lead_trigger") or "")
+                    or lead_trigger_for(is_booking_request=False, is_operator_flow=True),
+                    unresolved_query=str(unresolved_metadata.get("unresolved_query") or ""),
                     recent_messages=recent_messages_for(session),
                     operator_url=self._operator_session_url(session.session_id),
                 )
@@ -613,6 +655,15 @@ class ChatService:
                 draft_needs_operator = bool(prior_contact_draft.get("needs_operator"))
                 draft_lead_trigger = str(prior_contact_draft.get("lead_trigger") or "").strip()
                 draft_reason = str(prior_contact_draft.get("reason") or "").strip()
+                draft_unresolved_query = str(prior_contact_draft.get("unresolved_query") or "").strip()
+                unresolved_metadata = self._unresolved_lead_metadata(
+                    session,
+                    message,
+                    last_intent=prior_last_intent,
+                )
+                unresolved_lead_trigger = str(unresolved_metadata.get("lead_trigger") or "").strip()
+                unresolved_reason = str(unresolved_metadata.get("reason") or "").strip()
+                unresolved_query = str(unresolved_metadata.get("unresolved_query") or "").strip()
                 lead = build_lead_from_contact(
                     company_id=session.company_id,
                     session_id=session.session_id,
@@ -620,14 +671,17 @@ class ChatService:
                     summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
                     service_id=policy_result.service_id or session.last_service_id,
                     reason=draft_reason
+                    or unresolved_reason
                     or classify_lead_reason(last_intent=prior_last_intent, is_booking_request=is_booking_request),
                     needs_operator=draft_needs_operator or session.operator_requested,
                     lead_trigger=draft_lead_trigger
+                    or unresolved_lead_trigger
                     or lead_trigger_for(
                         is_booking_request=is_booking_request,
                         is_operator_flow=session.operator_requested,
                         is_regulated_flow=draft_needs_operator,
                     ),
+                    unresolved_query=draft_unresolved_query or unresolved_query,
                     recent_messages=recent_messages_for(session),
                     operator_url=self._operator_session_url(session.session_id),
                 )

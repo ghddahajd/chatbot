@@ -220,6 +220,45 @@ def _service_mention_context(knowledge_base: KnowledgeBase, service) -> dict[str
     return context
 
 
+_BOOKING_TARGET_SKIP_WORDS = {
+    "завтра",
+    "сегодня",
+    "послезавтра",
+    "утро",
+    "утром",
+    "день",
+    "днем",
+    "вечер",
+    "вечером",
+    "ночь",
+    "ночью",
+    "понедельник",
+    "вторник",
+    "среду",
+    "четверг",
+    "пятницу",
+    "субботу",
+    "воскресенье",
+    "выходные",
+    "неделе",
+    "следующей",
+}
+
+
+def _has_unknown_booking_target(normalized_message: str) -> bool:
+    tokens = normalized_message.split()
+    for index, token in enumerate(tokens[:-1]):
+        if token != "на":
+            continue
+        next_token = tokens[index + 1]
+        if next_token in _BOOKING_TARGET_SKIP_WORDS:
+            continue
+        if next_token.isdigit():
+            continue
+        return True
+    return False
+
+
 def _clinic_sensitive_topics(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     raw_topics = _clinic_info(knowledge_base).get("sensitive_topics")
     if not isinstance(raw_topics, list):
@@ -1466,7 +1505,7 @@ def analyze_message(
             service = knowledge_base.find_service_by_id(
                 session.last_service_id or last_service_from_history(session, knowledge_base)
             )
-        if service is None and phone and " на " in f" {normalized_message} ":
+        if service is None and _has_unknown_booking_target(normalized_message):
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
                 reason=PolicyReason.UNKNOWN_SERVICE,

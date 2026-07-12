@@ -21,6 +21,7 @@ REASON_LABELS = {
     "price_question": "Цена",
     "medical_risk": "Консультация",
     "commercial_interest": "Оператор/контакт",
+    "unknown_service": "Неизвестная услуга",
 }
 
 
@@ -75,6 +76,7 @@ def lead_to_payload(lead: Lead) -> dict[str, Any]:
         "reason": lead.reason,
         "needs_operator": lead.needs_operator,
         "lead_trigger": lead.lead_trigger,
+        "unresolved_query": lead.unresolved_query,
         "recent_messages": lead.recent_messages,
         "operator_url": lead.operator_url,
     }
@@ -122,6 +124,7 @@ def build_lead_from_contact(
     reason: str = "commercial_interest",
     needs_operator: bool = False,
     lead_trigger: str = "ask_contact",
+    unresolved_query: str = "",
     recent_messages: Optional[list[dict[str, str]]] = None,
     operator_url: str = "",
 ) -> Lead:
@@ -137,6 +140,7 @@ def build_lead_from_contact(
         reason=reason,
         needs_operator=needs_operator,
         lead_trigger=lead_trigger,
+        unresolved_query=unresolved_query,
         recent_messages=recent_messages or [],
         operator_url=operator_url,
     )

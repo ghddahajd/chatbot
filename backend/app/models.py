@@ -106,6 +106,7 @@ class Lead(BaseModel):
     reason: str = "commercial_interest"
     needs_operator: bool = False
     lead_trigger: str = "ask_contact"
+    unresolved_query: str = ""
     recent_messages: list[dict[str, str]] = Field(default_factory=list)
     operator_url: str = ""
 

@@ -459,8 +459,53 @@ def test_pending_contact_lead_summary_keeps_prior_user_request(test_client, mana
     assert second_payload["lead_created"] is True
     lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert lead["service_id"] is None
+    assert lead["lead_trigger"] == "unknown_service"
+    assert lead["reason"] == "unknown_service"
+    assert lead["unresolved_query"] == "хочу татуаж"
     assert "татуаж" in lead["summary"].lower()
-    assert "Контакт: Иван +79991234567" in lead["summary"]
+    assert "неподтверждённую услугу" in lead["summary"]
+
+
+def test_unknown_service_booking_phone_creates_marked_lead(test_client, managed_env) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу записаться на биоиоиои"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +79991234567",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["service_id"] is None
+    assert lead["lead_trigger"] == "unknown_service"
+    assert lead["reason"] == "unknown_service"
+    assert "биоиоиои" in lead["unresolved_query"]
+    assert "биоиоиои" in lead["summary"]
+
+
+def test_regular_contact_lead_is_not_marked_unknown_service(test_client, managed_env) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "Иван +79991234567 хочу узнать"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["lead_trigger"] == "ask_contact"
+    assert lead["reason"] == "commercial_interest"
+    assert lead["unresolved_query"] == ""
 
 
 def test_direct_phone_after_price_question_keeps_prior_reason_and_service(test_client, managed_env) -> None:

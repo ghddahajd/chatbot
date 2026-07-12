@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,12 +27,25 @@ DELIVERY_TIMEOUT_SECONDS = 5.0
 
 
 def _last_user_message_text(payload: dict[str, Any]) -> str:
+    """последнее сообщение юзера, кроме того что просто повторяет уже показанный телефон.
+
+    Иначе почти всегда это "Имя +телефон" — то же самое, что уже стоит в 👤/📞 выше,
+    и строка "Последнее сообщение" дублирует контакты вместо того, чтобы нести новый факт.
+    """
+
     recent_messages = payload.get("recent_messages")
     if not isinstance(recent_messages, list):
         return ""
+    phone_digits = re.sub(r"\D", "", str(payload.get("phone") or ""))
     for item in reversed(recent_messages):
-        if isinstance(item, dict) and item.get("role") == "user":
-            return str(item.get("text") or "").strip()
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        if phone_digits and phone_digits in re.sub(r"\D", "", text):
+            continue
+        return text
     return ""
 
 
@@ -110,6 +124,8 @@ def _telegram_text(
 
     if str(payload.get("lead_trigger") or "") == "unknown_service":
         unresolved_query = str(payload.get("unresolved_query") or "").strip()
+        # "Последнее сообщение" тут почти всегда дублирует 👤/📞 (сообщение с контактом) —
+        # "Запрос" уже несёт содержательную часть, отдельный хвост не нужен.
         return (
             f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
             f"👤 {_text_value(payload.get('name'))}\n"
@@ -117,12 +133,12 @@ def _telegram_text(
             f"🏷 Тип: {_text_value(REASON_LABELS['unknown_service'])}\n"
             f"❓ Запрос: {_text_value(unresolved_query)}\n"
             f"✂️ Услуга в базе: не найдена\n\n"
-            f"🗨 Последнее сообщение: {_text_value(last_message)}\n"
             f"🕐 {_text_value(timestamp)}"
             f"{dialog_line}"
         )
 
-    service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else "✂️ Услуга: не указана\n"
+    service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else ""
+    last_message_line = f"🗨 Последнее сообщение: {_text_value(last_message)}\n" if last_message else ""
     return (
         f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
         f"👤 Имя: {_text_value(payload.get('name'))}\n"
@@ -130,7 +146,7 @@ def _telegram_text(
         f"{service_line}"
         f"🏷 Тип запроса: {reason_line}\n"
         f"💬 Саммари: {_text_value(payload.get('summary'))}\n"
-        f"🗨 Последнее сообщение: {_text_value(last_message)}\n"
+        f"{last_message_line}"
         f"🕐 {_text_value(timestamp)}"
         f"{dialog_line}"
     )

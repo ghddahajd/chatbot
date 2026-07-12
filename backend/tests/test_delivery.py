@@ -310,6 +310,66 @@ def test_telegram_lead_text_includes_reason_service_and_dialog_link() -> None:
     assert "Открыть диалог: http://localhost:8000/operator?session\\_id=abc" in text
 
 
+def test_telegram_lead_text_drops_last_message_line_when_it_only_repeats_phone() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-07-11T16:15:09",
+        payload={
+            "name": "Иван",
+            "phone": "+79991234567",
+            "summary": "у меня воспаление что делать | Контакт: Иван +7 999 123-45-67",
+            "reason": "medical_risk",
+            "recent_messages": [
+                {"role": "user", "text": "у меня воспаление что делать"},
+                {"role": "assistant", "text": "..."},
+                # разный формат телефона (пробелы/дефисы), но по цифрам совпадает с payload["phone"]
+                {"role": "user", "text": "Иван +7 999 123-45-67"},
+            ],
+            "operator_url": "http://localhost:8000/operator",
+        },
+    )
+
+    assert "Последнее сообщение: у меня воспаление что делать" in text
+    assert "Последнее сообщение: Иван" not in text
+
+
+def test_telegram_lead_text_omits_last_message_line_when_only_contact_given() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-07-12T14:26:50",
+        payload={
+            "name": "Иван",
+            "phone": "+79261234567",
+            "summary": "Иван хочет узнать о доступных услугах.",
+            "reason": "commercial_interest",
+            "recent_messages": [{"role": "user", "text": "Иван +79261234567"}],
+            "operator_url": "http://localhost:8000/operator",
+        },
+    )
+
+    assert "Последнее сообщение" not in text
+
+
+def test_telegram_lead_text_omits_service_line_when_service_missing() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-07-12T14:26:50",
+        payload={
+            "name": "Иван",
+            "phone": "+79261234567",
+            "summary": "Иван хочет узнать о доступных услугах.",
+            "reason": "commercial_interest",
+            "recent_messages": [],
+            "operator_url": "http://localhost:8000/operator",
+        },
+    )
+
+    assert "Услуга:" not in text
+
+
 def test_telegram_unknown_service_lead_text_highlights_original_query() -> None:
     text = _telegram_text(
         event_type="lead_created",

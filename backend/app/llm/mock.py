@@ -131,14 +131,7 @@ def service_consultation_template(
     ]
     seed = "|".join([service_name, user_message, *recent_user_messages])
     if service_name:
-        variants = [
-            f"По услуге «{service_name}» могу подсказать стоимость или позвать менеджера.",
-            f"Да, «{service_name}» есть у нас. Могу сориентировать по цене или передать вопрос менеджеру.",
-            f"По услуге «{service_name}» могу помочь в рамках информации центра. Если нужно, уточним стоимость или позовём менеджера.",
-            f"Могу коротко сориентировать по «{service_name}»: дальше удобнее уточнить цену или передать вопрос менеджеру.",
-            f"Если речь про «{service_name}», я могу помочь с общей информацией центра или подключить менеджера.",
-        ]
-        return _choose_stable_variant(seed, variants)
+        return _choose_stable_variant(seed, _service_mention_variants(service_name, service))
 
     suggested_services = context.get("suggested_services")
     if isinstance(suggested_services, list) and suggested_services:
@@ -158,6 +151,42 @@ def service_consultation_template(
             return _choose_stable_variant(seed + service_text, variants)
 
     return "Понял запрос. Могу подсказать по стоимости или передать вопрос менеджеру."
+
+
+def _service_mention_variants(service_name: str, service: dict[str, Any]) -> list[str]:
+    variants_payload = service.get("variants")
+    variants_count = len(variants_payload) if isinstance(variants_payload, list) else 0
+    variant_examples = [
+        item.split(" — ", 1)[0]
+        for item in _variant_examples(service, limit=2)
+    ]
+
+    variants = [
+        f"«{service_name}» есть у нас.",
+        f"Да, «{service_name}» — одно из направлений центра.",
+        f"По услуге «{service_name}» могу подсказать основную информацию.",
+        f"«{service_name}» есть в центре, детали лучше уточнять по конкретному запросу.",
+    ]
+
+    if variants_count > 1:
+        variants.append(f"«{service_name}» — направление с {variants_count} вариантами в прайсе.")
+        variants.append(f"По «{service_name}» есть несколько вариантов.")
+        if variant_examples:
+            variants.append(f"По «{service_name}» среди вариантов есть «{variant_examples[0]}».")
+        if len(variant_examples) > 1:
+            variants.append(
+                f"В «{service_name}» входят разные позиции, например «{variant_examples[0]}» и «{variant_examples[1]}»."
+            )
+    else:
+        variants.extend(
+            [
+                f"Такая услуга есть: «{service_name}». Могу подсказать цену, детали или передать вопрос менеджеру.",
+                f"«{service_name}» есть в списке услуг центра.",
+                f"По «{service_name}» могу помочь в рамках информации центра.",
+            ]
+        )
+
+    return variants
 
 
 def _variant_examples(service: dict[str, Any], *, limit: int = 4) -> list[str]:

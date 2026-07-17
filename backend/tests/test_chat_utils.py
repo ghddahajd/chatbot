@@ -1,5 +1,7 @@
 """проверки вспомогательной логики chat route."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.routes.chat_utils import (
@@ -199,6 +201,25 @@ async def test_consultation_risk_allows_generic_products_question() -> None:
 
 
 @pytest.mark.anyio
+async def test_consultation_risk_trusts_policy_cosmetic_concern() -> None:
+    class FailingLLM:
+        async def classify_restricted_risk(self, message: str) -> str:
+            raise AssertionError("policy-approved cosmetic_concern must not call LLM risk check")
+
+    domain_profile = {"type": "medical", "restricted_advice": ["medical", "diagnosis", "treatment"]}
+    context = {"domain_profile": domain_profile, "question_type": "cosmetic_concern"}
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(llm_client=FailingLLM())))
+
+    risk, _request_id = await classify_consultation_risk(
+        request,
+        "у меня жирная кожа и расширенные поры, что подойдёт и почём?",
+        context,
+    )
+
+    assert risk == CONSULTATION_RISK_SAFE
+
+
+@pytest.mark.anyio
 async def test_consultation_risk_still_blocks_real_symptom() -> None:
     domain_profile = {"type": "medical", "restricted_advice": ["medical", "diagnosis", "treatment"]}
     context = {"domain_profile": domain_profile, "service": {"name": "Ботулинотерапия"}}
@@ -206,6 +227,20 @@ async def test_consultation_risk_still_blocks_real_symptom() -> None:
     risk, _request_id = await classify_consultation_risk(
         None,
         "у меня болит после процедуры",
+        context,
+    )
+
+    assert risk != CONSULTATION_RISK_SAFE
+
+
+@pytest.mark.anyio
+async def test_consultation_risk_blocks_worse_after_procedure() -> None:
+    domain_profile = {"type": "medical", "restricted_advice": ["medical", "diagnosis", "treatment"]}
+    context = {"domain_profile": domain_profile, "service": {"name": "Чистка лица"}}
+
+    risk, _request_id = await classify_consultation_risk(
+        None,
+        "после процедуры стало хуже",
         context,
     )
 

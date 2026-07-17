@@ -186,6 +186,22 @@ def test_clinic_location_answers_without_offtopic(policy_session, resolver, mana
     assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
 
 
+def test_clinic_hours_followup_phrasings_answer_without_offtopic(
+    policy_session, resolver, managed_env
+) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message in (
+        "во сколько открываетесь",
+        "когда закрываетесь",
+        "до скольки работаете",
+    ):
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.action == PolicyAction.ANSWER, message
+        assert "Часы работы" in result.safe_context["message_to_user"], message
+
+
 def test_clinic_doctor_info_answers_from_config(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(
         resolver,

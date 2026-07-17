@@ -1005,6 +1005,28 @@ def test_fact_guard_stays_before_faq_rag(
     assert "fact_guard" in result.safe_context
 
 
+def test_fact_guard_ignores_negated_blocked_value(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "слышала, что вы делаете ботокс, но мне это не интересно",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert "fact_guard" not in result.safe_context
+    assert "Ботокс среди подтверждённых вариантов нет" not in str(
+        result.safe_context.get("message_to_user", "")
+    )
+
+
 def test_fact_guard_stays_before_cosmetic_concern(
     policy_session,
     resolver,
@@ -1081,6 +1103,49 @@ def test_post_procedure_symptom_escalates_even_with_price_intent(
 
     assert result.action == PolicyAction.TRANSFER_OPERATOR
     assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_medical_keyword_gap_still_escalates_with_known_service_context(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Fallback safety: MEDICAL_KEYWORDS-only phrases must not be forgiven just
+    because the message also has a known service and a price-like intent."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "после чистки лица стало хуже, сколько стоит повторная процедура?",
+        policy_session,
+        knowledge_base,
+        {"intent": "price_question", "service_id": "chistki_e744e513", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_safe_known_service_price_request_still_answers(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "сколько стоит чистка лица?",
+        policy_session,
+        knowledge_base,
+        {"intent": "price_question", "service_id": "chistki_e744e513", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
 
 
 def test_benign_aftercare_question_does_not_escalate(

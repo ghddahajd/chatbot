@@ -23,6 +23,7 @@ from .constants import (
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
+    MEDICAL_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
     OMS_FACT_KEYWORDS,
@@ -902,6 +903,14 @@ HARD_RESTRICTED_KEYWORDS = {
     "рецепт",
     "по назначению",
 }
+FACT_GUARD_NEGATION_MARKERS = {
+    "не интересно",
+    "не интересует",
+    "не нужен",
+    "не нужно",
+    "не хочу",
+    "не надо",
+}
 SAFE_SERVICE_REQUEST_INTENTS = {
     "medical_advice",
     "regulated_advice",
@@ -910,10 +919,18 @@ SAFE_SERVICE_REQUEST_INTENTS = {
 }
 
 
+def _has_hard_restricted_signal(normalized_message: str) -> bool:
+    return contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS)
+
+
 def _looks_like_safe_known_service_request(intent: str, normalized_message: str, service) -> bool:
     if service is None or intent not in SAFE_SERVICE_REQUEST_INTENTS:
         return False
-    return not contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS)
+    return not _has_hard_restricted_signal(normalized_message)
+
+
+def _has_fact_guard_negation(normalized_message: str) -> bool:
+    return contains_keyword(normalized_message, FACT_GUARD_NEGATION_MARKERS)
 
 
 def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
@@ -945,6 +962,8 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
             if normalize_text(value) and normalize_text(value) in normalized_message
         ]
         if not matched_blocked:
+            continue
+        if _has_fact_guard_negation(normalized_message):
             continue
 
         service = knowledge_base.find_service_by_id(service_id)

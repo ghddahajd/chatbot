@@ -121,15 +121,19 @@ def _telegram_text(
     last_message = _last_user_message_text(payload)
     operator_url = _escape_markdown(str(payload.get("operator_url") or "").strip())
     dialog_line = f"\n\n🔗 Открыть диалог: {operator_url}" if operator_url else ""
+    # needs_operator помечает лиды, где юзер уже упирался в мед-риск/регулируемую тему —
+    # им нужен более быстрый ответ, чем обычному лиду с ценой; выделяем визуально, а не
+    # только текстом в саммари, чтобы это было видно не читая карточку целиком.
+    title = "🔴 *Срочная заявка*" if payload.get("needs_operator") else "🔔 *Новая заявка*"
 
     if str(payload.get("lead_trigger") or "") == "unknown_service":
         unresolved_query = str(payload.get("unresolved_query") or "").strip()
         # "Последнее сообщение" тут почти всегда дублирует 👤/📞 (сообщение с контактом) —
         # "Запрос" уже несёт содержательную часть, отдельный хвост не нужен.
         return (
-            f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
-            f"👤 {_text_value(payload.get('name'))}\n"
-            f"📞 {_text_value(payload.get('phone'))}\n\n"
+            f"{title} — {_text_value(company_name)}\n\n"
+            f"👤 Имя: {_text_value(payload.get('name'))}\n"
+            f"📞 Телефон: {_text_value(payload.get('phone'))}\n\n"
             f"🏷 Тип: {_text_value(REASON_LABELS['unknown_service'])}\n"
             f"❓ Запрос: {_text_value(unresolved_query)}\n"
             f"✂️ Услуга в базе: не найдена\n\n"
@@ -140,7 +144,7 @@ def _telegram_text(
     service_line = f"✂️ Услуга: {_text_value(service_name)}\n" if service_name else ""
     last_message_line = f"🗨 Последнее сообщение: {_text_value(last_message)}\n" if last_message else ""
     return (
-        f"🔔 *Новая заявка* — {_text_value(company_name)}\n\n"
+        f"{title} — {_text_value(company_name)}\n\n"
         f"👤 Имя: {_text_value(payload.get('name'))}\n"
         f"📞 Телефон: {_text_value(payload.get('phone'))}\n"
         f"{service_line}"

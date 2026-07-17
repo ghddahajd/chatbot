@@ -370,6 +370,68 @@ def test_telegram_lead_text_omits_service_line_when_service_missing() -> None:
     assert "Услуга:" not in text
 
 
+def test_telegram_lead_text_marks_needs_operator_as_urgent() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-07-11T16:15:09",
+        payload={
+            "name": "Иван",
+            "phone": "+79991234567",
+            "summary": "у меня воспаление что делать",
+            "reason": "medical_risk",
+            "needs_operator": True,
+            "recent_messages": [],
+            "operator_url": "http://localhost:8000/operator",
+        },
+    )
+
+    assert "🔴" in text
+    assert "Срочная заявка" in text
+    assert "Новая заявка" not in text
+
+
+def test_telegram_lead_text_stays_regular_without_needs_operator() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-07-11T16:15:09",
+        payload={
+            "name": "Иван",
+            "phone": "+79991234567",
+            "summary": "сколько стоит эпиляция",
+            "reason": "price_question",
+            "needs_operator": False,
+            "recent_messages": [],
+            "operator_url": "http://localhost:8000/operator",
+        },
+    )
+
+    assert "🔴" not in text
+    assert "Срочная заявка" not in text
+    assert "Новая заявка" in text
+
+
+def test_telegram_unknown_service_lead_text_uses_labeled_name_and_phone() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-07-12T14:43:03",
+        payload={
+            "name": "Иван",
+            "phone": "+79261234567",
+            "reason": "unknown_service",
+            "lead_trigger": "unknown_service",
+            "unresolved_query": "татуаж",
+            "recent_messages": [],
+            "operator_url": "http://localhost:8000/operator",
+        },
+    )
+
+    assert "Имя: Иван" in text
+    assert "Телефон: +79261234567" in text
+
+
 def test_telegram_unknown_service_lead_text_highlights_original_query() -> None:
     text = _telegram_text(
         event_type="lead_created",

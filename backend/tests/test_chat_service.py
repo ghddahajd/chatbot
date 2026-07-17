@@ -62,6 +62,64 @@ def test_booking_prompt_can_be_cancelled_with_common_typo(test_client) -> None:
     assert second_payload["lead_created"] is False
 
 
+def test_booking_prompt_accepts_service_name_as_next_step(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "запишите меня"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "на чистку лица",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "clarify"
+    assert "телефон" in second_payload["answer"].lower()
+    assert "такой услуги" not in second_payload["answer"].lower()
+
+    third_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +79991234567",
+        },
+    )
+    third_payload = third_response.json()
+
+    assert third_response.status_code == 200
+    assert third_payload["lead_created"] is True
+
+
+def test_contact_prompt_still_allows_new_price_question(test_client) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу оставить телефон"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "а сколько стоит чистка лица",
+        },
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "answer"
+    assert "стоимость" in second_payload["answer"].lower() or "₽" in second_payload["answer"]
+
+
 def test_cancel_after_price_booking_compound_does_not_become_unknown_service(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",

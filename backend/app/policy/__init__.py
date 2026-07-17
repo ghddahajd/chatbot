@@ -259,6 +259,19 @@ def _has_unknown_booking_target(normalized_message: str) -> bool:
     return False
 
 
+def _looks_like_bare_price_question(normalized_message: str) -> bool:
+    tokens = normalized_message.split()
+    if "сколько" not in tokens:
+        return False
+    if tokens.index("сколько") >= len(tokens) - 1:
+        return False
+    if contains_keyword(normalized_message, DURATION_KEYWORDS):
+        return False
+    if contains_keyword(normalized_message, EXPLANATION_KEYWORDS):
+        return False
+    return True
+
+
 def _clinic_sensitive_topics(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     raw_topics = _clinic_info(knowledge_base).get("sensitive_topics")
     if not isinstance(raw_topics, list):
@@ -1069,11 +1082,15 @@ def analyze_message(
     operator_requested = contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
     ) or contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS) or intent == "operator_request"
-    price_requested = intent == "price_question" or fuzzy_contains(normalized_message, PRICE_KEYWORDS)
-    booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
-    lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
+    price_requested = (
+        intent == "price_question"
+        or fuzzy_contains(normalized_message, PRICE_KEYWORDS)
+        or _looks_like_bare_price_question(normalized_message)
+    )
+    booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
+    lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):

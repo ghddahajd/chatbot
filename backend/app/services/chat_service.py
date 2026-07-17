@@ -228,6 +228,47 @@ class ChatService:
         )
         return float(classification.get("confidence") or 0.0) > 0
 
+    async def _handle_booking_service_selection(
+        self,
+        *,
+        session_store,
+        session,
+        message: str,
+        knowledge_base,
+    ) -> ChatMessageResponse | None:
+        if session.pending_action != PendingAction.BOOKING_CONTACT.value:
+            return None
+
+        classification = classify_and_extract(
+            message,
+            service_classifier_payload(self.request, knowledge_base),
+            knowledge_base.company.city,
+            knowledge_base.domain_profile,
+        )
+        service = knowledge_base.find_service_by_id(classification.get("service_id"))
+        if service is None:
+            return None
+
+        await session_store.update_context(
+            session.session_id,
+            last_service_id=service.id,
+            last_intent=PolicyReason.BOOKING_REQUEST.value,
+        )
+        answer = self._phrase(
+            "booking_contact_prompt",
+            "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
+        )
+        await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+        session = await session_store.get(session.session_id)
+        return ChatMessageResponse(
+            session_id=session.session_id,
+            status=session.status,
+            action=PolicyAction.CLARIFY,
+            answer=answer,
+            lead_created=False,
+            quick_actions=[],
+        )
+
     async def _handle_pending_contact(
         self,
         *,
@@ -269,6 +310,16 @@ class ChatService:
             )
 
         phone = extract_phone(message)
+        if not phone:
+            booking_service_response = await self._handle_booking_service_selection(
+                session_store=session_store,
+                session=session,
+                message=message,
+                knowledge_base=knowledge_base,
+            )
+            if booking_service_response is not None:
+                return booking_service_response
+
         if not phone and self._looks_like_new_question(message, knowledge_base):
             await self._clear_contact_state(session_store, session.session_id)
             return None

@@ -535,6 +535,42 @@ def test_price_with_known_service(policy_session, knowledge_base) -> None:
     assert result.service_id == "facial_cleansing"
 
 
+def test_bare_skolko_with_known_service_is_price(policy_session, knowledge_base) -> None:
+    result = _analyze("сколько чистка лица?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.service_id == "facial_cleansing"
+
+
+def test_bare_skolko_with_import_service_is_price(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("сколько биоревит?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.service_id == "biorevitalizaciya_9d426f68"
+
+
+def test_bare_skolko_with_intro_words_is_price(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("ладно, так сколько биоревит?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.service_id == "biorevitalizaciya_9d426f68"
+
+
+def test_skolko_duration_does_not_become_price(policy_session, knowledge_base) -> None:
+    result = _analyze("сколько длится чистка лица?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.DURATION_QUESTION
+    assert result.service_id == "facial_cleansing"
+
+
 def test_price_without_service_asks_clarification(policy_session, knowledge_base) -> None:
     result = _analyze("сколько стоит?", policy_session, knowledge_base)
 

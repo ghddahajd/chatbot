@@ -840,7 +840,6 @@ FACT_VALUE_QUESTION_KEYWORDS = {
 HARD_RESTRICTED_KEYWORDS = {
     "диагноз",
     "лечить",
-    "что делать",
     "назначить",
     "назначьте",
     "выпишите",

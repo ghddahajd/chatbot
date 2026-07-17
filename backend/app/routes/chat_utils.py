@@ -537,6 +537,16 @@ async def classify_consultation_risk(
 
     request_id = uuid4().hex[:10]
     started_at = time.perf_counter()
+    if context.get("question_type") == "cosmetic_concern":
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "request_id=%s classification_restricted_ms=%.1f result=%s source=policy_cosmetic_concern",
+            request_id,
+            elapsed_ms,
+            CONSULTATION_RISK_SAFE,
+        )
+        return CONSULTATION_RISK_SAFE, request_id
+
     domain_profile = context.get("domain_profile") if isinstance(context.get("domain_profile"), dict) else {}
     categories = get_restricted_categories(domain_profile)
     if not categories:

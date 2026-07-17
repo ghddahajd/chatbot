@@ -211,7 +211,7 @@ def domain_matches(hostname: str, allowed_domain: str) -> bool:
 
 
 def _token_prefix_match(left: str, right: str) -> bool:
-    min_prefix = 5
+    min_prefix = 6
     if min(len(left), len(right)) < min_prefix:
         return left == right
     return left[:min_prefix] == right[:min_prefix]

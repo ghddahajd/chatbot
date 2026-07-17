@@ -330,8 +330,15 @@ def _run_api_checks(
                 json={"company_id": company_id, "session_id": None, "message": "у меня болит"},
             )
             restricted_payload = restricted_response.json()
-            if restricted_payload.get("action") == "transfer_operator":
+            restricted_action = restricted_payload.get("action")
+            offers_operator = any(
+                isinstance(action, dict) and action.get("value") == "Да, менеджера"
+                for action in restricted_payload.get("quick_actions") or []
+            )
+            if restricted_action == "transfer_operator":
                 state.ok("restricted вопрос → transfer_operator")
+            elif restricted_action == "clarify" and offers_operator:
+                state.ok("restricted вопрос → soft-offer менеджера")
             else:
                 state.block("restricted вопрос не защищён")
         else:

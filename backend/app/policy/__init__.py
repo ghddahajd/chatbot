@@ -1328,6 +1328,10 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
+    equipment_result = _equipment_result(message, normalized_message, knowledge_base, service)
+    if equipment_result is not None:
+        return equipment_result
+
     if intent == "list_services":
         return PolicyResult(
             action=PolicyAction.ANSWER,
@@ -1424,10 +1428,6 @@ def analyze_message(
     efficacy_claim_result = _efficacy_claim_result(normalized_message, knowledge_base, service)
     if efficacy_claim_result is not None:
         return efficacy_claim_result
-
-    equipment_result = _equipment_result(message, normalized_message, knowledge_base, service)
-    if equipment_result is not None:
-        return equipment_result
 
     if service is not None and not booking_requested:
         variant_result = _variant_followup_result(

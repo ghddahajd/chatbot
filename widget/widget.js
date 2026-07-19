@@ -71,8 +71,6 @@
         background: linear-gradient(145deg, var(--accent) 0%, var(--accent-dark) 100%);
         color: #fff;
         font-family: inherit;
-        font-size: 32px;
-        font-weight: 400;
         cursor: pointer;
         box-shadow: var(--shadow);
         display: grid;
@@ -80,6 +78,7 @@
         transition: transform .18s ease, box-shadow .18s ease;
         position: relative;
       }
+      .launcher svg { width: 26px; height: 26px; }
       .launcher:hover { transform: translateY(-2px); box-shadow: 0 24px 64px rgba(0,0,0,.14); }
       .launcher.hidden { display: none; }
 
@@ -99,8 +98,8 @@
 
       /* ── Panel ── */
       .panel {
-        width: min(380px, calc(100vw - 32px));
-        height: min(580px, calc(100vh - 100px));
+        width: min(400px, calc(100vw - 32px));
+        height: min(660px, calc(100vh - 100px));
         display: none;
         flex-direction: column;
         border-radius: var(--radius);
@@ -113,26 +112,27 @@
 
       /* ── Header ── */
       .header {
-        padding: 14px 16px;
+        padding: 16px 18px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         border-bottom: 1px solid var(--border-soft);
-        background: var(--bg);
+        background: linear-gradient(180deg, var(--accent-soft) 0%, var(--bg) 100%);
         flex-shrink: 0;
       }
       .avatar {
-        width: 40px;
-        height: 40px;
+        width: 42px;
+        height: 42px;
         border-radius: var(--radius-sm);
         background: linear-gradient(145deg, var(--accent) 0%, var(--accent-dark) 100%);
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 18px;
+        color: #fff;
         flex-shrink: 0;
         box-shadow: 0 4px 12px rgba(31,122,92,.25);
       }
+      .avatar svg { width: 20px; height: 20px; }
       .header-info { flex: 1; min-width: 0; }
       .header-name {
         font-size: 15px;
@@ -182,8 +182,6 @@
         border: 0;
         color: var(--text-muted);
         font: inherit;
-        font-size: 20px;
-        font-weight: 300;
         cursor: pointer;
         display: grid;
         place-items: center;
@@ -191,6 +189,7 @@
         transition: background .15s, color .15s;
         line-height: 1;
       }
+      .close-btn svg { width: 16px; height: 16px; }
       .close-btn:hover { background: var(--border); color: var(--text); }
 
       /* ── AI badge strip ── */
@@ -364,10 +363,36 @@
         cursor: pointer;
         transition: background .15s, transform .12s;
         letter-spacing: -.01em;
+        display: inline-flex;
+        align-items: center;
+        gap: 0;
       }
       .quick-btn:hover {
         background: var(--accent-soft);
         transform: translateY(-1px);
+      }
+      /* первая кнопка в группе — самый вероятный next-step, выделяем заливкой;
+         позиционно, не по тексту лейбла — лейблы приходят из phrasebook и могут
+         отличаться у клиента/со временем, привязка к конкретной строке хрупкая. */
+      .quick-btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .quick-btn.primary:hover { background: var(--accent-dark); }
+      .quick-btn.primary::after {
+        content: "→";
+        display: inline-block;
+        max-width: 0;
+        opacity: 0;
+        overflow: hidden;
+        transition: max-width .18s ease, opacity .18s ease, margin .18s ease;
+      }
+      .quick-btn.primary:hover::after,
+      .quick-btn.primary:focus-visible::after {
+        max-width: 16px;
+        opacity: 1;
+        margin-left: 5px;
       }
 
       /* ── Waiting / closed overlay ── */
@@ -551,13 +576,20 @@
 
     <div class="shell">
       <button class="launcher" type="button" aria-label="Открыть чат">
-        <span class="launcher-emoji">+</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path>
+        </svg>
         <span class="unread" aria-hidden="true"></span>
       </button>
 
       <section class="panel" aria-live="polite">
         <header class="header">
-          <div class="avatar"><span class="avatar-emoji">👩‍⚕️</span></div>
+          <div class="avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg>
+          </div>
           <div class="header-info">
             <div class="header-name">AI-консультант</div>
             <div class="header-status">
@@ -565,7 +597,12 @@
               <span class="status-label">на связи</span>
             </div>
           </div>
-          <button class="close-btn" type="button" aria-label="Закрыть">×</button>
+          <button class="close-btn" type="button" aria-label="Закрыть">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18"></path>
+              <path d="m6 6 12 12"></path>
+            </svg>
+          </button>
         </header>
 
         <div class="ai-strip">
@@ -625,11 +662,9 @@
       this.el = {
         shell: this.$(".shell"),
         launcher: this.$(".launcher"),
-        launcherEmoji: this.$(".launcher-emoji"),
         unread: this.$(".unread"),
         panel: this.$(".panel"),
         headerName: this.$(".header-name"),
-        avatarEmoji: this.$(".avatar-emoji"),
         dot: this.$(".dot"),
         statusLabel: this.$(".status-label"),
         close: this.$(".close-btn"),
@@ -810,8 +845,6 @@
       root.style.setProperty("--accent-dark", this.darken(c.primary_color));
 
       this.el.headerName.textContent = c.header_title;
-      this.el.avatarEmoji.textContent = c.avatar_emoji;
-      this.el.launcherEmoji.textContent = "+";
       this.el.shell.classList.toggle("pos-left", c.position === "bottom-left");
     }
 
@@ -897,7 +930,10 @@
         const norm = typeof a === "string" ? {label:a,type:"message",value:a} : a;
         if (!norm?.label?.trim()) continue;
         const btn = document.createElement("button");
-        btn.className = "quick-btn";
+        // первая кнопка группы — самый вероятный next-step, визуально выделяем;
+        // позиция в массиве, а не текст лейбла (тот приходит из phrasebook и
+        // может отличаться у клиента).
+        btn.className = "quick-btn" + (wrap.childElementCount === 0 ? " primary" : "");
         btn.type = "button";
         btn.textContent = norm.label;
         btn.addEventListener("click", () => {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from ..knowledge import KnowledgeBase, normalize_text
+from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import retrieve_article_context
 from .constants import (
@@ -16,6 +16,7 @@ from .constants import (
     DEFAULT_SENSITIVE_TOPIC_KEYWORDS,
     DOCTOR_INFO_KEYWORDS,
     DOCTOR_SCHEDULE_KEYWORDS,
+    DOCTOR_SPECIALTY_KEYWORDS,
     DURATION_KEYWORDS,
     EQUIPMENT_QUESTION_KEYWORDS,
     EFFICACY_CLAIM_KEYWORDS,
@@ -186,8 +187,9 @@ def _clinic_doctors(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
             continue
         name = str(item.get("name") or "").strip()
         specialty = str(item.get("specialty") or "").strip()
+        schedule = str(item.get("schedule") or "").strip()
         if name:
-            doctors.append({"name": name, "specialty": specialty})
+            doctors.append({"name": name, "specialty": specialty, "schedule": schedule})
     return doctors
 
 
@@ -518,10 +520,15 @@ def _equipment_result(
 
 def _doctor_matches(message: str, doctor: dict[str, str]) -> bool:
     normalized_message = normalize_text(message)
-    name = normalize_text(doctor.get("name", ""))
-    specialty = normalize_text(doctor.get("specialty", ""))
-    if name and any(part and part in normalized_message for part in name.split()):
+    message_tokens = [token for token in normalized_message.split() if len(token) >= 3]
+    name_tokens = [token for token in normalize_text(doctor.get("name", "")).split() if len(token) >= 3]
+    if any(
+        _token_prefix_match(name_token, msg_token)
+        for name_token in name_tokens
+        for msg_token in message_tokens
+    ):
         return True
+    specialty = normalize_text(doctor.get("specialty", ""))
     return bool(specialty and specialty in normalized_message)
 
 
@@ -530,6 +537,16 @@ def _format_doctors(doctors: list[dict[str, str]]) -> str:
     for doctor in doctors:
         specialty = doctor.get("specialty", "")
         values.append(f"{doctor['name']} — {specialty}" if specialty else doctor["name"])
+    return "; ".join(values)
+
+
+def _format_doctor_schedules(doctors: list[dict[str, str]]) -> str:
+    values = []
+    for doctor in doctors:
+        schedule = doctor.get("schedule", "")
+        if not schedule:
+            continue
+        values.append(f"{doctor['name']}: {schedule}")
     return "; ".join(values)
 
 
@@ -612,6 +629,24 @@ def _clinic_info_result(
 
     if contains_keyword(normalized_message, DOCTOR_SCHEDULE_KEYWORDS):
         matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
+        schedule_text = _format_doctor_schedules(matched_doctors)
+        if schedule_text:
+            message_to_user = _format_phrase(
+                knowledge_base,
+                "doctor_schedule_from_data",
+                schedule=schedule_text,
+            )
+            return PolicyResult(
+                action=PolicyAction.ANSWER,
+                reason=PolicyReason.OK,
+                confidence=0.9,
+                safe_context={
+                    "force_direct_answer": True,
+                    "message_to_user": message_to_user,
+                    "clinic_info_topic": "doctors",
+                },
+                quick_actions=base_quick_actions,
+            )
         doctor_note = f" По врачу: {_format_doctors(matched_doctors)}." if matched_doctors else ""
         message_to_user = _format_phrase(
             knowledge_base,
@@ -632,7 +667,13 @@ def _clinic_info_result(
 
     if context_topic == "doctors" or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS):
         matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
-        selected_doctors = matched_doctors or doctors
+        asked_specific_specialty = contains_keyword(normalized_message, DOCTOR_SPECIALTY_KEYWORDS)
+        if matched_doctors:
+            selected_doctors = matched_doctors
+        elif asked_specific_specialty:
+            selected_doctors = []
+        else:
+            selected_doctors = doctors
         if selected_doctors:
             message_to_user = _format_phrase(
                 knowledge_base,

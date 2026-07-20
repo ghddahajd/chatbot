@@ -235,10 +235,20 @@ def test_clinic_doctor_info_defers_without_data(policy_session, resolver, manage
     assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
 
 
-def test_clinic_doctor_schedule_defers_without_slots(policy_session, resolver, managed_env) -> None:
+def test_clinic_doctor_schedule_answers_from_config(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
     result = _analyze("какое расписание у молотиловой", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Молотилова Ольга Юрьевна" in result.safe_context["message_to_user"]
+    assert "10:00" in result.safe_context["message_to_user"]
+
+
+def test_clinic_doctor_schedule_defers_without_slots(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("какое расписание у неизвестного врача Пупкина", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.CLARIFY
     assert "Центр работает" in result.safe_context["message_to_user"]
@@ -1317,3 +1327,4 @@ def test_unit_price_note_for_injection_variants(
 
     assert "за единицу" in context["price_unit_note"].lower()
     assert "количество определит менеджер" in context["price_unit_note"].lower()
+

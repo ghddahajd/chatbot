@@ -18,6 +18,41 @@
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
 
+  const URL_RE = /\[?(https?:\/\/[^\s\]]+)\]?/g;
+  function renderMessageBody(container, text) {
+    const str = String(text == null ? "" : text);
+    let lastIndex = 0;
+    let match;
+    let hasLink = false;
+    URL_RE.lastIndex = 0;
+    while ((match = URL_RE.exec(str)) !== null) {
+      hasLink = true;
+      const before = str.slice(lastIndex, match.index);
+      if (before) container.appendChild(document.createTextNode(before));
+
+      let url = match[1];
+      const trailing = url.match(/[.,;:!?)]+$/);
+      let trailingPunct = "";
+      if (trailing) {
+        trailingPunct = trailing[0];
+        url = url.slice(0, -trailingPunct.length);
+      }
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = url;
+      container.appendChild(a);
+      if (trailingPunct) container.appendChild(document.createTextNode(trailingPunct));
+
+      lastIndex = URL_RE.lastIndex;
+    }
+    const rest = str.slice(lastIndex);
+    if (rest) container.appendChild(document.createTextNode(rest));
+    if (!hasLink) container.textContent = str;
+  }
+
   const template = document.createElement("template");
   template.innerHTML = `
     <style>
@@ -306,6 +341,16 @@
         max-width: 90%;
         text-align: center;
         padding: 7px 12px;
+      }
+      .msg a {
+        color: inherit;
+        text-decoration: underline;
+        text-decoration-color: currentColor;
+        opacity: 0.85;
+      }
+      .msg a:hover,
+      .msg a:focus-visible {
+        opacity: 1;
       }
       .msg-label {
         font-size: 11px;
@@ -911,7 +956,7 @@
       }
 
       const body = document.createElement("div");
-      body.textContent = text;
+      renderMessageBody(body, text);
       article.appendChild(body);
       this.el.messages.appendChild(article);
       if (!silent) this.scrollBottom();

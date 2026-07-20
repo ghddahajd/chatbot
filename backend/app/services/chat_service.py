@@ -15,7 +15,6 @@ from ..models import (
     PendingAction,
     PolicyAction,
     PolicyReason,
-    QuickAction,
     SessionStatus,
 )
 from ..policy import classify_and_extract
@@ -653,15 +652,14 @@ class ChatService:
             )
 
         if session.message_count >= MAX_SESSION_MESSAGES:
+            await session_store.set_status(session.session_id, SessionStatus.CLOSED)
             return ChatMessageResponse(
                 session_id=session.session_id,
-                status=session.status,
+                status=SessionStatus.CLOSED,
                 action=PolicyAction.CLARIFY,
                 answer=self._phrase("rate_limit", RATE_LIMIT_ANSWER),
                 lead_created=False,
-                quick_actions=[
-                    QuickAction(label="Начать новый диалог", type="message", value="Начать новый диалог")
-                ],
+                quick_actions=[],
             )
 
         message = stripped_message[:MAX_MESSAGE_LENGTH]

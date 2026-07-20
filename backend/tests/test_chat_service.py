@@ -253,6 +253,23 @@ def test_chat_rate_limit_blocks_single_ip_but_not_other_ips(managed_env, monkeyp
     get_settings.cache_clear()
 
 
+def test_message_count_limit_closes_session_for_real_reset_button(test_client) -> None:
+    from app.models import SessionStatus
+    from app.routes.chat_utils import MAX_SESSION_MESSAGES
+
+    session_id = None
+    for index in range(MAX_SESSION_MESSAGES):
+        payload = _post_chat(test_client, message=f"привет {index}", session_id=session_id)
+        session_id = payload["session_id"]
+
+    limited_payload = _post_chat(test_client, message="ещё вопрос", session_id=session_id)
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+
+    assert limited_payload["status"] == SessionStatus.CLOSED.value
+    assert limited_payload["quick_actions"] == []
+    assert stored_session.status == SessionStatus.CLOSED
+
+
 def test_booking_contact_enqueues_booking_event(test_client, monkeypatch) -> None:
     events = []
 

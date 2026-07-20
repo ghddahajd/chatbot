@@ -1353,6 +1353,28 @@ def analyze_message(
         lead_followup_result = _lead_followup_result(normalized_message, knowledge_base)
         if lead_followup_result is not None:
             return lead_followup_result
+        if (
+            service is not None
+            and intent == "service_mention"
+            and not booking_requested
+            and not price_requested
+            and "?" not in message
+        ):
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.CONTACT_PROVIDED,
+                service_id=service.id,
+                confidence=0.85,
+                safe_context={
+                    "force_direct_answer": True,
+                    "message_to_user": _format_phrase(
+                        knowledge_base,
+                        "lead_followup_service",
+                        service_name=service.name,
+                    ),
+                },
+                quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+            )
 
     if intent == "small_talk":
         return PolicyResult(

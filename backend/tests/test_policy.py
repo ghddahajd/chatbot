@@ -485,6 +485,29 @@ def test_post_lead_short_followup_is_not_offtopic(policy_session, resolver, mana
     assert "Заявку уже передали" in result.safe_context["message_to_user"]
 
 
+def test_post_lead_service_mention_does_not_claim_new_booking(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    policy_session.lead_requested = True
+
+    result = _analyze("чистка лица", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+    assert "Заявку уже передали" in result.safe_context["message_to_user"]
+    assert "записал" not in result.safe_context["message_to_user"].lower()
+    assert "запись оформлен" not in result.safe_context["message_to_user"].lower()
+
+
+def test_post_lead_price_question_still_answers(policy_session, resolver, managed_env) -> None:
+    """Цену после лида по-прежнему называем — тут не про подтверждение записи."""
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    policy_session.lead_requested = True
+
+    result = _analyze("сколько стоит чистка лица", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.CONTACT_PROVIDED
+
+
 def test_equipment_question_can_disclose_approved_config_value(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(
         resolver,

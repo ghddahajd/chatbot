@@ -194,6 +194,20 @@ class ChatService:
             "reason": "unknown_service",
         }
 
+    def _current_unresolved_lead_metadata(self, policy_result, current_message: str) -> dict[str, object]:
+        safe_context = getattr(policy_result, "safe_context", {}) or {}
+        if not safe_context.get("service_unresolved"):
+            return {}
+        unresolved_query = str(safe_context.get("unresolved_query") or "").strip() or current_message.strip()
+        if not unresolved_query:
+            return {}
+        return {
+            "unresolved_service_mention": True,
+            "unresolved_query": unresolved_query,
+            "lead_trigger": "unknown_service",
+            "reason": "unknown_service",
+        }
+
     async def _finalize_lead_summary(self, session, lead) -> None:
         if lead.lead_trigger == "unknown_service" and lead.unresolved_query:
             lead.summary = (
@@ -400,6 +414,7 @@ class ChatService:
     async def _remember_policy_context(self, session_store, session, policy_result) -> None:
         last_intent = str(policy_result.reason.value if hasattr(policy_result.reason, "value") else policy_result.reason)
         active_frame = self._context_frame_from_policy_result(session, policy_result, last_intent)
+        prior_unresolved_metadata = self._unresolved_lead_metadata(session, "")
         await session_store.update_context(
             session.session_id,
             last_service_id=policy_result.service_id,
@@ -425,13 +440,14 @@ class ChatService:
                 else PendingAction.COLLECT_CONTACT.value
             )
             await session_store.set_pending_action(session.session_id, pending_action)
-            unresolved_metadata = self._unresolved_lead_metadata(session, "")
-            if unresolved_metadata:
-                await session_store.update_contact_draft(session.session_id, metadata=unresolved_metadata)
+            if prior_unresolved_metadata:
+                await session_store.update_contact_draft(session.session_id, metadata=prior_unresolved_metadata)
             return
 
         if policy_result.action == PolicyAction.CLARIFY and policy_result.safe_context.get("booking_request"):
             await session_store.set_pending_action(session.session_id, PendingAction.BOOKING_CONTACT.value)
+            if prior_unresolved_metadata:
+                await session_store.update_contact_draft(session.session_id, metadata=prior_unresolved_metadata)
             return
 
         if policy_result.action == PolicyAction.CLARIFY and policy_result.reason == PolicyReason.OPERATOR_REQUESTED:
@@ -612,7 +628,10 @@ class ChatService:
             )
             contact = waiting_policy_result.safe_context.get("contact")
             if waiting_policy_result.action == PolicyAction.ASK_CONTACT and contact:
-                unresolved_metadata = self._unresolved_lead_metadata(
+                unresolved_metadata = self._current_unresolved_lead_metadata(
+                    waiting_policy_result,
+                    message,
+                ) or self._unresolved_lead_metadata(
                     session,
                     message,
                     last_intent=session.last_intent,
@@ -707,7 +726,10 @@ class ChatService:
                 draft_lead_trigger = str(prior_contact_draft.get("lead_trigger") or "").strip()
                 draft_reason = str(prior_contact_draft.get("reason") or "").strip()
                 draft_unresolved_query = str(prior_contact_draft.get("unresolved_query") or "").strip()
-                unresolved_metadata = self._unresolved_lead_metadata(
+                unresolved_metadata = self._current_unresolved_lead_metadata(
+                    policy_result,
+                    message,
+                ) or self._unresolved_lead_metadata(
                     session,
                     message,
                     last_intent=prior_last_intent,

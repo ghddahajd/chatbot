@@ -89,6 +89,29 @@ def _service_quick_actions(service, *labels: str) -> list[object]:
     return actions
 
 
+def _contact_safe_context(
+    message: str,
+    phone: str,
+    service,
+    *,
+    booking_request: bool = False,
+    service_unresolved: bool = False,
+) -> dict[str, object]:
+    safe_context: dict[str, object] = {
+        "contact": {
+            "name": extract_name(message, phone),
+            "phone": phone,
+        },
+        "service": service.model_dump() if service else None,
+    }
+    if booking_request:
+        safe_context["booking_request"] = True
+    if service_unresolved:
+        safe_context["service_unresolved"] = True
+        safe_context["unresolved_query"] = message.strip()
+    return safe_context
+
+
 def _article_quick_actions(matches: list[dict[str, object]]) -> list[object]:
     actions: list[object] = []
     top_url = str(matches[0].get("url") or "").strip() if matches else ""
@@ -845,8 +868,17 @@ HARD_RESTRICTED_KEYWORDS = {
     "назначьте",
     "выпишите",
     "таблет",
-    "мазь",
-    "крем",
+    "чем мазать",
+    "чем помазать",
+    "помазать",
+    "намазать",
+    "какой крем от",
+    "какую мазь",
+    "какая мазь",
+    "мазь от",
+    "крем от аллергии",
+    "крем от раздражения",
+    "крем от ожога",
     "антибиотик",
     "воспаление",
     "воспален",
@@ -1204,18 +1236,18 @@ def analyze_message(
         )
 
     if phone and lead_requested:
+        service_unresolved = service is None and intent == "unknown_service"
         return PolicyResult(
             action=PolicyAction.ASK_CONTACT,
             reason=PolicyReason.CONTACT_PROVIDED,
             service_id=service.id if service else None,
             confidence=0.94,
-            safe_context={
-                "contact": {
-                    "name": extract_name(message, phone),
-                    "phone": phone,
-                },
-                "service": service.model_dump() if service else None,
-            },
+            safe_context=_contact_safe_context(
+                message,
+                phone,
+                service,
+                service_unresolved=service_unresolved,
+            ),
         )
 
     looks_like_new_question = "?" in message or classifier_confidence > 0
@@ -1470,6 +1502,20 @@ def analyze_message(
         )
 
     if intent == "unknown_service":
+        if phone:
+            return PolicyResult(
+                action=PolicyAction.ASK_CONTACT,
+                reason=PolicyReason.UNKNOWN_SERVICE,
+                service_id=None,
+                confidence=classifier_confidence or 0.82,
+                safe_context=_contact_safe_context(
+                    message,
+                    phone,
+                    None,
+                    service_unresolved=True,
+                ),
+            )
+
         similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.78)
         if similar_result is not None:
             return similar_result
@@ -1493,13 +1539,7 @@ def analyze_message(
                 reason=PolicyReason.CONTACT_PROVIDED,
                 service_id=service.id if service else None,
                 confidence=0.95,
-                safe_context={
-                    "contact": {
-                        "name": extract_name(message, phone),
-                        "phone": phone,
-                    },
-                    "service": service.model_dump() if service else None,
-                },
+                safe_context=_contact_safe_context(message, phone, service),
             )
         if session.pending_action != PendingAction.OFFERED_OPERATOR.value:
             return PolicyResult(
@@ -1541,6 +1581,19 @@ def analyze_message(
                 session.last_service_id or last_service_from_history(session, knowledge_base)
             )
         if service is None and _has_unknown_booking_target(normalized_message):
+            if phone:
+                return PolicyResult(
+                    action=PolicyAction.ASK_CONTACT,
+                    reason=PolicyReason.UNKNOWN_SERVICE,
+                    confidence=0.82,
+                    safe_context=_contact_safe_context(
+                        message,
+                        phone,
+                        None,
+                        booking_request=True,
+                        service_unresolved=True,
+                    ),
+                )
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
                 reason=PolicyReason.UNKNOWN_SERVICE,
@@ -1570,14 +1623,7 @@ def analyze_message(
                 reason=PolicyReason.BOOKING_REQUEST,
                 service_id=service.id if service else None,
                 confidence=0.94,
-                safe_context={
-                    "booking_request": True,
-                    "contact": {
-                        "name": extract_name(message, phone),
-                        "phone": phone,
-                    },
-                    "service": service.model_dump() if service else None,
-                },
+                safe_context=_contact_safe_context(message, phone, service, booking_request=True),
             )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -1602,14 +1648,7 @@ def analyze_message(
             reason=PolicyReason.BOOKING_REQUEST,
             service_id=service.id if service else None,
             confidence=0.94,
-            safe_context={
-                "booking_request": True,
-                "contact": {
-                    "name": extract_name(message, phone),
-                    "phone": phone,
-                },
-                "service": service.model_dump() if service else None,
-            },
+            safe_context=_contact_safe_context(message, phone, service, booking_request=True),
         )
 
     if phone:
@@ -1618,13 +1657,7 @@ def analyze_message(
             reason=PolicyReason.CONTACT_PROVIDED,
             service_id=service.id if service else None,
             confidence=0.93,
-            safe_context={
-                "contact": {
-                    "name": extract_name(message, phone),
-                    "phone": phone,
-                },
-                "service": service.model_dump() if service else None,
-            },
+            safe_context=_contact_safe_context(message, phone, service),
         )
 
     if price_requested:

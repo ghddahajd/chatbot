@@ -566,6 +566,50 @@ def test_regular_contact_lead_is_not_marked_unknown_service(test_client, managed
     assert lead["unresolved_query"] == ""
 
 
+def test_offdomain_phone_same_message_creates_unknown_service_lead(test_client, managed_env) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "Леха, 89990000000, нужна уборка после ремонта",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "ask_contact"
+    assert payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["name"] == "Леха"
+    assert lead["phone"] == "+79990000000"
+    assert lead["service_id"] is None
+    assert lead["lead_trigger"] == "unknown_service"
+    assert lead["reason"] == "unknown_service"
+    assert "уборка после ремонта" in lead["unresolved_query"].lower()
+    assert "неподтверждённую услугу" in lead["summary"]
+
+
+def test_real_service_phone_same_message_stays_regular_lead(test_client, managed_env) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "Иван 89990000000 хочу на чистку лица",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["service_id"] == "facial_cleansing"
+    assert lead["lead_trigger"] == "ask_contact"
+    assert lead["reason"] == "commercial_interest"
+    assert lead["unresolved_query"] == ""
+
+
 def test_direct_phone_after_price_question_keeps_prior_reason_and_service(test_client, managed_env) -> None:
     first_response = test_client.post(
         "/api/chat/message",
@@ -610,7 +654,7 @@ def test_contact_request_with_phone_in_same_message_creates_lead(test_client, ma
     assert lead["phone"] == "+79999229333"
 
 
-def test_unknown_booking_service_with_phone_does_not_create_lead(test_client) -> None:
+def test_unknown_booking_service_with_phone_creates_marked_lead(test_client, managed_env) -> None:
     response = test_client.post(
         "/api/chat/message",
         json={
@@ -622,8 +666,53 @@ def test_unknown_booking_service_with_phone_does_not_create_lead(test_client) ->
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["action"] == "clarify"
-    assert payload["lead_created"] is False
+    assert payload["action"] == "ask_contact"
+    assert payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["service_id"] is None
+    assert lead["lead_trigger"] == "unknown_service"
+    assert lead["reason"] == "unknown_service"
+    assert "шиномонтаж" in lead["unresolved_query"].lower()
+
+
+def test_unknown_service_booking_prompt_keeps_unresolved_query_in_lead(test_client, managed_env) -> None:
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "татуаж делаете?"},
+    )
+    first_payload = first_response.json()
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "ну хочу записаться",
+        },
+    )
+    second_payload = second_response.json()
+
+    third_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван 89990000000",
+        },
+    )
+    third_payload = third_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "clarify"
+    assert third_response.status_code == 200
+    assert third_payload["action"] == "ask_contact"
+    assert third_payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert lead["service_id"] is None
+    assert lead["lead_trigger"] == "unknown_service"
+    assert lead["reason"] == "unknown_service"
+    assert lead["unresolved_query"] == "татуаж делаете?"
+    assert "татуаж" in lead["summary"].lower()
 
 
 def test_partial_phone_does_not_go_to_llm(test_client) -> None:

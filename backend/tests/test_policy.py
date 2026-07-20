@@ -253,6 +253,7 @@ def test_clinic_facts_answer_from_config(policy_session, resolver, managed_env) 
         ("а на скорой меня к вам привезут?", "не в частную клинику"),
         ("если вызову скорую, меня привезут?", "не в частную клинику"),
         ("продается ли у вас косметика", "Продаём только услуги"),
+        ("можно купить крем Vichy у вас?", "Продаём только услуги"),
     ]
     for message, expected_text in cases:
         result = _analyze(message, policy_session, knowledge_base)
@@ -791,6 +792,27 @@ def test_generic_procedure_products_question_is_not_medical(policy_session, know
     result = _analyze("ботулинотерапия какие препараты используете", policy_session, knowledge_base)
 
     assert result.reason != PolicyReason.REGULATED_ADVICE
+
+
+def test_product_cream_question_is_not_medical_escalation(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("можно купить крем Vichy у вас?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason != PolicyReason.REGULATED_ADVICE
+    assert "Продаём только услуги" in result.safe_context["message_to_user"]
+
+
+def test_topical_medical_questions_still_escalate(policy_session, knowledge_base) -> None:
+    for message in [
+        "чем помазать после ожога?",
+        "какой крем от аллергии посоветуете?",
+        "какую мазь от раздражения использовать?",
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.TRANSFER_OPERATOR
+        assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
 def test_real_symptom_after_procedure_stays_medical(policy_session, knowledge_base) -> None:

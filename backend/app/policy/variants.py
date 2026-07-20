@@ -20,6 +20,8 @@ VARIANT_LIST_KEYWORDS = {
     "области",
     "какие области",
 }
+VARIANT_LIST_PHRASE_KEYWORDS = {keyword for keyword in VARIANT_LIST_KEYWORDS if " " in keyword}
+VARIANT_LIST_TOKEN_KEYWORDS = {keyword for keyword in VARIANT_LIST_KEYWORDS if " " not in keyword}
 
 QUERY_STOP_TOKENS = {
     "а",
@@ -78,7 +80,9 @@ STEM_ENDINGS = (
 
 def is_variant_list_question(message: str) -> bool:
     normalized = normalize_text(message)
-    return any(keyword in normalized for keyword in VARIANT_LIST_KEYWORDS)
+    if any(keyword in normalized for keyword in VARIANT_LIST_PHRASE_KEYWORDS):
+        return True
+    return bool(set(_tokens(message)) & VARIANT_LIST_TOKEN_KEYWORDS)
 
 
 def variant_label(service, variant: dict[str, Any]) -> str:

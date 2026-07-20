@@ -12,6 +12,7 @@ from app.routes.chat_utils import (
     should_ignore_model_regulated_advice,
 )
 from app.models import ContextFrame, Session
+from app.policy.variants import is_variant_list_question
 
 
 def test_ignore_model_location_mismatch_when_user_is_in_company_city() -> None:
@@ -94,6 +95,35 @@ def test_context_frame_resolves_fact_followup() -> None:
     )
 
     assert result == {"intent": "service_mention", "service_id": "botulinotherapy", "confidence": 0.9}
+
+
+def test_variant_list_question_does_not_match_substring_inside_word() -> None:
+    assert not is_variant_list_question("биорезонансная диагностика есть?")
+    assert is_variant_list_question("какие зоны есть?")
+    assert is_variant_list_question("покажите варианты")
+    assert is_variant_list_question("какие позиции?")
+
+
+def test_context_frame_does_not_treat_bioresonance_as_variant_list() -> None:
+    session = Session(
+        company_id="rosh_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="fact_question",
+            entity_type="service",
+            entity_id="fillers",
+            entity_label="Филлеры",
+            expires_at_turn=8,
+        ),
+    )
+
+    result = _contextual_frame_classification(
+        "биорезонансная диагностика есть?",
+        session,
+        {"intent": "service_mention", "service_id": None, "confidence": 0.0},
+    )
+
+    assert result is None
 
 
 def test_context_frame_resolves_doctor_followup_even_if_local_unknown() -> None:

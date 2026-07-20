@@ -162,6 +162,8 @@ class SessionStore:
         last_intent: Optional[str] = None,
         active_frame: Optional[ContextFrame] = None,
         clear_active_frame: bool = False,
+        substantive_message_count: Optional[int] = None,
+        engagement_offer_count: Optional[int] = None,
     ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
@@ -175,6 +177,10 @@ class SessionStore:
                 session.active_frame = None
             elif active_frame is not None:
                 session.active_frame = active_frame
+            if substantive_message_count is not None:
+                session.substantive_message_count = substantive_message_count
+            if engagement_offer_count is not None:
+                session.engagement_offer_count = engagement_offer_count
             session.updated_at = datetime.utcnow()
             return session
 

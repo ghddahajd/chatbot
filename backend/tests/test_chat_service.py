@@ -7,6 +7,27 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 
+def _copy_rosh_import_demo_for_chat_test(test_client, managed_env) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    target_dir = managed_env["clients_dir"] / "rosh_import_demo"
+    if not target_dir.exists():
+        shutil.copytree(source_dir, target_dir)
+    test_client.app.state.knowledge_base_resolver._cache.clear()
+
+
+def _quick_action_labels(payload: dict) -> list[str]:
+    return [str(action.get("label") or "") for action in payload.get("quick_actions", [])]
+
+
+def _post_chat(test_client, *, message: str, session_id: str | None = None, company_id: str = "rosh_demo") -> dict:
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": company_id, "session_id": session_id, "message": message},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",
@@ -341,6 +362,179 @@ def test_regulated_question_soft_offers_without_operator_event(test_client, monk
         "Подключить менеджера",
     ]
     assert events == []
+
+
+def test_engagement_offer_appears_on_5_8_13_substantive_messages(test_client) -> None:
+    messages = [
+        "покажи услуги",
+        "сколько стоит Консультация косметолога",
+        "расскажи про Консультация косметолога",
+        "сколько стоит Консультация дерматолога",
+        "расскажи про Консультация дерматолога",
+        "что входит в Консультация косметолога",
+        "как долго Консультация косметолога",
+        "цена на Консультация дерматолога",
+        "покажи услуги",
+        "расскажи про Консультация косметолога",
+        "сколько стоит Консультация косметолога",
+        "что входит в Консультация дерматолога",
+        "как долго Консультация дерматолога",
+        "цена на Консультация косметолога",
+    ]
+    session_id = None
+    payloads = []
+    for message in messages:
+        payload = _post_chat(test_client, message=message, session_id=session_id)
+        session_id = payload["session_id"]
+        payloads.append(payload)
+
+    assert "Консультация дерматолога" in payloads[4]["answer"]
+    assert "Вижу, диалог уже длинный" in payloads[4]["answer"]
+    assert _quick_action_labels(payloads[4]) == ["Передать администратору", "Продолжить тут"]
+    assert "могу передать администратору краткое резюме" in payloads[7]["answer"]
+    assert _quick_action_labels(payloads[7]) == ["Передать администратору", "Продолжить тут"]
+    assert "Ещё раз на всякий случай предложу" in payloads[12]["answer"]
+    assert _quick_action_labels(payloads[12]) == ["Передать администратору", "Продолжить тут"]
+    assert "подключился администратор" not in payloads[13]["answer"]
+    assert "краткое резюме" not in payloads[13]["answer"]
+    assert "Ещё раз" not in payloads[13]["answer"]
+
+
+def test_engagement_offer_ignores_small_talk(test_client) -> None:
+    session_id = None
+    payload = {}
+    for _ in range(5):
+        payload = _post_chat(test_client, message="привет", session_id=session_id)
+        session_id = payload["session_id"]
+
+    assert "диалог уже длинный" not in payload["answer"]
+    assert _quick_action_labels(payload) != ["Передать администратору", "Продолжить тут"]
+
+
+def test_engagement_offer_does_not_interrupt_booking_contact_prompt(test_client) -> None:
+    session_id = None
+    for message in [
+        "покажи услуги",
+        "сколько стоит Консультация косметолога",
+        "расскажи про Консультация косметолога",
+        "сколько стоит Консультация дерматолога",
+    ]:
+        payload = _post_chat(test_client, message=message, session_id=session_id)
+        session_id = payload["session_id"]
+
+    payload = _post_chat(test_client, message="хочу записаться", session_id=session_id)
+
+    assert "напишите имя, телефон" in payload["answer"].lower()
+    assert "диалог уже длинный" not in payload["answer"]
+    assert _quick_action_labels(payload) != ["Передать администратору", "Продолжить тут"]
+
+
+def test_engagement_offer_does_not_show_after_lead_created(test_client) -> None:
+    session_id = None
+    for message in [
+        "покажи услуги",
+        "сколько стоит Консультация косметолога",
+        "хочу оставить телефон",
+        "Иван +7 999 123-45-67",
+        "расскажи про Консультация косметолога",
+        "покажи услуги",
+    ]:
+        payload = _post_chat(test_client, message=message, session_id=session_id)
+        session_id = payload["session_id"]
+
+    assert payload["lead_created"] is False
+    assert "диалог уже длинный" not in payload["answer"]
+    assert _quick_action_labels(payload) != ["Передать администратору", "Продолжить тут"]
+
+
+def test_engagement_continue_here_does_not_disable_later_offer(test_client) -> None:
+    session_id = None
+    for message in [
+        "покажи услуги",
+        "сколько стоит Консультация косметолога",
+        "расскажи про Консультация косметолога",
+        "сколько стоит Консультация дерматолога",
+        "расскажи про Консультация дерматолога",
+    ]:
+        payload = _post_chat(test_client, message=message, session_id=session_id)
+        session_id = payload["session_id"]
+
+    assert "диалог уже длинный" in payload["answer"]
+
+    for message in [
+        "Продолжить тут",
+        "что входит в Консультация косметолога",
+        "как долго Консультация косметолога",
+    ]:
+        payload = _post_chat(test_client, message=message, session_id=session_id)
+
+    assert "могу передать администратору краткое резюме" in payload["answer"]
+    assert _quick_action_labels(payload) == ["Передать администратору", "Продолжить тут"]
+
+
+def test_regulated_soft_offer_keeps_referral_service_button(test_client, managed_env) -> None:
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_import_demo",
+            "session_id": None,
+            "message": "можно у вас удалить родинку",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "clarify"
+    assert payload["status"] == "AI_ACTIVE"
+    assert payload["quick_actions"][0] == {
+        "label": "Консультации",
+        "type": "message",
+        "value": "Консультации",
+    }
+    assert [action["label"] for action in payload["quick_actions"][1:]] == [
+        "Оставить телефон",
+        "Подключить менеджера",
+    ]
+
+
+def test_external_prescription_soft_offer_keeps_referral_service_button(test_client, managed_env) -> None:
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_import_demo",
+            "session_id": None,
+            "message": "мне назначил другой врач капельницу, можно проконсультироваться?",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "clarify"
+    assert payload["status"] == "AI_ACTIVE"
+    assert payload["quick_actions"][0]["label"] == "Консультации"
+
+
+def test_regulated_soft_offer_without_referral_keeps_default_buttons(test_client) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "у меня воспаление что делать",
+        },
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["action"] == "clarify"
+    assert [action["label"] for action in payload["quick_actions"]] == [
+        "Оставить телефон",
+        "Подключить менеджера",
+    ]
 
 
 def test_regulated_soft_contact_creates_flagged_lead(test_client, managed_env) -> None:

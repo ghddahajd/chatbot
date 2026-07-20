@@ -84,6 +84,8 @@ class Session(BaseModel):
     status: SessionStatus = SessionStatus.AI_ACTIVE
     messages: list[Message] = Field(default_factory=list)
     message_count: int = 0
+    substantive_message_count: int = 0
+    engagement_offer_count: int = 0
     lead_requested: bool = False
     operator_requested: bool = False
     pending_action: Optional[str] = None

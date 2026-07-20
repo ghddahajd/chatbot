@@ -44,6 +44,10 @@ from .session_summarizer import summarize_session
 logger = logging.getLogger(__name__)
 
 
+ENGAGEMENT_OFFER_THRESHOLDS = (5, 8, 13)
+ENGAGEMENT_OFFER_KEYS = ("engagement_offer_1", "engagement_offer_2", "engagement_offer_3")
+
+
 class ChatService:
     """оркестрирует обработку одного пользовательского сообщения."""
 
@@ -54,6 +58,62 @@ class ChatService:
         phrasebook = getattr(self, "_phrasebook", {})
         value = phrasebook.get(key) if isinstance(phrasebook, dict) else None
         return str(value).strip() if value else fallback
+
+    def _is_substantive_policy_result(self, policy_result) -> bool:
+        return policy_result.action not in {
+            PolicyAction.SMALL_TALK,
+            PolicyAction.OFF_TOPIC,
+            PolicyAction.REJECT,
+        }
+
+    def _engagement_offer_text(self, offer_index: int) -> str:
+        fallback_texts = (
+            "Вижу, диалог уже длинный — хотите, чтобы дальше подключился администратор, или продолжим здесь?",
+            "Если удобнее — могу передать администратору краткое резюме нашего разговора, он подключится быстрее.",
+            "Ещё раз на всякий случай предложу: подключить администратора, чтобы не тянуть?",
+        )
+        return self._phrase(ENGAGEMENT_OFFER_KEYS[offer_index], fallback_texts[offer_index])
+
+    def _engagement_offer_quick_actions(self) -> list[dict[str, str]]:
+        return [
+            {
+                "label": "Передать администратору",
+                "type": "message",
+                "value": "Передать администратору",
+            },
+            {
+                "label": "Продолжить тут",
+                "type": "message",
+                "value": "Продолжить тут",
+            },
+        ]
+
+    async def _apply_engagement_offer_if_due(
+        self,
+        *,
+        session_store,
+        session,
+        answer: str,
+        quick_actions,
+    ) -> tuple[str, list[dict[str, str]] | object]:
+        if session.status != SessionStatus.AI_ACTIVE:
+            return answer, quick_actions
+        if session.pending_action or session.lead_requested or session.operator_requested:
+            return answer, quick_actions
+        offer_count = max(0, min(int(session.engagement_offer_count or 0), len(ENGAGEMENT_OFFER_THRESHOLDS)))
+        if offer_count >= len(ENGAGEMENT_OFFER_THRESHOLDS):
+            return answer, quick_actions
+        threshold = ENGAGEMENT_OFFER_THRESHOLDS[offer_count]
+        if int(session.substantive_message_count or 0) < threshold:
+            return answer, quick_actions
+
+        offer_text = self._engagement_offer_text(offer_count)
+        updated_answer = f"{answer.rstrip()}\n\n{offer_text}" if answer.strip() else offer_text
+        await session_store.update_context(
+            session.session_id,
+            engagement_offer_count=offer_count + 1,
+        )
+        return updated_answer, self._engagement_offer_quick_actions()
 
     def _domain_profile_value(self, knowledge_base, key: str, fallback: str) -> str:
         domain_profile = getattr(knowledge_base, "domain_profile", {}) or {}
@@ -97,12 +157,21 @@ class ChatService:
             },
         ]
 
+    def _referral_quick_action(self, referral_service: object) -> dict[str, str] | None:
+        if not isinstance(referral_service, dict):
+            return None
+        service_name = str(referral_service.get("name") or "").strip()
+        if not service_name:
+            return None
+        return {"label": service_name, "type": "message", "value": service_name}
+
     async def _regulated_soft_offer_response(
         self,
         *,
         session_store,
         session,
         knowledge_base,
+        referral_service: object = None,
     ) -> tuple[PolicyAction, str, list[dict[str, str]]]:
         await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
         await session_store.update_context(session.session_id, last_intent=PolicyReason.REGULATED_ADVICE.value)
@@ -117,7 +186,11 @@ class ChatService:
                 "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
             ),
         )
-        return PolicyAction.CLARIFY, answer, self._regulated_soft_quick_actions()
+        quick_actions = self._regulated_soft_quick_actions()
+        referral_action = self._referral_quick_action(referral_service)
+        if referral_action is not None:
+            quick_actions = [referral_action, *quick_actions]
+        return PolicyAction.CLARIFY, answer, quick_actions
 
     def _operator_url(self) -> str:
         try:
@@ -415,12 +488,16 @@ class ChatService:
         last_intent = str(policy_result.reason.value if hasattr(policy_result.reason, "value") else policy_result.reason)
         active_frame = self._context_frame_from_policy_result(session, policy_result, last_intent)
         prior_unresolved_metadata = self._unresolved_lead_metadata(session, "")
+        substantive_message_count = None
+        if self._is_substantive_policy_result(policy_result):
+            substantive_message_count = int(session.substantive_message_count or 0) + 1
         await session_store.update_context(
             session.session_id,
             last_service_id=policy_result.service_id,
             last_intent=last_intent,
             active_frame=active_frame,
             clear_active_frame=active_frame is None and policy_result.action in {PolicyAction.OFF_TOPIC, PolicyAction.REJECT},
+            substantive_message_count=substantive_message_count,
         )
 
         if (
@@ -793,6 +870,7 @@ class ChatService:
                     session_store=session_store,
                     session=session,
                     knowledge_base=knowledge_base,
+                    referral_service=policy_result.safe_context.get("referral_service"),
                 )
             else:
                 await session_store.set_operator_requested(session.session_id, True)
@@ -906,6 +984,14 @@ class ChatService:
                 message,
                 session.messages[-8:],
             )
+
+        session = await session_store.get(session.session_id) or session
+        answer, response_quick_actions = await self._apply_engagement_offer_if_due(
+            session_store=session_store,
+            session=session,
+            answer=answer,
+            quick_actions=response_quick_actions,
+        )
 
         answer_kind = "handoff" if response_action == PolicyAction.TRANSFER_OPERATOR else None
         await session_store.append_message(

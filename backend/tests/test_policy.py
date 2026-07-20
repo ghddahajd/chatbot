@@ -83,7 +83,6 @@ def test_medical_compound_beats_consultation_service(policy_session, resolver, m
         "можно без осмотра врача",
         "можно у вас удалить родинку",
         "на гистологию отправляете?",
-        "можно ли сделать у вас аборт",
         "что значит кокковые формы бактерий во влагалище",
     ]:
         result = _analyze(message, policy_session, knowledge_base)
@@ -107,8 +106,28 @@ def test_medical_procedure_refers_to_consultation_without_claims(policy_session,
     assert "Оставить телефон" in result.quick_actions
 
 
-def test_sensitive_topic_defaults_to_escalate_not_decline(policy_session, resolver, managed_env) -> None:
+def test_external_prescription_offers_consultation_service(policy_session, resolver, managed_env) -> None:
+    """Клиент попросил: вопрос по чужим назначениям — предложить запись на консультацию, не просто эскалацию."""
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("мне назначил другой врач капельницу, можно проконсультироваться?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context["referral_service"]["id"] == "konsultacii_b8520924"
+    assert {"label": "Консультации", "type": "message", "value": "Консультации"} in result.quick_actions
+
+
+def test_sensitive_topic_defaults_to_escalate_not_decline(policy_session, resolver, managed_env) -> None:
+    """Без клиентского sensitive_topics-конфига — безопасный escalate, не тихий decline."""
+    knowledge_base = _copy_rosh_import_kb(
+        resolver,
+        managed_env,
+        config_append="""
+clinic_info:
+  sensitive_topics: []
+""",
+    )
 
     result = _analyze("можно ли сделать у вас аборт", policy_session, knowledge_base)
 
@@ -121,13 +140,42 @@ def test_sensitive_topic_defaults_to_escalate_not_decline(policy_session, resolv
 
 
 def test_sensitive_phrase_without_medical_keyword_escalates(policy_session, resolver, managed_env) -> None:
-    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    """Без клиентского sensitive_topics-конфига — безопасный escalate, не тихий decline."""
+    knowledge_base = _copy_rosh_import_kb(
+        resolver,
+        managed_env,
+        config_append="""
+clinic_info:
+  sensitive_topics: []
+""",
+    )
 
     result = _analyze("прерывание на позднем сроке", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.TRANSFER_OPERATOR
     assert result.reason == PolicyReason.REGULATED_ADVICE
     assert result.safe_context["sensitive_handling"] == "escalate"
+
+
+def test_rosh_pregnancy_management_declines_from_real_config(policy_session, resolver, managed_env) -> None:
+    """Реальный ответ клиента: Rosh не ведёт/не прерывает беременность — честный decline, не эскалация."""
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message in ["можно ли сделать у вас аборт", "прерывание на позднем сроке", "ведете беременность?"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.CLARIFY
+        assert result.reason == PolicyReason.REGULATED_ADVICE
+        assert result.safe_context["sensitive_handling"] == "decline"
+        assert "не занимается" in result.safe_context["message_to_user"].lower()
+
+
+def test_rosh_gynecologist_specialty_resolves_from_real_config(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("как зовут гинеколога", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Сарычев Денис Сергеевич" in result.safe_context["message_to_user"]
 
 
 def test_generic_interruption_phrase_is_not_sensitive(policy_session, resolver, managed_env) -> None:
@@ -229,7 +277,7 @@ clinic_info:
 def test_clinic_doctor_info_defers_without_data(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
-    result = _analyze("а как зовут гинеколога", policy_session, knowledge_base)
+    result = _analyze("а как зовут остеопата", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.CLARIFY
     assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()

@@ -64,8 +64,6 @@ MEDICAL_KEYWORDS = {
     "заболел",
     "заболела",
     "температура",
-    "акне",
-    "прыщ",
     "сыпь",
     "симптом",
     "жжение",
@@ -550,7 +548,9 @@ TELEGRAM_KEYWORDS = {"телеграм", "telegram", "тг", "tg", "куда н�
 WEBSITE_KEYWORDS = {"сайт", "ссылку", "ссылка", "website"}
 VISIT_KEYWORDS = {"можно к вам", "к вам можно", "приехать к вам", "попасть к вам", "записаться к вам"}
 COSMETIC_CONCERN_KEYWORDS = {
+    "акне",
     "жирная кожа",
+    "прыщ",
     "сальная кожа",
     "поры",
     "расширенные поры",
@@ -561,7 +561,9 @@ COSMETIC_CONCERN_KEYWORDS = {
     "неровный тон",
 }
 COSMETIC_CONCERN_SERVICE_MAP = {
+    "акне": ["facial_cleansing", "cosmetologist_consultation"],
     "жирная кожа": ["facial_cleansing", "cosmetologist_consultation"],
+    "прыщ": ["facial_cleansing", "cosmetologist_consultation"],
     "сальная кожа": ["facial_cleansing", "cosmetologist_consultation"],
     "поры": ["facial_cleansing", "cosmetologist_consultation"],
     "расширенные поры": ["facial_cleansing", "cosmetologist_consultation"],

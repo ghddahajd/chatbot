@@ -67,6 +67,32 @@ def test_medical_question_blocked(policy_session, knowledge_base) -> None:
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_acne_without_hard_symptoms_is_cosmetic_concern(policy_session, knowledge_base) -> None:
+    for message in [
+        "у меня прыщи, что посоветуете?",
+        "акне, что делать?",
+    ]:
+        classification = _classification(message, knowledge_base)
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert classification["intent"] == "cosmetic_concern"
+        assert result.action != PolicyAction.TRANSFER_OPERATOR
+        assert result.reason != PolicyReason.REGULATED_ADVICE
+        assert result.safe_context["question_type"] == "cosmetic_concern"
+
+
+def test_acne_with_hard_symptoms_stays_medical(policy_session, knowledge_base) -> None:
+    for message in [
+        "прыщ гноится и болит",
+        "акне и температура",
+        "я беременна, можно от акне процедуру?",
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.action == PolicyAction.TRANSFER_OPERATOR
+        assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
 def test_explicit_medical_profile_restricted(policy_session, knowledge_base) -> None:
     result = _analyze("у меня воспаление что делать", policy_session, knowledge_base)
 

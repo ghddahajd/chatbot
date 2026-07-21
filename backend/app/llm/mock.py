@@ -238,9 +238,6 @@ def medical_risk_template(user_message: str) -> str:
         "отёк",
         "температура",
         "сыпь",
-        "прыщ",
-        "прыщи",
-        "акне",
         "диагноз",
         "лечение",
         "лечить",
@@ -251,7 +248,6 @@ def medical_risk_template(user_message: str) -> str:
         "это нормально",
         "нормально ли",
         "можно ли",
-        "какая процедура от",
     }
     if any(marker in normalized_message for marker in medical_markers | advice_markers):
         return "MEDICAL"

@@ -138,6 +138,75 @@ def _retrieve_article_context_safe(message: str) -> list[dict[str, object]]:
         return []
 
 
+def _article_guidance_quick_actions(services: list[object]) -> list[object]:
+    actions = [
+        {"label": service.name, "type": "message", "value": service.name}
+        for service in services
+    ]
+    actions.append("Позвать менеджера")
+    return actions
+
+
+def _cosmetic_article_guidance_result(
+    knowledge_base: KnowledgeBase,
+    article_matches: list[dict[str, object]],
+) -> PolicyResult | None:
+    approved_map = getattr(knowledge_base, "article_service_map", {}) or {}
+    if not approved_map:
+        return None
+
+    for match in article_matches:
+        url = str(match.get("url") or "").strip().rstrip("/")
+        if not url:
+            continue
+        entry = approved_map.get(url)
+        if entry is None:
+            continue
+
+        services = [
+            knowledge_base.find_service_by_id(service_id)
+            for service_id in getattr(entry, "service_ids", [])
+        ]
+        services = [service for service in services if service is not None]
+        if not services:
+            continue
+
+        service_names = ", ".join(service.name for service in services)
+        caution = str(getattr(entry, "extra_caution_note", "") or "").strip()
+        if not caution:
+            caution = (
+                "Заочно нельзя определить, что подойдёт именно вам — "
+                "это уточнит специалист на консультации."
+            )
+        message_to_user = (
+            f"В материалах центра есть статья по похожей теме: «{entry.title}». "
+            f"С этой темой в базе центра связаны: {service_names}. "
+            f"{caution}"
+        )
+
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=0.8,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "question_type": "cosmetic_article_guidance",
+                "article_context": [match],
+                "article_service_mapping": {
+                    "title": entry.title,
+                    "url": entry.url,
+                    "service_ids": list(entry.service_ids),
+                    "extra_caution_note": caution,
+                },
+                "suggested_services": services_summary(services),
+            },
+            quick_actions=_article_guidance_quick_actions(services),
+        )
+
+    return None
+
+
 def _service_variant_examples(service, limit: int = 5) -> list[str]:
     variants = getattr(service, "variants", [])
     if not isinstance(variants, list):
@@ -1627,6 +1696,10 @@ def analyze_message(
                 ]
                 + ["Позвать менеджера"],
             )
+        article_matches = _retrieve_article_context_safe(message)
+        guidance_result = _cosmetic_article_guidance_result(knowledge_base, article_matches)
+        if guidance_result is not None:
+            return guidance_result
 
     efficacy_claim_result = _efficacy_claim_result(normalized_message, knowledge_base, service)
     if efficacy_claim_result is not None:

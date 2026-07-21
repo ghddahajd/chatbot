@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .models import CompanyConfig, PriceEntry, Service
+from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, Service
 
 
 logger = logging.getLogger(__name__)
@@ -246,6 +246,7 @@ class KnowledgeBase:
         phrasebook: Optional[dict[str, str]] = None,
         domain_profile: Optional[dict[str, object]] = None,
         config_payload: Optional[dict[str, object]] = None,
+        article_service_map: Optional[dict[str, ArticleServiceMapEntry]] = None,
     ) -> None:
         self.company = company
         self.services = services
@@ -254,6 +255,7 @@ class KnowledgeBase:
         self.phrasebook = phrasebook or dict(DEFAULT_PHRASEBOOK)
         self.domain_profile = domain_profile or _default_domain_profile()
         self.config_payload = config_payload or {}
+        self.article_service_map = article_service_map or {}
 
         self._services_by_id = {service.id: service for service in services}
         self._prices_by_service_id = {price.service_id: price for price in prices}
@@ -282,6 +284,7 @@ class KnowledgeBase:
         config_path = data_dir / "config.yaml"
         config_payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
         config_payload = config_payload or {}
+        article_service_map = cls._load_article_service_map(data_dir)
         domain_profile = _domain_profile_from_payload(company_payload)
         return cls(
             company=company,
@@ -290,7 +293,32 @@ class KnowledgeBase:
             faq_markdown=faq_markdown,
             domain_profile=domain_profile,
             config_payload=config_payload if isinstance(config_payload, dict) else {},
+            article_service_map=article_service_map,
         )
+
+    @staticmethod
+    def _load_article_service_map(data_dir: Path) -> dict[str, ArticleServiceMapEntry]:
+        """читает approved article -> services mapping из папки клиента."""
+
+        map_path = data_dir / "article_service_map.yaml"
+        if not map_path.exists():
+            return {}
+
+        payload = yaml.safe_load(map_path.read_text(encoding="utf-8")) or {}
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return {}
+
+        approved: dict[str, ArticleServiceMapEntry] = {}
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            entry = ArticleServiceMapEntry.model_validate(raw_item)
+            normalized_url = entry.url.strip().rstrip("/")
+            if entry.status != "approved" or not normalized_url:
+                continue
+            approved[normalized_url] = entry
+        return approved
 
     def _build_search_index(self, services: list[Service]) -> dict[str, str]:
         index: dict[str, str] = {}

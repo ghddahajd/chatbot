@@ -58,3 +58,97 @@ def test_bioresonance_question_defers_in_policy(policy_session, resolver, manage
 
     assert result.action == PolicyAction.CLARIFY
     assert result.service_id != "biorevitalizaciya_9d426f68"
+
+
+def test_missing_article_service_map_is_empty(knowledge_base) -> None:
+    assert knowledge_base.article_service_map == {}
+
+
+def test_article_service_map_loads_approved_entries(resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    entry = knowledge_base.article_service_map[
+        "https://www.medcenterrosh.ru/blog/vtoroi-podborodok-prichiny-poyavleniya-i-metody-korrekcii"
+    ]
+
+    assert entry.title == "Второй подбородок: причины появления"
+    assert entry.service_ids == ["lazernaya_terapiya_skin_tyte_40372815", "fillery_f2df3e74"]
+
+
+def test_cosmetic_concern_can_use_approved_article_service_mapping(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "cosmetic_concern_services", lambda message, knowledge_base: [])
+    monkeypatch.setattr(
+        policy_module,
+        "_retrieve_article_context_safe",
+        lambda message: [
+            {
+                "title": "Второй подбородок: причины появления",
+                "url": (
+                    "https://www.medcenterrosh.ru/blog/"
+                    "vtoroi-podborodok-prichiny-poyavleniya-i-metody-korrekcii/"
+                ),
+                "snippet": "Skin Tyte и контурная пластика.",
+                "chunk_id": "test-chunk",
+                "score": 9.5,
+            }
+        ],
+    )
+
+    result = analyze_message(
+        "второй подбородок можно убрать?",
+        policy_session,
+        knowledge_base,
+        {"intent": "cosmetic_concern", "service_id": None, "confidence": 0.82},
+    )
+
+    answer = result.safe_context["message_to_user"]
+    assert result.action == PolicyAction.ANSWER
+    assert result.safe_context["question_type"] == "cosmetic_article_guidance"
+    assert "Второй подбородок" in answer
+    assert "Лазерная Терапия Skin Tyte" in answer
+    assert "Филлеры" in answer
+    assert "вам нужно" not in answer.lower()
+    assert "вам подходит" not in answer.lower()
+    assert result.quick_actions[0]["label"] == "Лазерная Терапия Skin Tyte"
+
+
+def test_cosmetic_concern_ignores_unapproved_article_mapping(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "cosmetic_concern_services", lambda message, knowledge_base: [])
+    monkeypatch.setattr(
+        policy_module,
+        "_retrieve_article_context_safe",
+        lambda message: [
+            {
+                "title": "Непромодерированная статья",
+                "url": "https://www.medcenterrosh.ru/blog/not-reviewed",
+                "snippet": "Не используем для услуги.",
+                "chunk_id": "test-chunk",
+                "score": 9.5,
+            }
+        ],
+    )
+
+    result = analyze_message(
+        "что можно сделать с другой темой?",
+        policy_session,
+        knowledge_base,
+        {"intent": "cosmetic_concern", "service_id": None, "confidence": 0.82},
+    )
+
+    assert result.safe_context.get("question_type") != "cosmetic_article_guidance"

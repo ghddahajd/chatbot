@@ -119,6 +119,15 @@ class PriceEntry(BaseModel):
     comment: str
 
 
+class ArticleServiceMapEntry(BaseModel):
+    url: str
+    title: str
+    service_ids: list[str] = Field(default_factory=list)
+    status: str = ""
+    reviewed_note: str = ""
+    extra_caution_note: str = ""
+
+
 class Service(BaseModel):
     id: str
     name: str

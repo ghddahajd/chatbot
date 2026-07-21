@@ -280,6 +280,20 @@ async def debug_trace(
     policy_result = request.app.state.policy_analyzer(message, session, knowledge_base, classification)
     rag_step = steps[-1]
     rag_step["result"]["used"] = policy_result.safe_context.get("question_type") == "faq_question"
+    cosmetic_mapping = policy_result.safe_context.get("article_service_mapping")
+    cosmetic_article_context = policy_result.safe_context.get("article_context")
+    cosmetic_guidance_used = policy_result.safe_context.get("question_type") == "cosmetic_article_guidance"
+    steps.append(
+        {
+            "step": "cosmetic_article_guidance",
+            "result": {
+                "used": cosmetic_guidance_used,
+                "approved_mapping_found": bool(cosmetic_mapping),
+                "mapping": cosmetic_mapping if isinstance(cosmetic_mapping, dict) else None,
+                "matches": cosmetic_article_context if cosmetic_guidance_used else [],
+            },
+        }
+    )
     steps.append(
         {
             "step": "policy_decision",

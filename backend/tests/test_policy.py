@@ -274,6 +274,19 @@ clinic_info:
     assert "Петрова Мария Ивановна" not in result.safe_context["message_to_user"]
 
 
+def test_clinic_doctor_name_alone_answers_from_config(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message, expected_name in [
+        ("хачатурян", "Хачатурян Любовь Андреевна"),
+        ("молотилова", "Молотилова Ольга Юрьевна"),
+        ("кто такая молотилова", "Молотилова Ольга Юрьевна"),
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.ANSWER, message
+        assert expected_name in result.safe_context["message_to_user"], message
+
+
 def test_clinic_doctor_info_defers_without_data(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
@@ -293,6 +306,34 @@ def test_clinic_doctor_schedule_answers_from_config(policy_session, resolver, ma
     assert "10:00" in result.safe_context["message_to_user"]
 
 
+def test_clinic_doctor_schedule_answers_when_name_and_when_word(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message, expected_name, expected_time in [
+        ("когда работает молотилова", "Молотилова Ольга Юрьевна", "10:00"),
+        ("а джалилов когда?", "Джалилов Руслан Акифович", "10:00"),
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.ANSWER, message
+        assert expected_name in result.safe_context["message_to_user"], message
+        assert expected_time in result.safe_context["message_to_user"], message
+
+
+def test_clinic_doctor_schedule_beats_bad_booking_classification(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = analyze_message(
+        "а джалилов когда?",
+        policy_session,
+        knowledge_base,
+        {"intent": "booking_request", "service_id": None, "confidence": 1.0},
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Джалилов Руслан Акифович" in result.safe_context["message_to_user"]
+    assert "10:00" in result.safe_context["message_to_user"]
+
+
 def test_clinic_doctor_schedule_defers_without_slots(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
@@ -301,6 +342,27 @@ def test_clinic_doctor_schedule_defers_without_slots(policy_session, resolver, m
     assert result.action == PolicyAction.CLARIFY
     assert "Центр работает" in result.safe_context["message_to_user"]
     assert "расписание конкретного врача уточнит менеджер" in result.safe_context["message_to_user"]
+
+
+def test_unknown_doctor_name_defers_instead_of_listing_all(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("есть доктор Смирнова?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+    assert "Хачатурян" not in result.safe_context["message_to_user"]
+    assert "Молотилова" not in result.safe_context["message_to_user"]
+
+
+def test_generic_doctor_list_still_lists_doctors(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("кто у вас принимает", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Хачатурян Любовь Андреевна" in result.safe_context["message_to_user"]
+    assert "Молотилова Ольга Юрьевна" in result.safe_context["message_to_user"]
 
 
 def test_clinic_facts_answer_from_config(policy_session, resolver, managed_env) -> None:
@@ -1398,4 +1460,3 @@ def test_unit_price_note_for_injection_variants(
 
     assert "за единицу" in context["price_unit_note"].lower()
     assert "количество определит менеджер" in context["price_unit_note"].lower()
-

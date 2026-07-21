@@ -16,11 +16,11 @@ from .constants import (
     DEFAULT_SENSITIVE_TOPIC_KEYWORDS,
     DOCTOR_INFO_KEYWORDS,
     DOCTOR_SCHEDULE_KEYWORDS,
-    DOCTOR_SPECIALTY_KEYWORDS,
     DURATION_KEYWORDS,
     EQUIPMENT_QUESTION_KEYWORDS,
     EFFICACY_CLAIM_KEYWORDS,
     EXPLANATION_KEYWORDS,
+    GENERIC_DOCTOR_LIST_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
@@ -593,6 +593,9 @@ def _clinic_info_result(
 ) -> PolicyResult | None:
     company = knowledge_base.company
     doctors = _clinic_doctors(knowledge_base)
+    matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
+    doctor_name_matched = bool(matched_doctors)
+    tokens = normalized_message.split()
     facts = _clinic_facts(knowledge_base)
     base_quick_actions = ["Оставить телефон", "Позвать менеджера"]
 
@@ -627,8 +630,12 @@ def _clinic_info_result(
             quick_actions=base_quick_actions,
         )
 
-    if contains_keyword(normalized_message, DOCTOR_SCHEDULE_KEYWORDS):
-        matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
+    doctor_schedule_requested = contains_keyword(normalized_message, DOCTOR_SCHEDULE_KEYWORDS)
+    if contains_keyword(normalized_message, {"когда работает"}) and not doctor_name_matched:
+        doctor_schedule_requested = False
+    if doctor_name_matched and "когда" in tokens:
+        doctor_schedule_requested = True
+    if doctor_schedule_requested:
         schedule_text = _format_doctor_schedules(matched_doctors)
         if schedule_text:
             message_to_user = _format_phrase(
@@ -665,15 +672,19 @@ def _clinic_info_result(
             quick_actions=base_quick_actions,
         )
 
-    if context_topic == "doctors" or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS):
-        matched_doctors = [doctor for doctor in doctors if _doctor_matches(message, doctor)]
-        asked_specific_specialty = contains_keyword(normalized_message, DOCTOR_SPECIALTY_KEYWORDS)
+    doctor_info_requested = (
+        context_topic == "doctors"
+        or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS)
+        or doctor_name_matched
+    )
+    if doctor_info_requested:
+        asked_generic_list = contains_keyword(normalized_message, GENERIC_DOCTOR_LIST_KEYWORDS)
         if matched_doctors:
             selected_doctors = matched_doctors
-        elif asked_specific_specialty:
-            selected_doctors = []
-        else:
+        elif asked_generic_list:
             selected_doctors = doctors
+        else:
+            selected_doctors = []
         if selected_doctors:
             message_to_user = _format_phrase(
                 knowledge_base,

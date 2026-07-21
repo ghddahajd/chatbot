@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text
@@ -14,6 +15,7 @@ from .constants import (
     AMBULANCE_SUBJECT_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
     DEFAULT_SENSITIVE_TOPIC_KEYWORDS,
+    DMS_FACT_KEYWORDS,
     DOCTOR_INFO_KEYWORDS,
     DOCTOR_SCHEDULE_KEYWORDS,
     DURATION_KEYWORDS,
@@ -57,6 +59,9 @@ from .variants import find_variant_matches, is_variant_list_question, variant_li
 
 
 logger = logging.getLogger(__name__)
+
+
+WIDE_PRICE_RANGE_RATIO = 3
 
 
 def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
@@ -713,6 +718,9 @@ def _clinic_info_result(
     if contains_keyword(normalized_message, OMS_FACT_KEYWORDS):
         fact_value = facts.get("oms")
         fact_key = "fact_oms_yes" if fact_value is True else "fact_oms_no" if fact_value is False else ""
+    elif contains_keyword(normalized_message, DMS_FACT_KEYWORDS):
+        fact_value = facts.get("dms")
+        fact_key = "fact_dms_yes" if fact_value is True else "fact_dms_no" if fact_value is False else ""
     elif contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS) and contains_keyword(
         normalized_message, AMBULANCE_ACTION_KEYWORDS
     ):
@@ -736,6 +744,7 @@ def _clinic_info_result(
 
     if fact_key or fact_value is None and (
         contains_keyword(normalized_message, OMS_FACT_KEYWORDS)
+        or contains_keyword(normalized_message, DMS_FACT_KEYWORDS)
         or (
             contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS)
             and contains_keyword(normalized_message, AMBULANCE_ACTION_KEYWORDS)
@@ -812,6 +821,53 @@ def _lead_followup_result(normalized_message: str, knowledge_base: KnowledgeBase
     )
 
 
+def _has_wide_price_range(service) -> bool:
+    variants = getattr(service, "variants", []) or []
+    if not variants:
+        return False
+    price_from = getattr(service, "price_from", None)
+    price_to = getattr(service, "price_to", None)
+    if not isinstance(price_from, (int, float)) or not isinstance(price_to, (int, float)):
+        return False
+    if price_from <= 0 or price_to <= 0:
+        return False
+    return price_to / price_from >= WIDE_PRICE_RANGE_RATIO
+
+
+def _wide_price_range_clarify_result(
+    knowledge_base: KnowledgeBase,
+    service,
+    context: dict[str, object],
+    *,
+    confidence: float,
+) -> PolicyResult | None:
+    if not _has_wide_price_range(service):
+        return None
+    labels = variant_list_labels(service, limit=8)
+    if not labels:
+        return None
+    variants = getattr(service, "variants", []) or []
+    remaining = max(0, len(variants) - len(labels))
+    tail = f" и ещё {remaining}" if remaining else ""
+    message_to_user = (
+        f"У услуги «{service.name}» цена сильно зависит от варианта: {', '.join(labels)}{tail}. "
+        "Уточните, какой вариант интересует, и я подскажу цену по конкретной позиции."
+    )
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.PRICE_QUESTION,
+        service_id=service.id,
+        confidence=confidence,
+        safe_context={
+            **context,
+            "force_direct_answer": True,
+            "question_type": "variants_list",
+            "message_to_user": message_to_user,
+        },
+        quick_actions=_service_quick_actions(service, "Оставить телефон"),
+    )
+
+
 def _known_service_price_result(
     knowledge_base: KnowledgeBase,
     service,
@@ -830,6 +886,15 @@ def _known_service_price_result(
                 "message_to_user": _phrase(knowledge_base, "contact_prompt"),
             },
         )
+
+    wide_range_result = _wide_price_range_clarify_result(
+        knowledge_base,
+        service,
+        context,
+        confidence=confidence,
+    )
+    if wide_range_result is not None:
+        return wide_range_result
 
     return PolicyResult(
         action=PolicyAction.ANSWER,
@@ -1018,6 +1083,29 @@ def _has_fact_guard_negation(normalized_message: str) -> bool:
     return contains_keyword(normalized_message, FACT_GUARD_NEGATION_MARKERS)
 
 
+def _fact_guard_segments(normalized_message: str) -> list[str]:
+    return [
+        segment.strip()
+        for segment in re.split(r"\b(?:но|а|зато|однако)\b", normalized_message)
+        if segment.strip()
+    ]
+
+
+def _fact_guard_value_is_negated(normalized_message: str, normalized_value: str) -> bool:
+    if not normalized_value:
+        return False
+    segments = _fact_guard_segments(normalized_message)
+    for index, segment in enumerate(segments):
+        if normalized_value not in segment:
+            continue
+        if _has_fact_guard_negation(segment):
+            return True
+        if index + 1 < len(segments) and _has_fact_guard_negation(segments[index + 1]):
+            return True
+        return False
+    return _has_fact_guard_negation(normalized_message)
+
+
 def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
     config = getattr(knowledge_base, "config_payload", {})
     fact_guards = config.get("fact_guards") if isinstance(config, dict) else None
@@ -1046,9 +1134,12 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
             for value in blocked_values
             if normalize_text(value) and normalize_text(value) in normalized_message
         ]
+        matched_blocked = [
+            value
+            for value in matched_blocked
+            if not _fact_guard_value_is_negated(normalized_message, normalize_text(value))
+        ]
         if not matched_blocked:
-            continue
-        if _has_fact_guard_negation(normalized_message):
             continue
 
         service = knowledge_base.find_service_by_id(service_id)

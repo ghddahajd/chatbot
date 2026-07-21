@@ -382,6 +382,7 @@ def test_clinic_facts_answer_from_config(policy_session, resolver, managed_env) 
 
     cases = [
         ("можно к вам попасть по ОМС?", "По ОМС приём не ведём"),
+        ("принимаете по ДМС?", "По ДМС приём не ведём"),
         ("а на скорой меня к вам привезут?", "не в частную клинику"),
         ("если вызову скорую, меня привезут?", "не в частную клинику"),
         ("продается ли у вас косметика", "Продаём только услуги"),
@@ -401,8 +402,9 @@ def test_clinic_info_does_not_intercept_core_flows(policy_session, resolver, man
     city_result = _analyze("я не из Москвы", policy_session, knowledge_base)
     medical_result = _analyze("у меня воспаление что делать", policy_session, knowledge_base)
 
-    assert price_result.action == PolicyAction.ANSWER
+    assert price_result.action == PolicyAction.CLARIFY
     assert price_result.reason == PolicyReason.PRICE_QUESTION
+    assert price_result.safe_context["question_type"] == "variants_list"
     assert booking_result.reason == PolicyReason.BOOKING_REQUEST
     assert city_result.reason == PolicyReason.LOCATION_MISMATCH
     assert medical_result.action == PolicyAction.TRANSFER_OPERATOR
@@ -506,6 +508,32 @@ def test_specific_variant_followup_answers_variant_price(policy_session, resolve
     assert result.safe_context["question_type"] == "variant_price"
     assert "ноги полностью" in result.safe_context["message_to_user"].lower()
     assert "21 600" in result.safe_context["message_to_user"]
+
+
+def test_wide_price_range_clarifies_with_variants(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("сколько стоит биоревитализация", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.safe_context["force_direct_answer"] is True
+    assert result.safe_context["question_type"] == "variants_list"
+    message_to_user = result.safe_context["message_to_user"]
+    assert "цена сильно зависит от варианта" in message_to_user
+    assert "и ещё" in message_to_user
+    assert "от 2 300 до 31 600 ₽" not in message_to_user
+
+
+def test_narrow_price_range_still_answers_price(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("сколько стоит ботулинотерапия", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.safe_context["question_type"] == "price"
+    assert result.safe_context["price"]["price_text"] == "от 450 до 490 ₽"
 
 
 def test_duration_followup_without_kb_duration_is_direct(policy_session, resolver, managed_env) -> None:
@@ -662,8 +690,9 @@ def test_equipment_route_does_not_intercept_price_or_booking(policy_session, res
     price_result = _analyze("сколько стоит лазерная эпиляция", policy_session, knowledge_base)
     booking_result = _analyze("записаться на лазерную эпиляцию", policy_session, knowledge_base)
 
-    assert price_result.action == PolicyAction.ANSWER
+    assert price_result.action == PolicyAction.CLARIFY
     assert price_result.reason == PolicyReason.PRICE_QUESTION
+    assert price_result.safe_context["question_type"] == "variants_list"
     assert booking_result.reason == PolicyReason.BOOKING_REQUEST
 
 
@@ -677,9 +706,10 @@ def test_equipment_route_does_not_intercept_apparatnaya_cleaning(
     price_result = _analyze("аппаратная чистка лица сколько стоит", policy_session, knowledge_base)
     mention_result = _analyze("аппаратная чистка", policy_session, knowledge_base)
 
-    assert price_result.action == PolicyAction.ANSWER
+    assert price_result.action == PolicyAction.CLARIFY
     assert price_result.reason == PolicyReason.PRICE_QUESTION
     assert price_result.service_id == "chistki_e744e513"
+    assert price_result.safe_context["question_type"] == "variants_list"
     assert mention_result.action == PolicyAction.ANSWER
     assert mention_result.service_id == "chistki_e744e513"
 
@@ -752,9 +782,10 @@ def test_bare_skolko_with_import_service_is_price(policy_session, resolver, mana
 
     result = _analyze("сколько биоревит?", policy_session, knowledge_base)
 
-    assert result.action == PolicyAction.ANSWER
+    assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.PRICE_QUESTION
     assert result.service_id == "biorevitalizaciya_9d426f68"
+    assert result.safe_context["question_type"] == "variants_list"
 
 
 def test_bare_skolko_with_intro_words_is_price(policy_session, resolver, managed_env) -> None:
@@ -762,9 +793,10 @@ def test_bare_skolko_with_intro_words_is_price(policy_session, resolver, managed
 
     result = _analyze("ладно, так сколько биоревит?", policy_session, knowledge_base)
 
-    assert result.action == PolicyAction.ANSWER
+    assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.PRICE_QUESTION
     assert result.service_id == "biorevitalizaciya_9d426f68"
+    assert result.safe_context["question_type"] == "variants_list"
 
 
 def test_skolko_duration_does_not_become_price(policy_session, knowledge_base) -> None:
@@ -872,6 +904,7 @@ def test_fuzzy_price_and_short_service_typo(policy_session, knowledge_base) -> N
 
     assert result.action == PolicyAction.ANSWER
     assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.safe_context["question_type"] == "price"
     assert result.service_id == "facial_cleansing"
 
 
@@ -1236,6 +1269,32 @@ def test_fact_guard_ignores_negated_blocked_value(
     )
 
 
+def test_fact_guard_negation_is_scoped_to_blocked_value(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "слышала что вы делаете ботокс, но мне не интересно, а вот диспорт бы попробовала",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert result.safe_context["fact_guard"]["matched_blocked"] == ["Диспорт"]
+    message_to_user = result.safe_context["message_to_user"]
+    assert "Диспорт среди подтверждённых вариантов нет" in message_to_user
+    assert "Ботокс среди подтверждённых вариантов нет" not in message_to_user
+    assert "Ксеомин" in message_to_user
+    assert "Миотокс" in message_to_user
+
+
 def test_fact_guard_stays_before_cosmetic_concern(
     policy_session,
     resolver,
@@ -1353,8 +1412,9 @@ def test_safe_known_service_price_request_still_answers(
         {"intent": "price_question", "service_id": "chistki_e744e513", "confidence": 0.9},
     )
 
-    assert result.action == PolicyAction.ANSWER
+    assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.PRICE_QUESTION
+    assert result.safe_context["question_type"] == "variants_list"
 
 
 def test_benign_aftercare_question_does_not_escalate(

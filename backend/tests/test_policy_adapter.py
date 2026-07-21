@@ -129,6 +129,24 @@ def test_merge_keeps_local_medical_over_model_answer() -> None:
     assert result["intent"] == "medical_advice"
 
 
+def test_merge_keeps_confident_local_cosmetic_concern_over_model_regulated() -> None:
+    result = merge_policy_classifications(
+        {"intent": "cosmetic_concern", "service_id": None, "confidence": 0.82},
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.95},
+    )
+
+    assert result["intent"] == "cosmetic_concern"
+
+
+def test_merge_lets_model_regulated_beat_low_confidence_local_cosmetic_concern() -> None:
+    result = merge_policy_classifications(
+        {"intent": "cosmetic_concern", "service_id": None, "confidence": 0.4},
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.95},
+    )
+
+    assert result["intent"] == "regulated_advice"
+
+
 def test_merge_accepts_model_unknown_service_as_safer_result() -> None:
     result = merge_policy_classifications(
         {"intent": "service_mention", "service_id": None, "confidence": 0.0},

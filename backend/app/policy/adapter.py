@@ -68,6 +68,8 @@ def merge_policy_classifications(
         return local_result
     if local_intent == "off_topic" and local_confidence >= 0.75:
         return local_result
+    if local_intent == "cosmetic_concern" and local_confidence >= 0.75:
+        return local_result
     if model_intent in REGULATED_INTENTS:
         return model_result
     if model_intent == "unknown_service" and local_intent == "price_question" and not local_service_id:

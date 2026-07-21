@@ -45,6 +45,14 @@ logger = logging.getLogger(__name__)
 
 ENGAGEMENT_OFFER_THRESHOLDS = (5, 8, 13)
 ENGAGEMENT_OFFER_KEYS = ("engagement_offer_1", "engagement_offer_2", "engagement_offer_3")
+ENGAGEMENT_DISMISS_MESSAGES = {
+    "продолжить тут",
+    "продолжить здесь",
+    "продолжим тут",
+    "продолжим здесь",
+}
+LEAD_CONTEXT_START_KEY = "lead_context_start_index"
+LEAD_SERVICE_ID_KEY = "lead_service_id"
 
 
 class ChatService:
@@ -86,6 +94,25 @@ class ChatService:
                 "value": "Продолжить тут",
             },
         ]
+
+    def _is_engagement_dismiss_message(self, message: str) -> bool:
+        return normalize_text(message) in ENGAGEMENT_DISMISS_MESSAGES
+
+    async def _engagement_dismiss_response(self, session_store, session) -> ChatMessageResponse:
+        answer = self._phrase(
+            "engagement_continue",
+            "Хорошо, продолжим здесь. Напишите, что хотите уточнить дальше.",
+        )
+        await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+        session = await session_store.get(session.session_id)
+        return ChatMessageResponse(
+            session_id=session.session_id,
+            status=session.status,
+            action=PolicyAction.CLARIFY,
+            answer=answer,
+            lead_created=False,
+            quick_actions=[],
+        )
 
     async def _apply_engagement_offer_if_due(
         self,
@@ -243,6 +270,47 @@ class ChatService:
             return f"{prefix}{prior_message} | Контакт: {message}"
         return f"{prefix}{message}"
 
+    def _lead_context_start_metadata(self, session) -> dict[str, int]:
+        return {LEAD_CONTEXT_START_KEY: max(0, len(session.messages) - 1)}
+
+    def _lead_context_metadata(self, session, service_id: str | None = None) -> dict[str, object]:
+        metadata: dict[str, object] = self._lead_context_start_metadata(session)
+        if service_id:
+            metadata[LEAD_SERVICE_ID_KEY] = service_id
+        return metadata
+
+    def _lead_context_start_index(self, session, draft: dict[str, object] | None) -> int:
+        if isinstance(draft, dict):
+            try:
+                value = int(draft.get(LEAD_CONTEXT_START_KEY, ""))
+            except (TypeError, ValueError):
+                value = -1
+            if 0 <= value < len(session.messages):
+                return value
+        return max(0, len(session.messages) - 1)
+
+    def _lead_context_session(self, session, start_index: int):
+        if start_index <= 0:
+            return session
+        return session.model_copy(update={"messages": session.messages[start_index:]})
+
+    def _lead_service_id(
+        self,
+        session,
+        *,
+        is_booking_request: bool,
+        policy_service_id: str | None = None,
+        draft: dict[str, object] | None = None,
+    ) -> str | None:
+        if policy_service_id:
+            return policy_service_id
+        if is_booking_request:
+            value = draft.get(LEAD_SERVICE_ID_KEY) if isinstance(draft, dict) else None
+            if value is None:
+                return None
+            return str(value).strip() or None
+        return session.last_service_id
+
     def _unresolved_lead_metadata(
         self,
         session,
@@ -340,6 +408,10 @@ class ChatService:
             last_service_id=service.id,
             last_intent=PolicyReason.BOOKING_REQUEST.value,
         )
+        await session_store.update_contact_draft(
+            session.session_id,
+            metadata={LEAD_SERVICE_ID_KEY: service.id},
+        )
         answer = self._phrase(
             "booking_contact_prompt",
             "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
@@ -434,13 +506,19 @@ class ChatService:
         draft_lead_trigger = str(session.contact_draft.get("lead_trigger") or "").strip()
         draft_reason = str(session.contact_draft.get("reason") or "").strip()
         draft_unresolved_query = str(session.contact_draft.get("unresolved_query") or "").strip()
+        lead_context_start_index = self._lead_context_start_index(session, session.contact_draft)
+        lead_session = self._lead_context_session(session, lead_context_start_index)
         contact = {"name": name, "phone": phone}
         lead = build_lead_from_contact(
             company_id=session.company_id,
             session_id=session.session_id,
             contact=contact,
-            summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
-            service_id=session.last_service_id,
+            summary=self._lead_summary(lead_session, message, is_booking_request=is_booking_request),
+            service_id=self._lead_service_id(
+                session,
+                is_booking_request=is_booking_request,
+                draft=session.contact_draft,
+            ),
             reason=draft_reason
             or classify_lead_reason(last_intent=session.last_intent, is_booking_request=is_booking_request),
             needs_operator=draft_needs_operator or session.operator_requested,
@@ -451,10 +529,10 @@ class ChatService:
                 is_regulated_flow=draft_needs_operator,
             ),
             unresolved_query=draft_unresolved_query,
-            recent_messages=recent_messages_for(session),
+            recent_messages=recent_messages_for(lead_session),
             operator_url=self._operator_session_url(session.session_id),
         )
-        await self._finalize_lead_summary(session, lead)
+        await self._finalize_lead_summary(lead_session, lead)
         await lead_service.save(
             lead,
             event_type="booking_created" if is_booking_request else "lead_created",
@@ -516,12 +594,20 @@ class ChatService:
                 else PendingAction.COLLECT_CONTACT.value
             )
             await session_store.set_pending_action(session.session_id, pending_action)
+            await session_store.update_contact_draft(
+                session.session_id,
+                metadata=self._lead_context_metadata(session, policy_result.service_id),
+            )
             if prior_unresolved_metadata:
                 await session_store.update_contact_draft(session.session_id, metadata=prior_unresolved_metadata)
             return
 
         if policy_result.action == PolicyAction.CLARIFY and policy_result.safe_context.get("booking_request"):
             await session_store.set_pending_action(session.session_id, PendingAction.BOOKING_CONTACT.value)
+            await session_store.update_contact_draft(
+                session.session_id,
+                metadata=self._lead_context_metadata(session, policy_result.service_id),
+            )
             if prior_unresolved_metadata:
                 await session_store.update_contact_draft(session.session_id, metadata=prior_unresolved_metadata)
             return
@@ -675,6 +761,13 @@ class ChatService:
         if pending_contact_response is not None:
             return pending_contact_response
 
+        if (
+            session.status == SessionStatus.AI_ACTIVE
+            and not session.pending_action
+            and self._is_engagement_dismiss_message(message)
+        ):
+            return await self._engagement_dismiss_response(session_store, session)
+
         if not extract_phone(message) and self._looks_like_partial_phone(message):
             answer = "Похоже, номер неполный. Проверьте, пожалуйста, и отправьте телефон ещё раз."
             await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
@@ -812,12 +905,19 @@ class ChatService:
                 unresolved_lead_trigger = str(unresolved_metadata.get("lead_trigger") or "").strip()
                 unresolved_reason = str(unresolved_metadata.get("reason") or "").strip()
                 unresolved_query = str(unresolved_metadata.get("unresolved_query") or "").strip()
+                lead_context_start_index = self._lead_context_start_index(session, prior_contact_draft)
+                lead_session = self._lead_context_session(session, lead_context_start_index)
                 lead = build_lead_from_contact(
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
-                    summary=self._lead_summary(session, message, is_booking_request=is_booking_request),
-                    service_id=policy_result.service_id or session.last_service_id,
+                    summary=self._lead_summary(lead_session, message, is_booking_request=is_booking_request),
+                    service_id=self._lead_service_id(
+                        session,
+                        is_booking_request=is_booking_request,
+                        policy_service_id=policy_result.service_id,
+                        draft=prior_contact_draft,
+                    ),
                     reason=draft_reason
                     or unresolved_reason
                     or classify_lead_reason(last_intent=prior_last_intent, is_booking_request=is_booking_request),
@@ -830,10 +930,10 @@ class ChatService:
                         is_regulated_flow=draft_needs_operator,
                     ),
                     unresolved_query=draft_unresolved_query or unresolved_query,
-                    recent_messages=recent_messages_for(session),
+                    recent_messages=recent_messages_for(lead_session),
                     operator_url=self._operator_session_url(session.session_id),
                 )
-                await self._finalize_lead_summary(session, lead)
+                await self._finalize_lead_summary(lead_session, lead)
                 await lead_service.save(
                     lead,
                     event_type="booking_created" if is_booking_request else "lead_created",

@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.llm.mock import MockLLMClient
+
 
 def _copy_rosh_import_demo_for_chat_test(test_client, managed_env) -> None:
     source_dir = Path("backend/data/clients/rosh_import_demo")
@@ -26,6 +28,15 @@ def _post_chat(test_client, *, message: str, session_id: str | None = None, comp
     )
     assert response.status_code == 200
     return response.json()
+
+
+class _EchoSummaryLLMClient(MockLLMClient):
+    async def summarize_session(self, session, lead):
+        return " | ".join(
+            str(message.text or "")
+            for message in session.messages
+            if message.role.value == "user" and str(message.text or "").strip()
+        )
 
 
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
@@ -478,12 +489,25 @@ def test_engagement_continue_here_does_not_disable_later_offer(test_client) -> N
 
     assert "диалог уже длинный" in payload["answer"]
 
+    payload = _post_chat(test_client, message="Продолжить тут", session_id=session_id)
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+
+    assert payload["action"] == "clarify"
+    assert "продолжим здесь" in payload["answer"].lower()
+    assert "услуги центра" not in payload["answer"].lower()
+    assert _quick_action_labels(payload) == []
+    assert stored_session.substantive_message_count == 5
+    assert stored_session.engagement_offer_count == 1
+
     for message in [
-        "Продолжить тут",
         "что входит в Консультация косметолога",
         "как долго Консультация косметолога",
     ]:
         payload = _post_chat(test_client, message=message, session_id=session_id)
+
+    assert "могу передать администратору краткое резюме" not in payload["answer"]
+
+    payload = _post_chat(test_client, message="цена на Консультация дерматолога", session_id=session_id)
 
     assert "могу передать администратору краткое резюме" in payload["answer"]
     assert _quick_action_labels(payload) == ["Передать администратору", "Продолжить тут"]
@@ -924,6 +948,143 @@ def test_unknown_service_booking_prompt_keeps_unresolved_query_in_lead(test_clie
     assert lead["reason"] == "unknown_service"
     assert lead["unresolved_query"] == "татуаж делаете?"
     assert "татуаж" in lead["summary"].lower()
+
+
+def test_second_booking_lead_summary_does_not_bleed_previous_booking_context(
+    test_client,
+    managed_env,
+    monkeypatch,
+) -> None:
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    monkeypatch.setattr(test_client.app.state, "llm_client", _EchoSummaryLLMClient())
+
+    first_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="хочу записаться к Молотиловой",
+    )
+    session_id = first_payload["session_id"]
+    first_service_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Биоревитализация",
+    )
+    first_contact_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Иван 89990000001 к Молотиловой",
+    )
+
+    second_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="запишите к Сарычеву на вторник",
+    )
+    second_service_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Консультации",
+    )
+    second_contact_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Иван 2 89990000002 к Сарычеву во вторник",
+    )
+
+    assert first_payload["action"] == "clarify"
+    assert "На какую услугу хотите оставить заявку" in first_payload["answer"]
+    assert first_service_payload["action"] == "clarify"
+    assert "напишите имя, телефон" in first_service_payload["answer"].lower()
+    assert first_contact_payload["lead_created"] is True
+    assert second_payload["action"] == "clarify"
+    assert "На какую услугу хотите оставить заявку" in second_payload["answer"]
+    assert second_service_payload["action"] == "clarify"
+    assert "напишите имя, телефон" in second_service_payload["answer"].lower()
+    assert second_contact_payload["lead_created"] is True
+    leads = [
+        json.loads(line)
+        for line in (managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    first_lead = leads[-2]
+    second_lead = leads[-1]
+
+    assert "biorevitalizaciya" in first_lead["service_id"]
+    assert "konsultacii" in second_lead["service_id"]
+    assert "Молотиловой" in first_lead["summary"]
+    assert "Биоревитализация" in first_lead["summary"]
+    assert "Сарычеву" in second_lead["summary"]
+    assert "Консультации" in second_lead["summary"]
+    assert "Молотилов" not in second_lead["summary"]
+    assert "Биоревитализация" not in second_lead["summary"]
+    recent_text = " | ".join(message["text"] for message in second_lead["recent_messages"])
+    assert "Сарычеву" in recent_text
+    assert "Молотилов" not in recent_text
+    assert "Биоревитализация" not in recent_text
+
+
+def test_skipped_booking_service_selection_does_not_reuse_previous_service_id(
+    test_client,
+    managed_env,
+    monkeypatch,
+) -> None:
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    monkeypatch.setattr(test_client.app.state, "llm_client", _EchoSummaryLLMClient())
+
+    first_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="хочу записаться к Молотиловой",
+    )
+    session_id = first_payload["session_id"]
+    _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Биоревитализация",
+    )
+    first_contact_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Иван 89990000001 к Молотиловой",
+    )
+
+    second_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="запишите к Сарычеву на вторник",
+    )
+    second_contact_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=session_id,
+        message="Иван 2 89990000002 к Сарычеву во вторник",
+    )
+
+    assert first_contact_payload["lead_created"] is True
+    assert second_payload["action"] == "clarify"
+    assert "На какую услугу хотите оставить заявку" in second_payload["answer"]
+    assert second_contact_payload["lead_created"] is True
+    leads = [
+        json.loads(line)
+        for line in (managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    first_lead = leads[-2]
+    second_lead = leads[-1]
+
+    assert "biorevitalizaciya" in first_lead["service_id"]
+    assert second_lead["service_id"] is None
+    assert "Сарычеву" in second_lead["summary"]
+    assert "Биоревитализация" not in second_lead["summary"]
+    recent_text = " | ".join(message["text"] for message in second_lead["recent_messages"])
+    assert "Сарычеву" in recent_text
+    assert "Биоревитализация" not in recent_text
 
 
 def test_partial_phone_does_not_go_to_llm(test_client) -> None:

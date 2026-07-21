@@ -590,6 +590,7 @@ def _clinic_info_result(
     normalized_message: str,
     knowledge_base: KnowledgeBase,
     context_topic: str | None = None,
+    booking_requested: bool = False,
 ) -> PolicyResult | None:
     company = knowledge_base.company
     doctors = _clinic_doctors(knowledge_base)
@@ -675,7 +676,7 @@ def _clinic_info_result(
     doctor_info_requested = (
         context_topic == "doctors"
         or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS)
-        or doctor_name_matched
+        or (doctor_name_matched and not booking_requested)
     )
     if doctor_info_requested:
         asked_generic_list = contains_keyword(normalized_message, GENERIC_DOCTOR_LIST_KEYWORDS)
@@ -1193,6 +1194,9 @@ def analyze_message(
     )
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
     lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)
+    booking_mentions_clinic_doctor = booking_requested and any(
+        _doctor_matches(message, doctor) for doctor in _clinic_doctors(knowledge_base)
+    )
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):
@@ -1207,6 +1211,7 @@ def analyze_message(
             normalized_message,
             knowledge_base,
             str(classification.get("context_topic") or "") or None,
+            booking_requested=booking_requested,
         )
         if clinic_info_result is not None:
             return clinic_info_result
@@ -1356,6 +1361,7 @@ def analyze_message(
         normalized_message,
         knowledge_base,
         str(classification.get("context_topic") or "") or None,
+        booking_requested=booking_requested,
     )
     if clinic_info_result is not None:
         return clinic_info_result
@@ -1650,7 +1656,7 @@ def analyze_message(
         return _known_service_price_result(knowledge_base, service, confidence=0.95)
 
     if booking_requested:
-        if service is None:
+        if service is None and not booking_mentions_clinic_doctor:
             service = knowledge_base.find_service_by_id(
                 session.last_service_id or last_service_from_history(session, knowledge_base)
             )

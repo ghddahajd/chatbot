@@ -334,6 +334,18 @@ def test_clinic_doctor_schedule_beats_bad_booking_classification(policy_session,
     assert "10:00" in result.safe_context["message_to_user"]
 
 
+def test_clinic_doctor_name_does_not_intercept_booking_request(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("хочу записаться к молотиловой", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.BOOKING_REQUEST
+    assert result.safe_context["booking_request"] is True
+    assert "На какую услугу хотите оставить заявку" in result.safe_context["message_to_user"]
+    assert "Молотилова Ольга Юрьевна" not in result.safe_context["message_to_user"]
+
+
 def test_clinic_doctor_schedule_defers_without_slots(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 

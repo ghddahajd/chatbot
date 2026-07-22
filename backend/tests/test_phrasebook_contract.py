@@ -36,6 +36,26 @@ def test_phrasebook_value_to_text_accepts_string_list_and_empty_list() -> None:
     assert phrasebook_value_to_text([], "fallback") == "fallback"
 
 
+def test_phrasebook_value_to_text_uses_seed_deterministically() -> None:
+    values = ["Первый", "Второй", "Третий"]
+
+    first = phrasebook_value_to_text(values, seed="session:key:1")
+    second = phrasebook_value_to_text(values, seed="session:key:1")
+
+    assert first == second
+    assert first in values
+
+
+def test_phrasebook_seed_changes_distribution_across_message_counts() -> None:
+    values = ["Первый", "Второй", "Третий"]
+    selected = {
+        phrasebook_value_to_text(values, seed=f"session:key:{message_count}")
+        for message_count in range(6)
+    }
+
+    assert len(selected) > 1
+
+
 def test_phrasebook_client_override_applies(managed_env: dict[str, Path]) -> None:
     config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
     config_path.write_text(

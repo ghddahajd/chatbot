@@ -851,6 +851,32 @@ def test_unknown_service_suggests_similar(policy_session, knowledge_base) -> Non
     assert result.safe_context["similar"]
 
 
+def test_bare_unknown_service_uses_named_phrase(policy_session, knowledge_base) -> None:
+    result = analyze_message(
+        "Ботокс",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert "«Ботокс»" in result.safe_context["message_to_user"]
+
+
+def test_expanded_unknown_service_does_not_use_named_phrase(policy_session, knowledge_base) -> None:
+    result = analyze_message(
+        "а можете подсказать подробнее про биоиоиои пожалуйста",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert "«" not in result.safe_context["message_to_user"]
+
+
 def test_booking_date_target_does_not_become_unknown_service(policy_session, knowledge_base) -> None:
     result = _analyze("хочу записаться на завтра", policy_session, knowledge_base)
 

@@ -3,6 +3,8 @@
 import shutil
 from pathlib import Path
 
+import yaml
+
 from app.knowledge import KnowledgeBaseResolver, _token_prefix_match
 from app.models import PolicyAction
 from app.policy import analyze_message
@@ -14,6 +16,25 @@ def _copy_rosh_import_kb(resolver: KnowledgeBaseResolver, managed_env):
     target_dir = managed_env["clients_dir"] / "rosh_import_demo"
     shutil.copytree(source_dir, target_dir)
     return resolver.get("rosh_import_demo", fallback=False)
+
+
+def _set_article_map_excerpt(clients_dir: Path, url: str, excerpt: str | None) -> None:
+    """Точечно ставит/убирает excerpt для одной записи по url — не зависит от того,
+    есть ли у неё уже excerpt в реальных данных клиента (не хрупкий string-replace)."""
+
+    map_path = clients_dir / "rosh_import_demo" / "article_service_map.yaml"
+    payload = yaml.safe_load(map_path.read_text(encoding="utf-8"))
+    normalized_url = url.rstrip("/")
+    for item in payload.get("items", []):
+        if str(item.get("url") or "").rstrip("/") == normalized_url:
+            if excerpt is None:
+                item.pop("excerpt", None)
+            else:
+                item["excerpt"] = excerpt
+            break
+    else:
+        raise AssertionError(f"url not found in article_service_map.yaml: {url}")
+    map_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def _classify(message: str, knowledge_base):
@@ -79,19 +100,11 @@ def test_article_service_map_loads_optional_excerpt(resolver, managed_env) -> No
     source_dir = Path("backend/data/clients/rosh_import_demo")
     target_dir = managed_env["clients_dir"] / "rosh_import_demo"
     shutil.copytree(source_dir, target_dir)
-    map_path = target_dir / "article_service_map.yaml"
-    text = map_path.read_text(encoding="utf-8")
-    text = text.replace(
-        "  status: approved\n  reviewed_note:",
-        "  status: approved\n  excerpt: Одобренный короткий фрагмент статьи.\n  reviewed_note:",
-        1,
-    )
-    map_path.write_text(text, encoding="utf-8")
+    url = "https://www.medcenterrosh.ru/blog/vtoroi-podborodok-prichiny-poyavleniya-i-metody-korrekcii"
+    _set_article_map_excerpt(managed_env["clients_dir"], url, "Одобренный короткий фрагмент статьи.")
 
     knowledge_base = resolver.get("rosh_import_demo", fallback=False)
-    entry = knowledge_base.article_service_map[
-        "https://www.medcenterrosh.ru/blog/vtoroi-podborodok-prichiny-poyavleniya-i-metody-korrekcii"
-    ]
+    entry = knowledge_base.article_service_map[url]
 
     assert entry.excerpt == "Одобренный короткий фрагмент статьи."
 
@@ -150,7 +163,17 @@ def test_unknown_service_can_use_article_trigger_phrase(
 ) -> None:
     import app.policy as policy_module
 
-    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    target_dir = managed_env["clients_dir"] / "rosh_import_demo"
+    shutil.copytree(source_dir, target_dir)
+    # тест намеренно проверяет поведение БЕЗ excerpt — не зависит от того, добавлен ли
+    # он у этой записи в реальных данных клиента
+    _set_article_map_excerpt(
+        managed_env["clients_dir"],
+        "https://www.medcenterrosh.ru/problems/temnye-veki-i-krugi-pod-glazami",
+        None,
+    )
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
     monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
     monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
 

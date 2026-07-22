@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import random
@@ -62,6 +63,11 @@ DEFAULT_PHRASEBOOK = {
         "В доступных мне данных подтверждения по этой услуге не нашёл — уточнить у менеджера или показать похожие варианты?",
         "Такого конкретно в прайсе не увидел, но по этой теме могут быть похожие процедуры. Показать список или спросить менеджера?",
         "У меня сейчас нет надёжных данных по этому вопросу. Могу показать актуальные услуги или подключить менеджера.",
+    ],
+    "unknown_service_named": [
+        "«{service}» у нас не значится, но по этой теме могут быть похожие варианты. Показать?",
+        "Конкретно «{service}» не нашёл в прайсе — могу показать похожие процедуры или подключить менеджера.",
+        "По запросу «{service}» подтверждения в данных нет. Показать актуальные услуги или передать менеджеру?",
     ],
     "off_topic": [
         "С этим вопросом не помогу — я отвечаю по услугам, ценам и записи в центр. Подсказать по услугам?",
@@ -195,12 +201,21 @@ def _normalize_phrasebook_value(value: object) -> PhrasebookValue | None:
     return None
 
 
-def phrasebook_value_to_text(value: object, fallback: str = "") -> str:
+def _stable_choice_index(seed: str, options_len: int) -> int:
+    if options_len <= 0:
+        return 0
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return int(digest, 16) % options_len
+
+
+def phrasebook_value_to_text(value: object, fallback: str = "", seed: str | None = None) -> str:
     if isinstance(value, str):
         return value.strip() or fallback
     if isinstance(value, list):
         items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
         if items:
+            if seed:
+                return items[_stable_choice_index(seed, len(items))]
             return random.choice(items)
     return fallback
 

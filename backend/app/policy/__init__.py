@@ -62,21 +62,82 @@ logger = logging.getLogger(__name__)
 
 
 WIDE_PRICE_RANGE_RATIO = 3
+BARE_SERVICE_MENTION_BLOCK_WORDS = {
+    "а",
+    "в",
+    "вы",
+    "есть",
+    "делаете",
+    "делаешь",
+    "как",
+    "когда",
+    "колите",
+    "можно",
+    "на",
+    "нужно",
+    "подскажите",
+    "почему",
+    "почем",
+    "почём",
+    "сколько",
+    "скажите",
+    "стоимость",
+    "стоит",
+    "хочу",
+    "цена",
+    "что",
+    "зачем",
+    "записаться",
+    "запишите",
+}
 
 
-def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
+def _phrase_seed(session: Session, key: str) -> str:
+    return f"{session.session_id}:{key}:{session.message_count}"
+
+
+def _phrase(knowledge_base: KnowledgeBase, key: str, seed: str | None = None) -> str:
     value = getattr(knowledge_base, "phrasebook", {}).get(key)
-    return phrasebook_value_to_text(value)
+    return phrasebook_value_to_text(value, seed=seed)
 
 
-def _format_phrase(knowledge_base: KnowledgeBase, key: str, **values: object) -> str:
-    phrase = _phrase(knowledge_base, key)
+def _format_phrase(knowledge_base: KnowledgeBase, key: str, seed: str | None = None, **values: object) -> str:
+    phrase = _phrase(knowledge_base, key, seed=seed)
     if not phrase:
         return ""
     try:
         return phrase.format(**values)
     except (KeyError, ValueError):
         return phrase
+
+
+def _looks_like_bare_service_mention(normalized_message: str) -> bool:
+    tokens = normalized_message.split()
+    if not tokens or len(tokens) > 5:
+        return False
+    return not any(token in BARE_SERVICE_MENTION_BLOCK_WORDS for token in tokens)
+
+
+def _unknown_service_display_name(message: str) -> str:
+    return message.strip().strip(" \t\r\n?!.,;:«»\"'")
+
+
+def _unknown_service_message(
+    knowledge_base: KnowledgeBase,
+    session: Session,
+    message: str,
+    normalized_message: str,
+) -> str:
+    if _looks_like_bare_service_mention(normalized_message):
+        display_name = _unknown_service_display_name(message)
+        if display_name:
+            return _format_phrase(
+                knowledge_base,
+                "unknown_service_named",
+                seed=_phrase_seed(session, "unknown_service_named"),
+                service=display_name,
+            )
+    return _phrase(knowledge_base, "unknown_service", seed=_phrase_seed(session, "unknown_service"))
 
 
 def _service_link_action(service) -> dict[str, str] | None:
@@ -510,6 +571,7 @@ def _medical_referral_quick_actions(consultation_service, *, offer_lead: bool = 
 def _medical_referral_result(
     normalized_message: str,
     knowledge_base: KnowledgeBase,
+    session: Session,
     service,
     restricted_category: str | None,
 ) -> PolicyResult:
@@ -517,7 +579,10 @@ def _medical_referral_result(
     if contains_keyword(normalized_message, MEDICAL_REFERRAL_KEYWORDS):
         consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
 
-    message_to_user = _phrase(knowledge_base, "medical_referral") or knowledge_base.company.safety_disclaimer
+    message_to_user = (
+        _phrase(knowledge_base, "medical_referral", seed=_phrase_seed(session, "medical_referral"))
+        or knowledge_base.company.safety_disclaimer
+    )
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
@@ -538,6 +603,7 @@ def _sensitive_topic_result(
     topic: dict[str, object],
     normalized_message: str,
     knowledge_base: KnowledgeBase,
+    session: Session,
     service,
     restricted_category: str | None,
 ) -> PolicyResult:
@@ -547,7 +613,11 @@ def _sensitive_topic_result(
     consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
 
     if handling == "decline":
-        message_to_user = configured_text or _phrase(knowledge_base, "sensitive_decline")
+        message_to_user = configured_text or _phrase(
+            knowledge_base,
+            "sensitive_decline",
+            seed=_phrase_seed(session, "sensitive_decline"),
+        )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.REGULATED_ADVICE,
@@ -562,7 +632,11 @@ def _sensitive_topic_result(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
-    message_to_user = configured_text or _phrase(knowledge_base, "sensitive_escalate")
+    message_to_user = configured_text or _phrase(
+        knowledge_base,
+        "sensitive_escalate",
+        seed=_phrase_seed(session, "sensitive_escalate"),
+    )
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
@@ -599,6 +673,7 @@ def _equipment_result(
     message: str,
     normalized_message: str,
     knowledge_base: KnowledgeBase,
+    session: Session,
     service,
 ) -> PolicyResult | None:
     if not contains_keyword(normalized_message, EQUIPMENT_QUESTION_KEYWORDS):
@@ -619,7 +694,11 @@ def _equipment_result(
             message_to_user = public_answer or f"Используется аппарат: {equipment_name}."
             action = PolicyAction.ANSWER
         else:
-            message_to_user = public_answer or _phrase(knowledge_base, "equipment_deferred")
+            message_to_user = public_answer or _phrase(
+                knowledge_base,
+                "equipment_deferred",
+                seed=_phrase_seed(session, "equipment_deferred"),
+            )
             action = PolicyAction.CLARIFY
         return PolicyResult(
             action=action,
@@ -640,7 +719,11 @@ def _equipment_result(
         confidence=0.86,
         safe_context={
             "force_direct_answer": True,
-            "message_to_user": _phrase(knowledge_base, "equipment_deferred"),
+            "message_to_user": _phrase(
+                knowledge_base,
+                "equipment_deferred",
+                seed=_phrase_seed(session, "equipment_deferred"),
+            ),
         },
         quick_actions=["Оставить телефон", "Позвать менеджера"],
     )
@@ -717,6 +800,7 @@ def _clinic_info_result(
     message: str,
     normalized_message: str,
     knowledge_base: KnowledgeBase,
+    session: Session,
     context_topic: str | None = None,
     booking_requested: bool = False,
 ) -> PolicyResult | None:
@@ -874,7 +958,15 @@ def _clinic_info_result(
         )
         or contains_keyword(normalized_message, PRODUCTS_FACT_KEYWORDS)
     ):
-        message_to_user = _phrase(knowledge_base, fact_key) if fact_key else _phrase(knowledge_base, "clinic_fact_deferred")
+        message_to_user = (
+            _phrase(knowledge_base, fact_key)
+            if fact_key
+            else _phrase(
+                knowledge_base,
+                "clinic_fact_deferred",
+                seed=_phrase_seed(session, "clinic_fact_deferred"),
+            )
+        )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,
@@ -1425,6 +1517,7 @@ def analyze_message(
             message,
             normalized_message,
             knowledge_base,
+            session,
             str(classification.get("context_topic") or "") or None,
             booking_requested=booking_requested,
         )
@@ -1436,6 +1529,7 @@ def analyze_message(
             sensitive_topic,
             normalized_message,
             knowledge_base,
+            session,
             service,
             restricted_category,
         )
@@ -1453,6 +1547,7 @@ def analyze_message(
         return _medical_referral_result(
             normalized_message,
             knowledge_base,
+            session,
             service,
             restricted_category,
         )
@@ -1584,6 +1679,7 @@ def analyze_message(
         message,
         normalized_message,
         knowledge_base,
+        session,
         str(classification.get("context_topic") or "") or None,
         booking_requested=booking_requested,
     )
@@ -1634,7 +1730,11 @@ def analyze_message(
             reason=PolicyReason.OFF_TOPIC,
             confidence=classifier_confidence or 0.9,
             safe_context={
-                "message_to_user": _phrase(knowledge_base, "off_topic")
+                "message_to_user": _phrase(
+                    knowledge_base,
+                    "off_topic",
+                    seed=_phrase_seed(session, "off_topic"),
+                )
                 or (
                     "Это не по моей части — я консультирую по услугам компании. "
                     f"{knowledge_base.company.company_name}. Могу подсказать по услугам или ценам."
@@ -1664,7 +1764,7 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
-    equipment_result = _equipment_result(message, normalized_message, knowledge_base, service)
+    equipment_result = _equipment_result(message, normalized_message, knowledge_base, session, service)
     if equipment_result is not None:
         return equipment_result
 
@@ -1846,8 +1946,11 @@ def analyze_message(
             reason=PolicyReason.UNKNOWN_SERVICE,
             confidence=classifier_confidence or 0.8,
             safe_context={
-                "message_to_user": (
-                    _phrase(knowledge_base, "unknown_service")
+                "message_to_user": _unknown_service_message(
+                    knowledge_base,
+                    session,
+                    message,
+                    normalized_message,
                 )
             },
             quick_actions=["Позвать менеджера", "Посмотреть услуги"],
@@ -1920,8 +2023,11 @@ def analyze_message(
                 reason=PolicyReason.UNKNOWN_SERVICE,
                 confidence=0.82,
                 safe_context={
-                    "message_to_user": (
-                        _phrase(knowledge_base, "unknown_service")
+                    "message_to_user": _unknown_service_message(
+                        knowledge_base,
+                        session,
+                        message,
+                        normalized_message,
                     )
                 },
                 quick_actions=["Посмотреть услуги", "Позвать менеджера"],
@@ -2004,8 +2110,11 @@ def analyze_message(
                 reason=PolicyReason.UNKNOWN_SERVICE,
                 confidence=0.8,
                 safe_context={
-                    "message_to_user": (
-                        _phrase(knowledge_base, "unknown_service")
+                    "message_to_user": _unknown_service_message(
+                        knowledge_base,
+                        session,
+                        message,
+                        normalized_message,
                     )
                 },
                 quick_actions=["Позвать менеджера", "Посмотреть услуги"],

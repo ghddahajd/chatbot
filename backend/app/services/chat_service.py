@@ -62,10 +62,10 @@ class ChatService:
     def __init__(self, request: Request) -> None:
         self.request = request
 
-    def _phrase(self, key: str, fallback: str) -> str:
+    def _phrase(self, key: str, fallback: str, seed: str | None = None) -> str:
         phrasebook = getattr(self, "_phrasebook", {})
         value = phrasebook.get(key) if isinstance(phrasebook, dict) else None
-        return phrasebook_value_to_text(value, fallback)
+        return phrasebook_value_to_text(value, fallback, seed=seed)
 
     def _is_substantive_policy_result(self, policy_result) -> bool:
         return policy_result.action not in {
@@ -243,6 +243,7 @@ class ChatService:
                 "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
                 "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
             ),
+            seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
         )
         quick_actions = self._regulated_soft_quick_actions()
         referral_action = self._referral_quick_action(referral_service)

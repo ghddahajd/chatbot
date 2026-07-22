@@ -160,7 +160,9 @@ clinic_info:
     assert result.action == PolicyAction.TRANSFER_OPERATOR
     assert result.reason == PolicyReason.REGULATED_ADVICE
     assert result.safe_context["sensitive_handling"] == "escalate"
-    assert "деликатная тема" in result.safe_context["message_to_user"].lower()
+    message_to_user = result.safe_context["message_to_user"].lower()
+    assert "деликатн" in message_to_user
+    assert "специалист" in message_to_user or "менеджер" in message_to_user
     assert "не проводим" not in result.safe_context["message_to_user"].lower()
     assert "Оставить телефон" in result.quick_actions
 

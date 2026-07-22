@@ -95,9 +95,13 @@ def test_domain_profile_from_client_config(resolver, managed_env) -> None:
 
 def test_phrasebook_defaults(resolver) -> None:
     phrasebook = resolver.phrasebook("rosh_demo")
+    unknown_service = phrasebook["unknown_service"]
 
     assert phrasebook["operator_label"] == "менеджер"
-    assert "менеджер" in phrasebook["unknown_service"]
+    if isinstance(unknown_service, list):
+        assert any("менеджер" in phrase for phrase in unknown_service)
+    else:
+        assert "менеджер" in unknown_service
 
 
 def test_widget_features_voice_input_default_and_override(resolver, managed_env) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.knowledge import DEFAULT_PHRASEBOOK, KnowledgeBaseResolver
+from app.knowledge import DEFAULT_PHRASEBOOK, KnowledgeBaseResolver, phrasebook_value_to_text
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
@@ -27,6 +27,13 @@ def test_phrasebook_covers_all_read_keys() -> None:
 
     assert read_keys
     assert read_keys - set(DEFAULT_PHRASEBOOK) == set()
+
+
+def test_phrasebook_value_to_text_accepts_string_list_and_empty_list() -> None:
+    assert phrasebook_value_to_text("  Один вариант  ") == "Один вариант"
+    assert phrasebook_value_to_text(["Первый", "Второй"]) in {"Первый", "Второй"}
+    assert phrasebook_value_to_text([]) == ""
+    assert phrasebook_value_to_text([], "fallback") == "fallback"
 
 
 def test_phrasebook_client_override_applies(managed_env: dict[str, Path]) -> None:

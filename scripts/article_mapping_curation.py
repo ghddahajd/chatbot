@@ -37,6 +37,8 @@ BLOCKED_RELATIONS = {
 }
 RED_RISK_FLAGS = {"contraindication_mentioned", "adverse_event", "brand_equipment"}
 FINAL_STATUSES = {"approved", "rejected", "escalated"}
+REVIEWED_STATUSES = FINAL_STATUSES | {"pending_review"}
+CODEX_REVIEW_MARKER = "codex reviewed"
 
 
 class ServiceCandidate(BaseModel):
@@ -167,16 +169,47 @@ def risk_score_for(service_candidates: list[ServiceCandidate], risk_flags: Itera
     return "yellow"
 
 
-def build_draft_result(article: dict[str, Any], llm_result: ArticleMappingDraftLLM) -> DraftArticleResult:
+def drop_unknown_service_candidates(
+    service_candidates: list[ServiceCandidate],
+    known_service_ids: set[str],
+) -> tuple[list[ServiceCandidate], list[ServiceCandidate]]:
+    """LLM иногда придумывает service_id, которого нет в services.json (особенно локальные
+    маленькие модели). Не доверяем ей — такой кандидат никогда не может стать approved (не
+    topic_related по определению), но его reason/evidence всё ещё может быть полезной подсказкой
+    ревьюеру, поэтому не теряем текст целиком — переносим в reviewer_note отдельно."""
+
+    kept = [candidate for candidate in service_candidates if candidate.service_id in known_service_ids]
+    dropped = [candidate for candidate in service_candidates if candidate.service_id not in known_service_ids]
+    return kept, dropped
+
+
+def build_draft_result(
+    article: dict[str, Any],
+    llm_result: ArticleMappingDraftLLM,
+    known_service_ids: set[str] | None = None,
+) -> DraftArticleResult:
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    service_candidates = llm_result.service_candidates
+    risk_flags = [str(flag).strip() for flag in llm_result.risk_flags if str(flag).strip()]
+    reviewer_note = str(llm_result.reviewer_note or "").strip()
+    if known_service_ids is not None:
+        service_candidates, dropped = drop_unknown_service_candidates(service_candidates, known_service_ids)
+        if dropped:
+            risk_flags = risk_flags + ["unknown_service_id_dropped"]
+            hints = "; ".join(
+                f"{candidate.service_id!r} ({candidate.reason or candidate.evidence or 'no reason given'})"
+                for candidate in dropped
+            )
+            note = f"LLM referenced service_id(s) not in catalog, dropped: {hints}"
+            reviewer_note = f"{reviewer_note} | {note}" if reviewer_note else note
     return DraftArticleResult(
         url=normalize_url(article.get("url")),
         title=str(article.get("title") or "").strip(),
-        risk_score=risk_score_for(llm_result.service_candidates, llm_result.risk_flags),
-        service_candidates=llm_result.service_candidates,
-        risk_flags=[str(flag).strip() for flag in llm_result.risk_flags if str(flag).strip()],
+        risk_score=risk_score_for(service_candidates, risk_flags),
+        service_candidates=service_candidates,
+        risk_flags=risk_flags,
         trigger_phrases=[str(phrase).strip() for phrase in llm_result.trigger_phrases if str(phrase).strip()],
-        reviewer_note=str(llm_result.reviewer_note or "").strip(),
+        reviewer_note=reviewer_note,
         generated_at=now,
     )
 
@@ -381,6 +414,7 @@ async def draft_articles(
 ) -> list[Path]:
     documents = read_jsonl(documents_path)
     services = load_services_for_prompt(company, clients_dir)
+    known_service_ids = {str(service.get("id") or "").strip() for service in services if service.get("id")}
     decisions = final_decision_urls(company, clients_dir)
     root = drafts_dir(company, clients_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -406,8 +440,8 @@ async def draft_articles(
             llm_result = await draft_fn(article, services)
             if not isinstance(llm_result, ArticleMappingDraftLLM):
                 llm_result = ArticleMappingDraftLLM.model_validate(llm_result)
-            draft = build_draft_result(article, llm_result)
-        except (RuntimeError, ValueError, ValidationError) as error:
+            draft = build_draft_result(article, llm_result, known_service_ids)
+        except (RuntimeError, ValueError, ValidationError, TimeoutError, ConnectionError) as error:
             print(f"{index}/{total} — {article_id} ❌ {type(error).__name__}: {error}")
             continue
 
@@ -437,3 +471,93 @@ def review_summary(root: Path) -> dict[str, dict[str, int]]:
         else:
             summary[risk]["done"] += 1
     return summary
+
+
+def draft_bucket(draft: dict[str, Any]) -> str:
+    status = str(draft.get("status") or "").strip()
+    if status != "pending_review":
+        return status or "unknown"
+    risk = str(draft.get("risk_score") or "yellow").strip().lower()
+    candidates = [candidate for candidate in draft.get("service_candidates") or [] if isinstance(candidate, dict)]
+    topic_candidates = [
+        candidate for candidate in candidates if str(candidate.get("relation") or "").strip() == "topic_related"
+    ]
+    if topic_candidates:
+        return f"{risk}_with_topic"
+    if candidates:
+        return f"{risk}_non_topic"
+    return f"{risk}_empty"
+
+
+def is_codex_reviewed(draft: dict[str, Any]) -> bool:
+    reviewer_note = str(draft.get("reviewer_note") or "").casefold()
+    return CODEX_REVIEW_MARKER in reviewer_note
+
+
+def draft_report(root: Path) -> dict[str, Any]:
+    report: dict[str, Any] = {"total": 0, "buckets": {}, "codex_reviewed_pending": 0, "invalid": []}
+    if not root.exists():
+        return report
+    for path in sorted(root.glob("*.yaml")):
+        try:
+            draft = load_draft(path)
+            bucket = draft_bucket(draft)
+        except yaml.YAMLError as error:
+            report["invalid"].append({"file": str(path), "error": type(error).__name__})
+            continue
+        report["total"] += 1
+        report["buckets"][bucket] = int(report["buckets"].get(bucket, 0)) + 1
+        if draft.get("status") == "pending_review" and is_codex_reviewed(draft):
+            report["codex_reviewed_pending"] += 1
+    return report
+
+
+def validate_draft_files(root: Path, known_service_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    if not root.exists():
+        issues.append({"file": str(root), "error": "drafts_dir_missing"})
+        return issues
+    for path in sorted(root.glob("*.yaml")):
+        try:
+            draft = load_draft(path)
+        except yaml.YAMLError as error:
+            issues.append({"file": str(path), "error": f"yaml:{type(error).__name__}"})
+            continue
+        status = str(draft.get("status") or "").strip()
+        if status not in REVIEWED_STATUSES:
+            issues.append({"file": str(path), "error": f"unknown_status:{status}"})
+        for index, candidate in enumerate(draft.get("service_candidates") or []):
+            if not isinstance(candidate, dict):
+                issues.append({"file": str(path), "error": f"candidate_{index}:not_object"})
+                continue
+            service_id = str(candidate.get("service_id") or "").strip()
+            relation = str(candidate.get("relation") or "").strip()
+            if known_service_ids is not None and service_id and service_id not in known_service_ids:
+                issues.append({"file": str(path), "error": f"candidate_{index}:unknown_service_id:{service_id}"})
+            if relation in BLOCKED_RELATIONS and service_id in set(draft.get("approved_service_ids") or []):
+                issues.append({"file": str(path), "error": f"candidate_{index}:blocked_relation_approved:{relation}"})
+    return issues
+
+
+def batch_files(
+    root: Path,
+    *,
+    limit: int = 15,
+    bucket: str | None = None,
+    unreviewed_only: bool = False,
+) -> list[Path]:
+    files: list[tuple[str, Path]] = []
+    if not root.exists():
+        return []
+    for path in sorted(root.glob("*.yaml")):
+        draft = load_draft(path)
+        if draft.get("status") != "pending_review":
+            continue
+        if unreviewed_only and is_codex_reviewed(draft):
+            continue
+        current_bucket = draft_bucket(draft)
+        if bucket and current_bucket != bucket:
+            continue
+        files.append((str(draft.get("title") or path.name), path))
+    files.sort(key=lambda item: item[0])
+    return [path for _, path in files[:limit]]

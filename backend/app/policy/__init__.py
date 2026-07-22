@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Optional
 
-from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text
+from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phrasebook_value_to_text
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import retrieve_article_context
 from .constants import (
@@ -66,7 +66,7 @@ WIDE_PRICE_RANGE_RATIO = 3
 
 def _phrase(knowledge_base: KnowledgeBase, key: str) -> str:
     value = getattr(knowledge_base, "phrasebook", {}).get(key)
-    return str(value).strip() if value else ""
+    return phrasebook_value_to_text(value)
 
 
 def _format_phrase(knowledge_base: KnowledgeBase, key: str, **values: object) -> str:

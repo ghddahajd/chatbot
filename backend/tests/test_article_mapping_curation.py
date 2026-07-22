@@ -12,10 +12,14 @@ from scripts.article_mapping_curation import (
     ArticleMappingDraftLLM,
     ServiceCandidate,
     approve_draft,
+    batch_files,
+    draft_bucket,
+    draft_report,
     draft_articles,
     escalate_draft,
     reject_draft,
     risk_score_for,
+    validate_draft_files,
 )
 
 
@@ -196,3 +200,66 @@ def test_reject_and_escalate_draft_update_state_files(tmp_path: Path) -> None:
     review = _read_yaml(review_path)
     assert review["items"][0]["url"] == "https://example.test/risky"
     assert review["items"][0]["risk_flags"] == ["adverse_event"]
+
+
+def test_draft_report_separates_empty_green_from_topic_candidates(tmp_path: Path) -> None:
+    root = tmp_path / "drafts"
+    _write_yaml(
+        root / "empty.yaml",
+        {
+            "url": "https://example.test/empty",
+            "title": "Пустой",
+            "status": "pending_review",
+            "risk_score": "green",
+            "service_candidates": [],
+            "reviewer_note": "Codex reviewed: empty topic.",
+        },
+    )
+    _write_yaml(
+        root / "topic.yaml",
+        {
+            "url": "https://example.test/topic",
+            "title": "Тема",
+            "status": "pending_review",
+            "risk_score": "green",
+            "service_candidates": [{"service_id": "svc_topic", "relation": "topic_related"}],
+        },
+    )
+    _write_yaml(
+        root / "context.yaml",
+        {
+            "url": "https://example.test/context",
+            "title": "Контекст",
+            "status": "pending_review",
+            "risk_score": "yellow",
+            "service_candidates": [{"service_id": "svc_compare", "relation": "comparison_only"}],
+        },
+    )
+
+    report = draft_report(root)
+
+    assert draft_bucket(_read_yaml(root / "empty.yaml")) == "green_empty"
+    assert report["buckets"]["green_empty"] == 1
+    assert report["buckets"]["green_with_topic"] == 1
+    assert report["buckets"]["yellow_non_topic"] == 1
+    assert report["codex_reviewed_pending"] == 1
+    assert batch_files(root, limit=1, bucket="green_empty") == [root / "empty.yaml"]
+    assert batch_files(root, limit=1, bucket="green_empty", unreviewed_only=True) == []
+
+
+def test_validate_draft_files_reports_unknown_service_id(tmp_path: Path) -> None:
+    root = tmp_path / "drafts"
+    _write_yaml(
+        root / "bad.yaml",
+        {
+            "url": "https://example.test/bad",
+            "title": "Плохой service id",
+            "status": "pending_review",
+            "risk_score": "green",
+            "service_candidates": [{"service_id": "missing", "relation": "topic_related"}],
+        },
+    )
+
+    issues = validate_draft_files(root, {"svc_topic"})
+
+    assert issues == [{"file": str(root / "bad.yaml"), "error": "candidate_0:unknown_service_id:missing"}]

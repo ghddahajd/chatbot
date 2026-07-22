@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -18,6 +19,7 @@ from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, Service
 logger = logging.getLogger(__name__)
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 KB_REQUIRED_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
+PhrasebookValue = str | list[str]
 DEFAULT_WIDGET_FEATURES = {
     "operator": True,
     "lead_capture": True,
@@ -56,16 +58,34 @@ DEFAULT_PHRASEBOOK = {
     "operator_label": "менеджер",
     "booking_word": "заявка",
     "price_disclaimer": "Предварительно так, точнее подскажет менеджер после уточнения деталей.",
-    "unknown_service": "Такой услуги у нас пока не вижу — показать список услуг или подключить менеджера?",
-    "off_topic": "Это не по моей части — я консультирую по услугам компании. Могу подсказать по услугам или ценам.",
+    "unknown_service": [
+        "В доступных мне данных подтверждения по этой услуге не нашёл — уточнить у менеджера или показать похожие варианты?",
+        "Такого конкретно в прайсе не увидел, но по этой теме могут быть похожие процедуры. Показать список или спросить менеджера?",
+        "У меня сейчас нет надёжных данных по этому вопросу. Могу показать актуальные услуги или подключить менеджера.",
+    ],
+    "off_topic": [
+        "С этим вопросом не помогу — я отвечаю по услугам, ценам и записи в центр. Подсказать по услугам?",
+        "Я могу ориентировать только по данным компании: услуги, цены, запись, контакты. Что из этого подсказать?",
+        "Это вне моей темы. Могу показать услуги центра или подключить менеджера.",
+    ],
     "contact_prompt": "Оставьте имя и телефон, и менеджер сможет связаться с вами позже.",
     "booking_contact_prompt": "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
     "handoff_message": "Передаю диалог менеджеру. Можете дописать детали, он увидит историю.",
     "operator_soft_offer": "Могу попробовать помочь здесь — опишите, что вас интересует. Или сразу соединю с менеджером.",
-    "regulated_soft_offer": (
-        "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
-        "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
-    ),
+    "regulated_soft_offer": [
+        (
+            "Чтобы не дать неточную информацию, лучше передам это специалисту — он разберёт по деталям. "
+            "Подключить сейчас, или если срочно — звоните нам напрямую или в скорую (103)?"
+        ),
+        (
+            "По переписке это безопасно не оценить — здесь нужен специалист. "
+            "Оставить контакт, подключить менеджера сейчас, или при срочности звоните нам напрямую либо в скорую (103)?"
+        ),
+        (
+            "Здесь важны детали, которые должен оценить специалист. "
+            "Передать вопрос менеджеру или помочь оставить контакт? Если срочно — звоните нам напрямую или в скорую (103)."
+        ),
+    ],
     "engagement_offer_1": (
         "Вижу, диалог уже длинный — хотите, чтобы дальше подключился администратор, "
         "или продолжим здесь?"
@@ -115,19 +135,37 @@ DEFAULT_PHRASEBOOK = {
     "fact_ambulance_yes": "Возможность доставки скорой нужно уточнить у менеджера по вашей ситуации.",
     "fact_products_no": "Продаём только услуги. По товарам или домашнему уходу детали уточнит менеджер.",
     "fact_products_yes": "Товары можно приобрести в центре. Наличие и цену уточнит менеджер.",
-    "clinic_fact_deferred": "Этот факт лучше уточнить у менеджера — в базе нет подтверждённых данных.",
-    "equipment_deferred": "Конкретную модель аппарата уточнит менеджер. В базе нет подтверждённого названия.",
-    "medical_referral": (
-        "Это медицинский вопрос — его решают на очной консультации у специалиста. "
-        "Могу записать на консультацию или передать менеджеру."
-    ),
-    "sensitive_escalate": (
-        "Это деликатная тема — её обсуждают только на очной консультации со специалистом. "
-        "Могу передать менеджеру или помочь оставить контакт."
-    ),
-    "sensitive_decline": (
-        "Эту процедуру мы не проводим. Могу подсказать по другим услугам или передать менеджеру."
-    ),
+    "clinic_fact_deferred": [
+        "По этому факту в базе нет подтверждённых данных — уточнит менеджер. Подключить его?",
+        "Не нашёл подтверждения по этому вопросу в данных центра. Передать менеджеру?",
+        "Чтобы не сказать неточно, этот факт уточнит менеджер. Оставить контакт?",
+    ],
+    "equipment_deferred": [
+        "Конкретную модель аппарата уточнит менеджер — в базе нет подтверждённого названия.",
+        "По оборудованию в базе нет подтверждённой модели. Уточнит менеджер — подключить?",
+        "Название аппарата лучше подтвердит менеджер: в доступных данных его нет.",
+    ],
+    "medical_referral": [
+        (
+            "Это как раз то, с чем к нам часто обращаются — но точную причину и подходящий вариант "
+            "определит специалист на очной консультации. Записать на консультацию?"
+        ),
+        (
+            "Здесь важны детали, которые видно только на очной консультации — специалист посмотрит и подскажет точнее. "
+            "Подключить менеджера сейчас?"
+        ),
+        "По переписке это безопасно не оценить — это вопрос для очной консультации специалиста. Помочь с записью?",
+    ],
+    "sensitive_escalate": [
+        "Понимаю, тема деликатная — обсуждать её лучше лично со специалистом, не в переписке. Помочь оставить контакт?",
+        "Это деликатная тема, и здесь важны детали очной консультации. Передать менеджеру?",
+        "По такой деликатной теме безопаснее обсудить всё со специалистом очно. Подключить менеджера?",
+    ],
+    "sensitive_decline": [
+        "Эту процедуру мы не проводим. Могу подсказать по другим услугам или передать менеджеру.",
+        "По этой теме центр не оказывает услугу. Могу показать другие направления или подключить менеджера.",
+        "Такую процедуру подтвердить не могу: в доступных данных её нет среди услуг центра. Уточнить у менеджера?",
+    ],
     "efficacy_claim_deferred": (
         "Что подойдёт именно в вашем случае, определит специалист на очной консультации. "
         "Могу записать на консультацию или передать менеджеру."
@@ -138,6 +176,33 @@ DEFAULT_PHRASEBOOK = {
         "он уточнит удобное время и детали."
     ),
 }
+
+
+def _default_phrasebook() -> dict[str, PhrasebookValue]:
+    return {
+        key: list(value) if isinstance(value, list) else value
+        for key, value in DEFAULT_PHRASEBOOK.items()
+    }
+
+
+def _normalize_phrasebook_value(value: object) -> PhrasebookValue | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, list):
+        items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        return items or None
+    return None
+
+
+def phrasebook_value_to_text(value: object, fallback: str = "") -> str:
+    if isinstance(value, str):
+        return value.strip() or fallback
+    if isinstance(value, list):
+        items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        if items:
+            return random.choice(items)
+    return fallback
 
 
 def _default_domain_profile() -> dict[str, object]:
@@ -243,7 +308,7 @@ class KnowledgeBase:
         services: list[Service],
         prices: list[PriceEntry],
         faq_markdown: str,
-        phrasebook: Optional[dict[str, str]] = None,
+        phrasebook: Optional[dict[str, PhrasebookValue]] = None,
         domain_profile: Optional[dict[str, object]] = None,
         config_payload: Optional[dict[str, object]] = None,
         article_service_map: Optional[dict[str, ArticleServiceMapEntry]] = None,
@@ -252,7 +317,7 @@ class KnowledgeBase:
         self.services = services
         self.prices = prices
         self.faq_markdown = faq_markdown
-        self.phrasebook = phrasebook or dict(DEFAULT_PHRASEBOOK)
+        self.phrasebook = phrasebook or _default_phrasebook()
         self.domain_profile = domain_profile or _default_domain_profile()
         self.config_payload = config_payload or {}
         self.article_service_map = article_service_map or {}
@@ -643,10 +708,10 @@ class KnowledgeBaseResolver:
         payload = self._client_config(company_id)
         return _domain_profile_from_payload(payload)
 
-    def phrasebook(self, company_id: str) -> dict[str, str]:
+    def phrasebook(self, company_id: str) -> dict[str, PhrasebookValue]:
         """возвращает user-facing фразы клиента с нейтральными fallback-значениями."""
 
-        phrasebook = dict(DEFAULT_PHRASEBOOK)
+        phrasebook = _default_phrasebook()
         payload = self._client_config(company_id)
         raw_phrasebook = payload.get("phrasebook") if isinstance(payload, dict) else None
         if not isinstance(raw_phrasebook, dict):
@@ -654,8 +719,9 @@ class KnowledgeBaseResolver:
 
         for key in phrasebook:
             value = raw_phrasebook.get(key)
-            if isinstance(value, str) and value.strip():
-                phrasebook[key] = value.strip()
+            normalized_value = _normalize_phrasebook_value(value)
+            if normalized_value is not None:
+                phrasebook[key] = normalized_value
         return phrasebook
 
     def notifications_config(self, company_id: str) -> dict[str, object]:

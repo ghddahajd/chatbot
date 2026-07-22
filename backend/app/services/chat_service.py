@@ -7,7 +7,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
-from ..knowledge import normalize_text
+from ..knowledge import normalize_text, phrasebook_value_to_text
 from ..models import (
     ChatMessageResponse,
     ContextFrame,
@@ -64,7 +64,7 @@ class ChatService:
     def _phrase(self, key: str, fallback: str) -> str:
         phrasebook = getattr(self, "_phrasebook", {})
         value = phrasebook.get(key) if isinstance(phrasebook, dict) else None
-        return str(value).strip() if value else fallback
+        return phrasebook_value_to_text(value, fallback)
 
     def _is_substantive_policy_result(self, policy_result) -> bool:
         return policy_result.action not in {

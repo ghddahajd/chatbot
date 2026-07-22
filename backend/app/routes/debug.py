@@ -18,6 +18,7 @@ from ..policy.constants import DURATION_KEYWORDS, PRICE_KEYWORDS
 from ..policy.extractors import contains_keyword
 from ..policy.restricted import is_restricted_question
 from ..services.rag_search import default_rag_chunks_path, retrieve_article_context, search_rag_chunks
+from ..validator import validate_article_guidance_response
 from .chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
     classify_consultation_risk,
@@ -123,6 +124,30 @@ async def _final_answer_for_policy(
 
     if policy_result.action == PolicyAction.REJECT:
         return str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён."), policy_result.action, "direct", False
+
+    if policy_result.action == PolicyAction.ANSWER and policy_result.safe_context.get("article_guidance_candidate"):
+        candidate = policy_result.safe_context.get("article_guidance_candidate")
+        candidate = candidate if isinstance(candidate, dict) else {}
+        fallback = str(
+            candidate.get("fallback_message_to_user") or policy_result.safe_context.get("message_to_user") or ""
+        ).strip()
+        excerpt = str(candidate.get("excerpt") or "").strip()
+        if fallback and excerpt:
+            llm_context = dict(policy_result.safe_context)
+            llm_context["question_type"] = "article_guidance_excerpt"
+            llm_context["article_guidance_candidate"] = candidate
+            llm_context["article_context"] = [
+                {
+                    "title": str(candidate.get("title") or ""),
+                    "url": str(candidate.get("url") or ""),
+                    "snippet": excerpt,
+                }
+            ]
+            llm_context.pop("message_to_user", None)
+            answer = await safe_complete(request, llm_context, message, session.messages[-8:])
+            if validate_article_guidance_response(answer, llm_context):
+                return answer, policy_result.action, "article_guidance_llm", False
+        return fallback, policy_result.action, "article_guidance_fallback", False
 
     if (
         policy_result.action == PolicyAction.ANSWER
@@ -282,6 +307,7 @@ async def debug_trace(
     rag_step["result"]["used"] = policy_result.safe_context.get("question_type") == "faq_question"
     cosmetic_mapping = policy_result.safe_context.get("article_service_mapping")
     cosmetic_article_context = policy_result.safe_context.get("article_context")
+    article_guidance_candidate = policy_result.safe_context.get("article_guidance_candidate")
     cosmetic_guidance_used = policy_result.safe_context.get("question_type") == "cosmetic_article_guidance"
     steps.append(
         {
@@ -289,6 +315,16 @@ async def debug_trace(
             "result": {
                 "used": cosmetic_guidance_used,
                 "approved_mapping_found": bool(cosmetic_mapping),
+                "excerpt_present": bool(
+                    isinstance(article_guidance_candidate, dict)
+                    and str(article_guidance_candidate.get("excerpt") or "").strip()
+                ),
+                "llm_candidate_available": isinstance(article_guidance_candidate, dict),
+                "fallback_template": (
+                    str(article_guidance_candidate.get("fallback_message_to_user") or "")
+                    if isinstance(article_guidance_candidate, dict)
+                    else None
+                ),
                 "mapping": cosmetic_mapping if isinstance(cosmetic_mapping, dict) else None,
                 "matches": cosmetic_article_context if cosmetic_guidance_used else [],
             },

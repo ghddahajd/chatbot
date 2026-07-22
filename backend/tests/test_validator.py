@@ -1,6 +1,6 @@
 """проверки domain-aware response validator."""
 
-from app.validator import validate_consultation_response, validate_response
+from app.validator import validate_article_guidance_response, validate_consultation_response, validate_response
 
 
 def test_consultation_validator_blocks_medical_terms_for_medical_profile() -> None:
@@ -43,6 +43,38 @@ def test_faq_validator_allows_answer_grounded_in_article_context() -> None:
     }
 
     assert validate_response("Кольпоскопия помогает осмотреть шейку матки и выявить изменения тканей.", context)
+
+
+def test_article_guidance_validator_allows_grounded_soft_phrase() -> None:
+    context = {
+        "article_guidance_candidate": {
+            "excerpt": "Методы коррекции подбираются индивидуально после консультации.",
+            "service_names": "Мезотерапия, Биоревитализация",
+        }
+    }
+
+    assert validate_article_guidance_response(
+        (
+            "В материалах центра указано, что методы коррекции подбираются индивидуально после консультации. "
+            "С этой темой связаны Мезотерапия и Биоревитализация. "
+            "Точный подбор подтвердит специалист на консультации."
+        ),
+        context,
+    )
+
+
+def test_article_guidance_validator_blocks_recommendation_language() -> None:
+    context = {
+        "article_guidance_candidate": {
+            "excerpt": "Методы коррекции подбираются индивидуально после консультации.",
+            "service_names": "Филлеры",
+        }
+    }
+
+    assert not validate_article_guidance_response(
+        "Рекомендую вам Филлеры, это вам подходит.",
+        context,
+    )
 
 
 def test_faq_validator_allows_non_price_numbers_grounded_in_article_context() -> None:

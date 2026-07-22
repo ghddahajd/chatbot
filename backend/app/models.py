@@ -125,6 +125,7 @@ class ArticleServiceMapEntry(BaseModel):
     trigger_phrases: list[str] = Field(default_factory=list)
     service_ids: list[str] = Field(default_factory=list)
     status: str = ""
+    excerpt: str = ""
     reviewed_note: str = ""
     extra_caution_note: str = ""
 

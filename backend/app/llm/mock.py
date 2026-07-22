@@ -313,6 +313,26 @@ class MockLLMClient(BaseLLMClient):
                         return f"По данным статьи «{title}»: {first_sentence} Подробности уточнит менеджер."
             return "По этому вопросу лучше уточнить у менеджера — подключить?"
 
+        if question_type == "article_guidance_excerpt":
+            guidance = context.get("article_guidance_candidate")
+            guidance = guidance if isinstance(guidance, dict) else {}
+            excerpt = _clean_article_sentence(str(guidance.get("excerpt") or ""))
+            service_names = str(guidance.get("service_names") or "").strip()
+            if excerpt:
+                if not excerpt.endswith("."):
+                    excerpt += "."
+                if service_names:
+                    return (
+                        f"В материалах центра по этой теме указано: {excerpt} "
+                        f"С этим связаны услуги: {service_names}. "
+                        "Точный подбор подтвердит специалист на консультации."
+                    )
+                return (
+                    f"В материалах центра по этой теме указано: {excerpt} "
+                    "Точный подбор подтвердит специалист на консультации."
+                )
+            return "По этому вопросу лучше уточнить у менеджера — подключить?"
+
         service_name = service.get("name")
         short_description = service.get("short_description")
         duration = service.get("duration")

@@ -174,11 +174,22 @@ def _article_guidance_result_from_entry(
         f"С этой темой в базе центра связаны: {service_names}. "
         f"{caution}"
     )
+    excerpt = str(getattr(entry, "excerpt", "") or "").strip()
+    article_guidance_candidate = None
+    if excerpt:
+        article_guidance_candidate = {
+            "title": entry.title,
+            "url": entry.url,
+            "excerpt": excerpt,
+            "service_names": service_names,
+            "caution": caution,
+            "fallback_message_to_user": message_to_user,
+        }
     article_context = [match] if match else [
         {
             "title": entry.title,
             "url": entry.url,
-            "snippet": "",
+            "snippet": excerpt,
             "chunk_id": None,
             "score": None,
             "source": "trigger_phrase",
@@ -186,7 +197,7 @@ def _article_guidance_result_from_entry(
         }
     ]
 
-    return PolicyResult(
+    result = PolicyResult(
         action=PolicyAction.ANSWER,
         reason=PolicyReason.OK,
         confidence=0.8,
@@ -202,11 +213,15 @@ def _article_guidance_result_from_entry(
                 "trigger_phrases": list(getattr(entry, "trigger_phrases", [])),
                 "matched_phrase": matched_phrase,
                 "extra_caution_note": caution,
+                "excerpt_present": bool(excerpt),
             },
             "suggested_services": services_summary(services),
         },
         quick_actions=_article_guidance_quick_actions(services),
     )
+    if article_guidance_candidate is not None:
+        result.safe_context["article_guidance_candidate"] = article_guidance_candidate
+    return result
 
 
 def _cosmetic_article_guidance_result(

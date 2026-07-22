@@ -75,6 +75,27 @@ def test_article_service_map_loads_approved_entries(resolver, managed_env) -> No
     assert entry.service_ids == ["lazernaya_terapiya_skin_tyte_40372815", "fillery_f2df3e74"]
 
 
+def test_article_service_map_loads_optional_excerpt(resolver, managed_env) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    target_dir = managed_env["clients_dir"] / "rosh_import_demo"
+    shutil.copytree(source_dir, target_dir)
+    map_path = target_dir / "article_service_map.yaml"
+    text = map_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "  status: approved\n  reviewed_note:",
+        "  status: approved\n  excerpt: Одобренный короткий фрагмент статьи.\n  reviewed_note:",
+        1,
+    )
+    map_path.write_text(text, encoding="utf-8")
+
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+    entry = knowledge_base.article_service_map[
+        "https://www.medcenterrosh.ru/blog/vtoroi-podborodok-prichiny-poyavleniya-i-metody-korrekcii"
+    ]
+
+    assert entry.excerpt == "Одобренный короткий фрагмент статьи."
+
+
 def test_cosmetic_concern_can_use_approved_article_service_mapping(
     monkeypatch,
     policy_session,
@@ -144,6 +165,7 @@ def test_unknown_service_can_use_article_trigger_phrase(
     assert result.action == PolicyAction.ANSWER
     assert result.safe_context["question_type"] == "cosmetic_article_guidance"
     assert result.safe_context["article_service_mapping"]["matched_phrase"] == "темные круги"
+    assert "article_guidance_candidate" not in result.safe_context
     assert "Мезотерапия" in answer
     assert "Биоревитализация" in answer
     assert "Филлеры" in answer

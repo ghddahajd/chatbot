@@ -37,6 +37,7 @@ from ..routes.chat_utils import (
     service_classifier_payload,
     should_use_consultation_llm,
 )
+from ..validator import validate_article_guidance_response
 from .session_summarizer import summarize_session
 
 
@@ -72,6 +73,37 @@ class ChatService:
             PolicyAction.OFF_TOPIC,
             PolicyAction.REJECT,
         }
+
+    async def _article_guidance_answer(
+        self,
+        *,
+        message: str,
+        safe_context: dict[str, object],
+        history,
+    ) -> str:
+        candidate = safe_context.get("article_guidance_candidate")
+        candidate = candidate if isinstance(candidate, dict) else {}
+        fallback = str(candidate.get("fallback_message_to_user") or safe_context.get("message_to_user") or "").strip()
+        excerpt = str(candidate.get("excerpt") or "").strip()
+        if not fallback or not excerpt:
+            return fallback
+
+        llm_context = dict(safe_context)
+        llm_context["question_type"] = "article_guidance_excerpt"
+        llm_context["article_guidance_candidate"] = candidate
+        llm_context["article_context"] = [
+            {
+                "title": str(candidate.get("title") or ""),
+                "url": str(candidate.get("url") or ""),
+                "snippet": excerpt,
+            }
+        ]
+        llm_context.pop("message_to_user", None)
+
+        answer = await safe_complete(self.request, llm_context, message, history)
+        if validate_article_guidance_response(answer, llm_context):
+            return answer
+        return fallback
 
     def _engagement_offer_text(self, offer_index: int) -> str:
         fallback_texts = (
@@ -1017,6 +1049,15 @@ class ChatService:
                 )
         elif policy_result.action == PolicyAction.REJECT:
             answer = str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён.")
+        elif (
+            policy_result.action == PolicyAction.ANSWER
+            and policy_result.safe_context.get("article_guidance_candidate")
+        ):
+            answer = await self._article_guidance_answer(
+                message=message,
+                safe_context=policy_result.safe_context,
+                history=session.messages[-8:],
+            )
         elif (
             policy_result.action == PolicyAction.ANSWER
             and policy_result.safe_context.get("message_to_user")

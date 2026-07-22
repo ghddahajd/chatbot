@@ -39,6 +39,31 @@ class _EchoSummaryLLMClient(MockLLMClient):
         )
 
 
+class _ArticleGuidanceLLMClient(MockLLMClient):
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.last_context = None
+
+    async def complete(self, system_prompt, context, user_message, history):
+        if context.get("question_type") == "article_guidance_excerpt":
+            self.last_context = context
+            return self.answer
+        return await super().complete(system_prompt, context, user_message, history)
+
+
+def _add_article_excerpt_for_chat_test(test_client, managed_env, excerpt: str) -> None:
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    map_path = managed_env["clients_dir"] / "rosh_import_demo" / "article_service_map.yaml"
+    text = map_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "  title: Расширенные поры на лице (блог)\n",
+        f"  title: Расширенные поры на лице (блог)\n  excerpt: {excerpt}\n",
+        1,
+    )
+    map_path.write_text(text, encoding="utf-8")
+    test_client.app.state.knowledge_base_resolver._cache.clear()
+
+
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",
@@ -128,6 +153,55 @@ def test_booking_prompt_accepts_service_name_as_next_step(test_client) -> None:
 
     assert third_response.status_code == 200
     assert third_payload["lead_created"] is True
+
+
+def test_article_guidance_uses_llm_when_approved_excerpt_passes_validator(test_client, managed_env) -> None:
+    _add_article_excerpt_for_chat_test(
+        test_client,
+        managed_env,
+        "Расширенные поры могут быть связаны с особенностями кожи и требуют индивидуального подбора.",
+    )
+    llm_client = _ArticleGuidanceLLMClient(
+        (
+            "В материалах центра указано, что расширенные поры требуют индивидуального подбора. "
+            "С этой темой связаны Чистки, Пилинги и Лазерный пилинг. "
+            "Точный подбор подтвердит специалист на консультации."
+        )
+    )
+    test_client.app.state.llm_client = llm_client
+
+    payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="расширенные поры что делать",
+    )
+
+    assert payload["action"] == "answer"
+    assert "В материалах центра указано" in payload["answer"]
+    assert "В материалах центра есть статья" not in payload["answer"]
+    assert llm_client.last_context["question_type"] == "article_guidance_excerpt"
+    assert "message_to_user" not in llm_client.last_context
+
+
+def test_article_guidance_falls_back_when_llm_recommends_service(test_client, managed_env) -> None:
+    _add_article_excerpt_for_chat_test(
+        test_client,
+        managed_env,
+        "Расширенные поры могут быть связаны с особенностями кожи и требуют индивидуального подбора.",
+    )
+    test_client.app.state.llm_client = _ArticleGuidanceLLMClient(
+        "Рекомендую вам Филлеры, это вам подходит."
+    )
+
+    payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="расширенные поры что делать",
+    )
+
+    assert payload["action"] == "answer"
+    assert "Рекомендую" not in payload["answer"]
+    assert "В материалах центра есть статья" in payload["answer"]
 
 
 def test_contact_prompt_still_allows_new_price_question(test_client) -> None:

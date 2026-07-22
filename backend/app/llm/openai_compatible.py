@@ -192,6 +192,21 @@ class OpenAIClient(BaseLLMClient):
             lines.append("Тип вопроса: faq_question")
             return "\n".join(lines) or "Нет данных по вопросу."
 
+        if question_type == "article_guidance_excerpt":
+            guidance = context.get("article_guidance_candidate")
+            guidance = guidance if isinstance(guidance, dict) else {}
+            excerpt = str(guidance.get("excerpt") or "").strip()
+            service_names = str(guidance.get("service_names") or "").strip()
+            caution = str(guidance.get("caution") or "").strip()
+            if excerpt:
+                lines.append(f"Одобренный фрагмент статьи: {excerpt}")
+            if service_names:
+                lines.append(f"Связанные услуги: {service_names}")
+            if caution:
+                lines.append(f"Обязательная осторожная оговорка: {caution}")
+            lines.append("Тип вопроса: article_guidance_excerpt")
+            return "\n".join(lines) or "Нет одобренного фрагмента."
+
         if service.get("name"):
             lines.append(f"Услуга: {service['name']}")
         if service.get("short_description"):

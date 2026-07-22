@@ -61,6 +61,19 @@ MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+ARTICLE_GUIDANCE_FORBIDDEN_PATTERNS = (
+    *RAW_CONTEXT_PATTERNS,
+    re.compile(r"(?:₽|руб(?:л|\.))", re.IGNORECASE),
+    re.compile(
+        r"(?:вам\s+нужно|вам\s+подойд[её]т|вам\s+подходят|"
+        r"рекомендую|мы\s+рекомендуем|советую|назначаю|назначить|"
+        r"диагноз|гарантированн|гарантируем|точно\s+поможет|"
+        r"избавит|вылечит)",
+        re.IGNORECASE,
+    ),
+    *UNSUPPORTED_EQUIPMENT_PATTERNS,
+    *UNSUPPORTED_EFFICACY_CLAIM_PATTERNS,
+)
 
 
 def _digit_groups(value: str) -> set[str]:
@@ -174,6 +187,28 @@ def validate_consultation_response(answer: str, context: dict[str, Any] | None =
     if _context_has_medical_restrictions(context):
         return not any(pattern.search(answer) for pattern in MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS)
     return True
+
+
+def validate_article_guidance_response(answer: str, context: dict[str, Any] | None = None) -> bool:
+    """проверяет LLM-перефразировку approved article excerpt перед показом пользователю."""
+
+    if not answer.strip():
+        return False
+    if any(pattern.search(answer) for pattern in ARTICLE_GUIDANCE_FORBIDDEN_PATTERNS):
+        return False
+    if context is None:
+        return False
+
+    guidance = context.get("article_guidance_candidate")
+    guidance = guidance if isinstance(guidance, dict) else {}
+    grounding_text = " ".join(
+        [
+            str(guidance.get("excerpt") or ""),
+            str(guidance.get("service_names") or ""),
+        ]
+    )
+    safe_words = _significant_words(grounding_text)
+    return not safe_words or bool(_significant_words(answer) & safe_words)
 
 
 def validator_intercept_count() -> int:

@@ -122,6 +122,7 @@ class PriceEntry(BaseModel):
 class ArticleServiceMapEntry(BaseModel):
     url: str
     title: str
+    trigger_phrases: list[str] = Field(default_factory=list)
     service_ids: list[str] = Field(default_factory=list)
     status: str = ""
     reviewed_note: str = ""

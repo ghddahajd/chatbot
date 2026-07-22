@@ -147,13 +147,89 @@ def _article_guidance_quick_actions(services: list[object]) -> list[object]:
     return actions
 
 
+def _article_guidance_result_from_entry(
+    knowledge_base: KnowledgeBase,
+    entry,
+    *,
+    match: dict[str, object] | None = None,
+    matched_phrase: str = "",
+) -> PolicyResult | None:
+    services = [
+        knowledge_base.find_service_by_id(service_id)
+        for service_id in getattr(entry, "service_ids", [])
+    ]
+    services = [service for service in services if service is not None]
+    if not services:
+        return None
+
+    service_names = ", ".join(service.name for service in services)
+    caution = str(getattr(entry, "extra_caution_note", "") or "").strip()
+    if not caution:
+        caution = (
+            "Заочно нельзя определить, что подойдёт именно вам — "
+            "это уточнит специалист на консультации."
+        )
+    message_to_user = (
+        f"В материалах центра есть статья по похожей теме: «{entry.title}». "
+        f"С этой темой в базе центра связаны: {service_names}. "
+        f"{caution}"
+    )
+    article_context = [match] if match else [
+        {
+            "title": entry.title,
+            "url": entry.url,
+            "snippet": "",
+            "chunk_id": None,
+            "score": None,
+            "source": "trigger_phrase",
+            "matched_phrase": matched_phrase,
+        }
+    ]
+
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.OK,
+        confidence=0.8,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": message_to_user,
+            "question_type": "cosmetic_article_guidance",
+            "article_context": article_context,
+            "article_service_mapping": {
+                "title": entry.title,
+                "url": entry.url,
+                "service_ids": list(entry.service_ids),
+                "trigger_phrases": list(getattr(entry, "trigger_phrases", [])),
+                "matched_phrase": matched_phrase,
+                "extra_caution_note": caution,
+            },
+            "suggested_services": services_summary(services),
+        },
+        quick_actions=_article_guidance_quick_actions(services),
+    )
+
+
 def _cosmetic_article_guidance_result(
     knowledge_base: KnowledgeBase,
     article_matches: list[dict[str, object]],
+    normalized_message: str = "",
 ) -> PolicyResult | None:
     approved_map = getattr(knowledge_base, "article_service_map", {}) or {}
     if not approved_map:
         return None
+
+    if normalized_message:
+        for entry in approved_map.values():
+            for phrase in getattr(entry, "trigger_phrases", []):
+                normalized_phrase = normalize_text(str(phrase))
+                if normalized_phrase and contains_keyword(normalized_message, {normalized_phrase}):
+                    result = _article_guidance_result_from_entry(
+                        knowledge_base,
+                        entry,
+                        matched_phrase=normalized_phrase,
+                    )
+                    if result is not None:
+                        return result
 
     for match in article_matches:
         url = str(match.get("url") or "").strip().rstrip("/")
@@ -163,46 +239,9 @@ def _cosmetic_article_guidance_result(
         if entry is None:
             continue
 
-        services = [
-            knowledge_base.find_service_by_id(service_id)
-            for service_id in getattr(entry, "service_ids", [])
-        ]
-        services = [service for service in services if service is not None]
-        if not services:
-            continue
-
-        service_names = ", ".join(service.name for service in services)
-        caution = str(getattr(entry, "extra_caution_note", "") or "").strip()
-        if not caution:
-            caution = (
-                "Заочно нельзя определить, что подойдёт именно вам — "
-                "это уточнит специалист на консультации."
-            )
-        message_to_user = (
-            f"В материалах центра есть статья по похожей теме: «{entry.title}». "
-            f"С этой темой в базе центра связаны: {service_names}. "
-            f"{caution}"
-        )
-
-        return PolicyResult(
-            action=PolicyAction.ANSWER,
-            reason=PolicyReason.OK,
-            confidence=0.8,
-            safe_context={
-                "force_direct_answer": True,
-                "message_to_user": message_to_user,
-                "question_type": "cosmetic_article_guidance",
-                "article_context": [match],
-                "article_service_mapping": {
-                    "title": entry.title,
-                    "url": entry.url,
-                    "service_ids": list(entry.service_ids),
-                    "extra_caution_note": caution,
-                },
-                "suggested_services": services_summary(services),
-            },
-            quick_actions=_article_guidance_quick_actions(services),
-        )
+        result = _article_guidance_result_from_entry(knowledge_base, entry, match=match)
+        if result is not None:
+            return result
 
     return None
 
@@ -1103,6 +1142,7 @@ HARD_RESTRICTED_KEYWORDS = {
     "тошнит",
     "тошнота",
     "головокружение",
+    "кружи",
     "гной",
     "гное",
     "опух",
@@ -1386,6 +1426,15 @@ def analyze_message(
         )
 
     if medical_requested:
+        if not _has_hard_restricted_signal(normalized_message):
+            article_matches = _retrieve_article_context_safe(message)
+            guidance_result = _cosmetic_article_guidance_result(
+                knowledge_base,
+                article_matches,
+                normalized_message,
+            )
+            if guidance_result is not None:
+                return guidance_result
         return _medical_referral_result(
             normalized_message,
             knowledge_base,
@@ -1697,7 +1746,11 @@ def analyze_message(
                 + ["Позвать менеджера"],
             )
         article_matches = _retrieve_article_context_safe(message)
-        guidance_result = _cosmetic_article_guidance_result(knowledge_base, article_matches)
+        guidance_result = _cosmetic_article_guidance_result(
+            knowledge_base,
+            article_matches,
+            normalized_message,
+        )
         if guidance_result is not None:
             return guidance_result
 
@@ -1763,6 +1816,15 @@ def analyze_message(
         similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.78)
         if similar_result is not None:
             return similar_result
+
+        article_matches = _retrieve_article_context_safe(message)
+        guidance_result = _cosmetic_article_guidance_result(
+            knowledge_base,
+            article_matches,
+            normalized_message,
+        )
+        if guidance_result is not None:
+            return guidance_result
 
         return PolicyResult(
             action=PolicyAction.CLARIFY,

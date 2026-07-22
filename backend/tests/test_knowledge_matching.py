@@ -117,7 +117,83 @@ def test_cosmetic_concern_can_use_approved_article_service_mapping(
     assert "Филлеры" in answer
     assert "вам нужно" not in answer.lower()
     assert "вам подходит" not in answer.lower()
+    assert result.safe_context["article_context"][0]["chunk_id"] == "test-chunk"
     assert result.quick_actions[0]["label"] == "Лазерная Терапия Skin Tyte"
+
+
+def test_unknown_service_can_use_article_trigger_phrase(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "темные круги под глазами, что посоветуете?",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    answer = result.safe_context["message_to_user"]
+    assert result.action == PolicyAction.ANSWER
+    assert result.safe_context["question_type"] == "cosmetic_article_guidance"
+    assert result.safe_context["article_service_mapping"]["matched_phrase"] == "темные круги"
+    assert "Мезотерапия" in answer
+    assert "Биоревитализация" in answer
+    assert "Филлеры" in answer
+    assert "Тёмные круги могут быть связаны не только с косметологией" in answer
+
+
+def test_regulated_without_hard_signal_can_use_article_trigger_phrase(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "выпадают волосы, что можно сделать?",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.95},
+    )
+
+    answer = result.safe_context["message_to_user"]
+    assert result.action == PolicyAction.ANSWER
+    assert result.safe_context["question_type"] == "cosmetic_article_guidance"
+    assert result.safe_context["article_service_mapping"]["matched_phrase"] == "выпадают волосы"
+    assert "Мезотерапия" in answer
+
+
+def test_regulated_with_hard_signal_does_not_use_article_trigger_phrase(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "выпадают волосы, но еще температура",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.95},
+    )
+
+    assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
 
 
 def test_cosmetic_concern_ignores_unapproved_article_mapping(

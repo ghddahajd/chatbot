@@ -590,6 +590,176 @@ def test_webhook_send_adds_event_headers_with_stable_delivery_id(
     assert calls[0]["json"]["data"] == {"last_message": "оператор"}
 
 
+def test_telegram_send_adds_inline_dialog_button_when_operator_url_present(
+    tmp_path: Path,
+    resolver,
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            calls.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    monkeypatch.setattr(delivery_module.httpx, "AsyncClient", FakeAsyncClient)
+    service = DeliveryService(
+        outbox_file=tmp_path / "delivery_outbox.jsonl",
+        knowledge_base_resolver=resolver,
+        telegram_bot_token="token",
+        telegram_chat_id="chat",
+    )
+    record = {
+        "timestamp": "2026-06-30T19:00:00",
+        "delivery_id": "delivery-telegram-1",
+        "event_type": "lead_created",
+        "company_id": "rosh_demo",
+        "session_id": "session-1",
+        "destination_type": "telegram",
+        "target": "chat",
+        "payload": {
+            "summary": "лид",
+            "operator_url": "https://ops.example.com/operator?token=demo&session_id=abc",
+        },
+    }
+
+    async def run_send() -> int:
+        return await service._send(record)
+
+    import anyio
+
+    assert anyio.run(run_send) == 200
+    request_body = calls[0]["json"]
+    button = request_body["reply_markup"]["inline_keyboard"][0][0]
+    assert button == {
+        "text": "Открыть диалог",
+        "url": "https://ops.example.com/operator?token=demo&session_id=abc",
+    }
+    assert "Открыть диалог" in request_body["text"]
+
+
+def test_telegram_send_omits_inline_button_for_non_https_operator_url(
+    tmp_path: Path,
+    resolver,
+    monkeypatch,
+) -> None:
+    # Telegram отклоняет ВСЁ сообщение (400 "Wrong HTTP URL"), если url кнопки не https/tg —
+    # а на локальном/демо-стенде operator_url всегда http://localhost:... Проверено вживую
+    # против реального Telegram Bot API 2026-07-23. Без этого гварда доставка падает целиком.
+    calls: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            calls.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    monkeypatch.setattr(delivery_module.httpx, "AsyncClient", FakeAsyncClient)
+    service = DeliveryService(
+        outbox_file=tmp_path / "delivery_outbox.jsonl",
+        knowledge_base_resolver=resolver,
+        telegram_bot_token="token",
+        telegram_chat_id="chat",
+    )
+    record = {
+        "timestamp": "2026-06-30T19:00:00",
+        "delivery_id": "delivery-telegram-3",
+        "event_type": "lead_created",
+        "company_id": "rosh_demo",
+        "session_id": "session-1",
+        "destination_type": "telegram",
+        "target": "chat",
+        "payload": {
+            "summary": "лид",
+            "operator_url": "http://localhost:8000/operator?token=demo&session_id=abc",
+        },
+    }
+
+    async def run_send() -> int:
+        return await service._send(record)
+
+    import anyio
+
+    assert anyio.run(run_send) == 200
+    request_body = calls[0]["json"]
+    assert "reply_markup" not in request_body
+    assert "Открыть диалог" in request_body["text"]
+
+
+def test_telegram_send_omits_inline_button_without_operator_url(
+    tmp_path: Path,
+    resolver,
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            calls.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    monkeypatch.setattr(delivery_module.httpx, "AsyncClient", FakeAsyncClient)
+    service = DeliveryService(
+        outbox_file=tmp_path / "delivery_outbox.jsonl",
+        knowledge_base_resolver=resolver,
+        telegram_bot_token="token",
+        telegram_chat_id="chat",
+    )
+    record = {
+        "timestamp": "2026-06-30T19:00:00",
+        "delivery_id": "delivery-telegram-2",
+        "event_type": "lead_created",
+        "company_id": "rosh_demo",
+        "session_id": "session-1",
+        "destination_type": "telegram",
+        "target": "chat",
+        "payload": {"summary": "лид"},
+    }
+
+    async def run_send() -> int:
+        return await service._send(record)
+
+    import anyio
+
+    assert anyio.run(run_send) == 200
+    assert "reply_markup" not in calls[0]["json"]
+
+
 def test_retry_due_retries_failed_record_and_marks_sent(tmp_path: Path, resolver, monkeypatch) -> None:
     outbox_file = tmp_path / "delivery_outbox.jsonl"
     service = DeliveryService(

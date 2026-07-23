@@ -410,20 +410,26 @@ class DeliveryService:
             if destination_type == "telegram":
                 url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
                 chat_id = str(record.get("target") or self.telegram_chat_id)
-                response = await client.post(
-                    url,
-                    json={
-                        "chat_id": chat_id,
-                        "text": _telegram_text(
-                            event_type=event_type,
-                            company_name=company_name,
-                            timestamp=timestamp,
-                            payload=payload,
-                            service_name=service_name,
-                        ),
-                        "parse_mode": "Markdown",
-                    },
-                )
+                request_body: dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "text": _telegram_text(
+                        event_type=event_type,
+                        company_name=company_name,
+                        timestamp=timestamp,
+                        payload=payload,
+                        service_name=service_name,
+                    ),
+                    "parse_mode": "Markdown",
+                }
+                operator_url = str(payload.get("operator_url") or "").strip()
+                # Telegram отклоняет ВСЁ сообщение (400 "Wrong HTTP URL"), если url кнопки не
+                # https/tg — а operator_url на локальном/демо-стенде это http://localhost:...
+                # Без этой проверки доставка полностью падает, а не просто "кнопки нет".
+                if operator_url.startswith("https://") or operator_url.startswith("tg://"):
+                    request_body["reply_markup"] = {
+                        "inline_keyboard": [[{"text": "Открыть диалог", "url": operator_url}]]
+                    }
+                response = await client.post(url, json=request_body)
                 return response.status_code
 
             if destination_type == "webhook":

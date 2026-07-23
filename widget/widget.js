@@ -1,6 +1,7 @@
 (function () {
   const SCRIPT = document.currentScript;
   const EMBED_COMPANY_ID = (SCRIPT && SCRIPT.dataset.companyId) || "";
+  const DEMO_EXPAND_ENABLED = Boolean(SCRIPT && SCRIPT.dataset.demoExpand === "true");
   const API_BASE =
     (SCRIPT && SCRIPT.dataset.apiBase) ||
     (SCRIPT && new URL(SCRIPT.src, window.location.href).origin) ||
@@ -72,10 +73,10 @@
         --text-muted: #9ca3af;
         --border: #ede9e3;
         --border-soft: #f0ede8;
-        --shadow: 0 20px 60px rgba(0,0,0,.11), 0 4px 16px rgba(0,0,0,.06);
-        --radius: 20px;
-        --radius-sm: 12px;
-        --radius-msg: 16px;
+        --shadow: 0 24px 70px rgba(0,0,0,.14), 0 6px 20px rgba(0,0,0,.07);
+        --radius: 28px;
+        --radius-sm: 16px;
+        --radius-msg: 20px;
         font-family: "Manrope", system-ui, -apple-system, sans-serif;
       }
 
@@ -99,22 +100,22 @@
 
       /* ── Launcher ── */
       .launcher {
-        width: 56px;
-        height: 56px;
+        width: 58px;
+        height: 58px;
         border: 0;
-        border-radius: 18px;
-        background: linear-gradient(145deg, var(--accent) 0%, var(--accent-dark) 100%);
+        border-radius: 50%;
+        background: linear-gradient(160deg, #2a9c7d 0%, var(--accent) 42%, var(--accent-dark) 100%);
         color: #fff;
         font-family: inherit;
         cursor: pointer;
-        box-shadow: var(--shadow);
+        box-shadow: var(--shadow), inset 0 1.5px 0 rgba(255,255,255,.35);
         display: grid;
         place-items: center;
         transition: transform .18s ease, box-shadow .18s ease;
         position: relative;
       }
       .launcher svg { width: 26px; height: 26px; }
-      .launcher:hover { transform: translateY(-2px); box-shadow: 0 24px 64px rgba(0,0,0,.14); }
+      .launcher:hover { transform: translateY(-2px); box-shadow: 0 24px 64px rgba(0,0,0,.16), inset 0 1.5px 0 rgba(255,255,255,.4); }
       .launcher.hidden { display: none; }
 
       /* ── Unread badge ── */
@@ -144,6 +145,10 @@
         border: 1px solid var(--border-soft);
       }
       .panel.open { display: flex; }
+      .panel.demo-big {
+        width: min(760px, calc(100vw - 32px));
+        height: min(940px, calc(100vh - 24px));
+      }
 
       /* ── Header ── */
       .header {
@@ -311,16 +316,17 @@
       }
       .msg.user {
         align-self: flex-end;
-        background: var(--accent);
+        background: linear-gradient(160deg, #2a9c7d 0%, var(--accent) 60%, var(--accent-dark) 100%);
         color: #fff;
-        border-bottom-right-radius: 5px;
+        border-bottom-right-radius: 7px;
       }
       .msg.assistant {
         align-self: flex-start;
         background: var(--bg);
         color: var(--text);
         border: 1px solid var(--border);
-        border-bottom-left-radius: 5px;
+        border-bottom-left-radius: 7px;
+        box-shadow: 0 1px 2px rgba(17,17,17,.03);
         max-width: 86%;
       }
       .msg.operator {
@@ -328,7 +334,7 @@
         background: var(--accent-soft);
         color: var(--accent-dark);
         border: 1px solid var(--accent-border);
-        border-bottom-left-radius: 5px;
+        border-bottom-left-radius: 7px;
       }
       .msg.system {
         align-self: center;
@@ -533,7 +539,7 @@
         padding: 0 16px;
         border: 0;
         border-radius: var(--radius-sm);
-        background: linear-gradient(145deg, var(--accent), var(--accent-dark));
+        background: linear-gradient(160deg, #2a9c7d 0%, var(--accent) 42%, var(--accent-dark) 100%);
         color: #fff;
         font: inherit;
         font-size: 14px;
@@ -542,9 +548,9 @@
         white-space: nowrap;
         transition: transform .15s, box-shadow .15s, opacity .15s;
         letter-spacing: -.01em;
-        box-shadow: 0 4px 12px rgba(31,122,92,.25);
+        box-shadow: 0 4px 12px rgba(31,122,92,.25), inset 0 1px 0 rgba(255,255,255,.25);
       }
-      .send-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(31,122,92,.3); }
+      .send-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(31,122,92,.3), inset 0 1px 0 rgba(255,255,255,.3); }
       .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
       .mic-btn {
@@ -730,6 +736,7 @@
 
     connectedCallback() {
       this.bindEvents();
+      if (DEMO_EXPAND_ENABLED) this.el.panel.classList.add("demo-big");
       this.pushGreeting();
       this.bootstrap();
     }
@@ -761,6 +768,15 @@
       if (e) e.remove();
     }
 
+    showGreeting() {
+      if (this.el.messages.querySelector(".msg")) return;
+      if (this.state.greetingText) {
+        this.addMsg("assistant", this.state.greetingText, true);
+      } else {
+        this.pushGreeting();
+      }
+    }
+
     async bootstrap() {
       try {
         const url = new URL(API_BASE + "/api/widget/bootstrap");
@@ -771,6 +787,7 @@
         this.state.companyId = data.company_id || EMBED_COMPANY_ID;
         if (!this.state.companyId) throw new Error("company not resolved");
         this.applyConfig(data.widget_config || {});
+        this.state.greetingText = typeof data.greeting === "string" ? data.greeting.trim() : "";
         const voiceFeatureEnabled = Boolean(data.features && data.features.voice_input !== false);
         this.state.voiceEnabled = voiceFeatureEnabled && this.setupVoiceInput();
         await this.restoreSession();
@@ -906,21 +923,21 @@
     async restoreSession() {
       if (!this.state.companyId) { this.setStatus(STATUS.UNAVAILABLE); return; }
       this.state.sessionId = window.localStorage.getItem(this.storageKey()) || "";
-      if (!this.state.sessionId) { this.setStatus(STATUS.AI_ACTIVE); return; }
+      if (!this.state.sessionId) { this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); return; }
       try {
         const res = await fetch(API_BASE + "/api/chat/session/" + this.state.sessionId);
-        if (!res.ok) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); return; }
+        if (!res.ok) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); return; }
         const data = await res.json();
-        if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); return; }
+        if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); return; }
         this.renderHistory(data.messages || []);
         this.setStatus(data.status);
         if (data.status === STATUS.HUMAN_ACTIVE) this.connectWS();
-      } catch (_) { this.setStatus(STATUS.AI_ACTIVE); }
+      } catch (_) { this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); }
     }
 
     renderHistory(msgs) {
       this.el.messages.innerHTML = "";
-      if (!msgs.length) { this.pushGreeting(); return; }
+      if (!msgs.length) { this.showGreeting(); return; }
       for (const m of msgs) this.addMsg(m.role, m.text, true);
       this.scrollBottom();
     }

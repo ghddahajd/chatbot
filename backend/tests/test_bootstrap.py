@@ -17,6 +17,7 @@ def test_explicit_company_id_200(test_client) -> None:
     }
     assert response.json()["widget_config"]["primary_color"] == "#1F7A5C"
     assert response.json()["widget_config"]["position"] == "bottom-right"
+    assert response.json()["greeting"]
 
 
 def test_autodetect_by_origin_200(test_client) -> None:
@@ -54,6 +55,29 @@ def test_duplicate_domain_409(test_client) -> None:
     )
 
     assert response.status_code == 409
+
+
+def test_bootstrap_greeting_uses_client_phrasebook_variant(test_client, managed_env) -> None:
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "phrasebook:",
+                "  greeting:",
+                '    - "Привет из тестового приветствия!"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    response = test_client.get(
+        "/api/widget/bootstrap?company_id=rosh_demo",
+        headers={"origin": "http://localhost:5500"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["greeting"] == "Привет из тестового приветствия!"
 
 
 def test_widget_config_from_client_config(test_client, managed_env) -> None:

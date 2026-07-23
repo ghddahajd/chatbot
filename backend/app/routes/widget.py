@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
-from ..knowledge import DuplicateDomainError, domain_matches, hostname_from_origin
+from ..knowledge import DuplicateDomainError, domain_matches, hostname_from_origin, phrasebook_value_to_text
 from ..models import WidgetBootstrapResponse
 
 
@@ -55,6 +55,9 @@ async def bootstrap_widget(
     if not check_origin(origin, company.allowed_domains, request.app.state.settings.dev_mode):
         raise HTTPException(status_code=403, detail="Domain not allowed")
 
+    phrasebook = resolver.phrasebook(company.company_id)
+    greeting = phrasebook_value_to_text(phrasebook.get("greeting"))
+
     return WidgetBootstrapResponse(
         company_id=company.company_id,
         company_name=company.company_name,
@@ -63,4 +66,5 @@ async def bootstrap_widget(
         telegram_url=company.telegram_url,
         features=resolver.widget_features(company.company_id),
         widget_config=resolver.widget_config(company.company_id),
+        greeting=greeting,
     )

@@ -218,6 +218,7 @@ class WidgetBootstrapResponse(BaseModel):
     telegram_url: Optional[str] = None
     features: dict[str, bool] = Field(default_factory=dict)
     widget_config: dict[str, Any] = Field(default_factory=dict)
+    greeting: str = ""
 
 
 class SessionPublicResponse(BaseModel):

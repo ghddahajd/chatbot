@@ -1024,6 +1024,19 @@ def test_local_classifier_marks_explicit_faq_question(policy_session, knowledge_
     assert classification["service_id"] == "facial_cleansing"
 
 
+def test_local_classifier_marks_aftercare_faq_with_extra_verb(policy_session, knowledge_base) -> None:
+    classification = _classification("что нельзя делать после чистки лица?", knowledge_base)
+
+    assert classification["intent"] == "faq_question"
+    assert classification["service_id"] == "facial_cleansing"
+
+
+def test_local_classifier_marks_moisture_aftercare_as_faq(policy_session, knowledge_base) -> None:
+    classification = _classification("можно ли мочить лицо после инъекций ксеомина?", knowledge_base)
+
+    assert classification["intent"] == "faq_question"
+
+
 def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_base) -> None:
     result = _analyze("что входит в компьютерная диагностика", policy_session, knowledge_base)
 

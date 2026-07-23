@@ -1349,6 +1349,48 @@ def test_fact_guard_negation_is_scoped_to_blocked_value(
     assert "Миотокс" in message_to_user
 
 
+def test_fact_guard_skips_educational_question_about_blocked_value(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "для чего делают инъекции ботокса",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    assert "fact_guard" not in result.safe_context
+    assert "среди подтверждённых вариантов нет" not in str(
+        result.safe_context.get("message_to_user", "")
+    )
+
+
+def test_fact_guard_still_blocks_availability_question_about_blocked_value(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "у вас есть ботокс?",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.safe_context["fact_guard"]["matched_blocked"] == ["Ботокс"]
+    assert "Ботокс среди подтверждённых вариантов нет" in result.safe_context["message_to_user"]
+
+
 def test_fact_guard_stays_before_cosmetic_concern(
     policy_session,
     resolver,

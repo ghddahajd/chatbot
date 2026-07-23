@@ -1277,6 +1277,27 @@ FACT_GUARD_NEGATION_MARKERS = {
     "не хочу",
     "не надо",
 }
+FACT_GUARD_EDUCATIONAL_MARKERS = {
+    "зачем",
+    "для чего",
+    "что такое",
+    "как действует",
+    "как работает",
+    "из чего состоит",
+    "в чем разница",
+    "в чём разница",
+}
+FACT_GUARD_AVAILABILITY_MARKERS = {
+    "у вас",
+    "вы делаете",
+    "вы колете",
+    "здесь есть",
+    "в клинике",
+    "можно у вас",
+    "делаете ли",
+    "колете ли",
+    "есть ли у вас",
+}
 SAFE_SERVICE_REQUEST_INTENTS = {
     "medical_advice",
     "regulated_advice",
@@ -1322,6 +1343,16 @@ def _fact_guard_value_is_negated(normalized_message: str, normalized_value: str)
     return _has_fact_guard_negation(normalized_message)
 
 
+def _fact_guard_is_educational_question(normalized_message: str) -> bool:
+    """Вопросы вида "зачем/для чего делают X" — это не попытка узнать, есть ли у нас
+    конкретный незаявленный бренд, а общеобразовательный вопрос. Guard не должен их блокировать,
+    только реальные "у вас есть/делаете ли вы X"."""
+
+    if not contains_keyword(normalized_message, FACT_GUARD_EDUCATIONAL_MARKERS):
+        return False
+    return not contains_keyword(normalized_message, FACT_GUARD_AVAILABILITY_MARKERS)
+
+
 def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyResult | None:
     config = getattr(knowledge_base, "config_payload", {})
     fact_guards = config.get("fact_guards") if isinstance(config, dict) else None
@@ -1356,6 +1387,8 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
             if not _fact_guard_value_is_negated(normalized_message, normalize_text(value))
         ]
         if not matched_blocked:
+            continue
+        if _fact_guard_is_educational_question(normalized_message):
             continue
 
         service = knowledge_base.find_service_by_id(service_id)

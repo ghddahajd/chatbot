@@ -178,7 +178,7 @@ def test_article_guidance_uses_llm_when_approved_excerpt_passes_validator(test_c
 
     assert payload["action"] == "answer"
     assert "В материалах центра указано" in payload["answer"]
-    assert "В материалах центра есть статья" not in payload["answer"]
+    assert "По теме «Расширенные поры на лице (блог)»" not in payload["answer"]
     assert llm_client.last_context["question_type"] == "article_guidance_excerpt"
     assert "message_to_user" not in llm_client.last_context
 
@@ -201,7 +201,7 @@ def test_article_guidance_falls_back_when_llm_recommends_service(test_client, ma
 
     assert payload["action"] == "answer"
     assert "Рекомендую" not in payload["answer"]
-    assert "В материалах центра есть статья" in payload["answer"]
+    assert "По теме «Расширенные поры на лице (блог)»" in payload["answer"]
 
 
 def test_contact_prompt_still_allows_new_price_question(test_client) -> None:

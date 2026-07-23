@@ -231,8 +231,7 @@ def _article_guidance_result_from_entry(
             "это уточнит специалист на консультации."
         )
     message_to_user = (
-        f"В материалах центра есть статья по похожей теме: «{entry.title}». "
-        f"С этой темой в базе центра связаны: {service_names}. "
+        f"По теме «{entry.title}» у нас обычно рассматривают: {service_names}. "
         f"{caution}"
     )
     excerpt = str(getattr(entry, "excerpt", "") or "").strip()
@@ -1920,6 +1919,15 @@ def analyze_message(
     if intent == "faq_question" and not price_requested and not duration_requested:
         article_query = f"{service.name} {message}" if service is not None else message
         article_matches = _retrieve_article_context_safe(article_query)
+
+        guidance_result = _cosmetic_article_guidance_result(
+            knowledge_base,
+            article_matches,
+            normalized_message,
+        )
+        if guidance_result is not None:
+            return guidance_result
+
         if not article_matches:
             return PolicyResult(
                 action=PolicyAction.CLARIFY,

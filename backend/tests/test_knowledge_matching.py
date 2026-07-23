@@ -195,6 +195,51 @@ def test_unknown_service_can_use_article_trigger_phrase(
     assert "Тёмные круги могут быть связаны не только с косметологией" in answer
 
 
+def test_faq_question_prefers_approved_article_mapping_over_free_answer(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "темные круги под глазами, что посоветуете?",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.safe_context["question_type"] == "cosmetic_article_guidance"
+    assert "Мезотерапия" in result.safe_context["message_to_user"]
+
+
+def test_faq_question_without_approved_mapping_keeps_old_behavior(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "что нельзя делать после чистки лица?",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
+
+
 def test_regulated_without_hard_signal_can_use_article_trigger_phrase(
     monkeypatch,
     policy_session,

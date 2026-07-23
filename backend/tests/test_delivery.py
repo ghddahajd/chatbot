@@ -283,6 +283,35 @@ def test_telegram_formatter_uses_event_specific_text() -> None:
     assert "http://localhost:8000/operator" in operator_text
 
 
+def test_telegram_booking_text_includes_dialog_link_when_present() -> None:
+    text = _telegram_text(
+        event_type="booking_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={
+            "name": "Иван",
+            "phone": "+7999",
+            "summary": "Хочу записаться",
+            "operator_url": "http://operator.local/dialog",
+        },
+        service_name="Чистка лица",
+    )
+
+    assert "Открыть диалог: http://operator.local/dialog" in text
+
+
+def test_telegram_booking_text_omits_dialog_link_without_operator_url() -> None:
+    text = _telegram_text(
+        event_type="booking_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={"name": "Иван", "phone": "+7999", "summary": "Хочу записаться"},
+        service_name="Чистка лица",
+    )
+
+    assert "Открыть диалог" not in text
+
+
 def test_telegram_lead_text_includes_reason_service_and_dialog_link() -> None:
     text = _telegram_text(
         event_type="lead_created",

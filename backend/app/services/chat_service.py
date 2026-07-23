@@ -18,7 +18,7 @@ from ..models import (
     SessionStatus,
 )
 from ..policy import classify_and_extract
-from ..policy.constants import NEGATIVE_MESSAGES
+from ..policy.constants import NEGATIVE_MESSAGES, PHONE_PATTERN
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
@@ -270,13 +270,13 @@ class ChatService:
             return False
         return len(digits) >= 7 and digits[0] in {"7", "8", "9"}
 
-    def _pending_contact_answer(self, session, message: str) -> str | None:
+    def _pending_contact_answer(self, session, message: str, knowledge_base) -> str | None:
         phone = extract_phone(message)
         if phone:
             return None
         if self._looks_like_partial_phone(message):
             return "Похоже, номер неполный. Проверьте, пожалуйста, и отправьте телефон ещё раз."
-        name = extract_name(message, None)
+        name = extract_name(message, None, known_services=knowledge_base.services)
         if name:
             return f"{name}, напишите, пожалуйста, телефон — передам заявку менеджеру."
         return "Напишите, пожалуйста, телефон. Можно просто номер и имя одним сообщением."
@@ -296,11 +296,42 @@ class ChatService:
             return None
         return prior_message
 
-    def _lead_summary(self, session, message: str, *, is_booking_request: bool) -> str:
+    def _contact_message_remainder(self, message: str, *, name: str | None, phone: str | None) -> str:
+        remainder = PHONE_PATTERN.sub(" ", message)
+        if phone:
+            remainder = remainder.replace(phone, " ")
+            remainder = remainder.replace(phone.removeprefix("+"), " ")
+        if name:
+            remainder = re.sub(
+                rf"(?<!\w){re.escape(name)}(?!\w)",
+                " ",
+                remainder,
+                flags=re.IGNORECASE,
+            )
+        remainder = re.sub(r"[\d+\-\(\)]", " ", remainder)
+        remainder = re.sub(r"\s+", " ", remainder)
+        return remainder.strip(" ,;:.!?|")
+
+    def _lead_summary(
+        self,
+        session,
+        message: str,
+        *,
+        is_booking_request: bool,
+        name: str | None = None,
+        phone: str | None = None,
+    ) -> str:
         prefix = "Заявка на запись: " if is_booking_request else ""
         prior_message = self._last_user_message_before_current(session, message)
         if prior_message:
-            return f"{prefix}{prior_message} | Контакт: {message}"
+            details = self._contact_message_remainder(message, name=name, phone=phone)
+            details_suffix = f" ({details})" if details else ""
+            return f"{prefix}{prior_message}{details_suffix}"
+        details = self._contact_message_remainder(message, name=name, phone=phone)
+        if details:
+            return f"{prefix}{details}"
+        if prefix:
+            return prefix.rstrip(": ")
         return f"{prefix}{message}"
 
     def _lead_context_start_metadata(self, session) -> dict[str, int]:
@@ -516,8 +547,8 @@ class ChatService:
             return None
 
         if not phone:
-            answer = self._pending_contact_answer(session, message)
-            name = extract_name(message, None)
+            answer = self._pending_contact_answer(session, message, knowledge_base)
+            name = extract_name(message, None, known_services=knowledge_base.services)
             if name:
                 await session_store.update_contact_draft(session.session_id, name=name)
             await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
@@ -531,7 +562,11 @@ class ChatService:
                 quick_actions=[],
             )
 
-        name = extract_name(message, phone) or str(session.contact_draft.get("name") or "").strip() or None
+        name = (
+            extract_name(message, phone, known_services=knowledge_base.services)
+            or str(session.contact_draft.get("name") or "").strip()
+            or None
+        )
         await session_store.update_contact_draft(session.session_id, name=name, phone=phone)
 
         is_booking_request = session.pending_action == PendingAction.BOOKING_CONTACT.value
@@ -546,7 +581,13 @@ class ChatService:
             company_id=session.company_id,
             session_id=session.session_id,
             contact=contact,
-            summary=self._lead_summary(lead_session, message, is_booking_request=is_booking_request),
+            summary=self._lead_summary(
+                lead_session,
+                message,
+                is_booking_request=is_booking_request,
+                name=name,
+                phone=phone,
+            ),
             service_id=self._lead_service_id(
                 session,
                 is_booking_request=is_booking_request,
@@ -841,7 +882,13 @@ class ChatService:
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
-                    summary=self._lead_summary(session, message, is_booking_request=False),
+                    summary=self._lead_summary(
+                        session,
+                        message,
+                        is_booking_request=False,
+                        name=contact.get("name") if isinstance(contact, dict) else None,
+                        phone=contact.get("phone") if isinstance(contact, dict) else None,
+                    ),
                     service_id=waiting_policy_result.service_id,
                     reason=str(unresolved_metadata.get("reason") or "")
                     or classify_lead_reason(last_intent=session.last_intent, is_booking_request=False),
@@ -944,7 +991,13 @@ class ChatService:
                     company_id=session.company_id,
                     session_id=session.session_id,
                     contact=contact,
-                    summary=self._lead_summary(lead_session, message, is_booking_request=is_booking_request),
+                    summary=self._lead_summary(
+                        lead_session,
+                        message,
+                        is_booking_request=is_booking_request,
+                        name=contact.get("name") if isinstance(contact, dict) else None,
+                        phone=contact.get("phone") if isinstance(contact, dict) else None,
+                    ),
                     service_id=self._lead_service_id(
                         session,
                         is_booking_request=is_booking_request,

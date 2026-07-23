@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.llm.mock import MockLLMClient
+from app.models import Message, MessageRole, Session
+from app.services.chat_service import ChatService
 
 
 def _copy_rosh_import_demo_for_chat_test(test_client, managed_env) -> None:
@@ -37,6 +39,11 @@ class _EchoSummaryLLMClient(MockLLMClient):
             for message in session.messages
             if message.role.value == "user" and str(message.text or "").strip()
         )
+
+
+class _FailingSummaryLLMClient(MockLLMClient):
+    async def summarize_session(self, session, lead):
+        raise RuntimeError("summarizer unavailable")
 
 
 class _ArticleGuidanceLLMClient(MockLLMClient):
@@ -833,6 +840,30 @@ def test_pending_contact_lead_summary_keeps_prior_user_request(test_client, mana
     assert "неподтверждённую услугу" in lead["summary"]
 
 
+def test_lead_summary_fallback_removes_contact_details_but_keeps_tail() -> None:
+    chat_service = object.__new__(ChatService)
+    current_message = "Иван +7 999 123-45-67 завтра утром"
+    session = Session(
+        company_id="rosh_demo",
+        messages=[
+            Message(role=MessageRole.USER, text="хочу записаться на чистку лица"),
+            Message(role=MessageRole.USER, text=current_message),
+        ],
+    )
+
+    summary = chat_service._lead_summary(
+        session,
+        current_message,
+        is_booking_request=True,
+        name="Иван",
+        phone="+79991234567",
+    )
+
+    assert summary == "Заявка на запись: хочу записаться на чистку лица (завтра утром)"
+    assert "Иван" not in summary
+    assert "999" not in summary
+
+
 def test_unknown_service_booking_phone_creates_marked_lead(test_client, managed_env) -> None:
     first_response = test_client.post(
         "/api/chat/message",
@@ -873,6 +904,30 @@ def test_regular_contact_lead_is_not_marked_unknown_service(test_client, managed
     assert lead["lead_trigger"] == "ask_contact"
     assert lead["reason"] == "commercial_interest"
     assert lead["unresolved_query"] == ""
+
+
+def test_ask_contact_lead_summary_fallback_does_not_leak_name(
+    test_client,
+    managed_env,
+    monkeypatch,
+) -> None:
+    # тот же сценарий, что в test_regular_contact_lead_is_not_marked_unknown_service
+    # (имя+телефон+намерение одним сообщением, PolicyAction.ASK_CONTACT), но с падающим
+    # LLM-саммаризатором — проверяет, что fallback в _lead_summary() тоже не тащит имя
+    # в хвост, а не только путь через pending-contact.
+    monkeypatch.setattr(test_client.app.state, "llm_client", _FailingSummaryLLMClient())
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "Иван +79991234567 хочу узнать"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["lead_created"] is True
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert "Иван" not in lead["summary"]
+    assert "999" not in lead["summary"]
 
 
 def test_offdomain_phone_same_message_creates_unknown_service_lead(test_client, managed_env) -> None:

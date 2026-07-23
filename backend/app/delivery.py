@@ -98,6 +98,8 @@ def _telegram_text(
 ) -> str:
     if event_type == "booking_created":
         service_line = f"\n✂️ {_text_value(service_name)}" if service_name else ""
+        operator_url = _escape_markdown(str(payload.get("operator_url") or "").strip())
+        dialog_line = f"\n\n🔗 Открыть диалог: {operator_url}" if operator_url else ""
         return (
             f"📅 *Запись на услугу* — {_text_value(company_name)}\n\n"
             f"👤 {_text_value(payload.get('name'))}\n"
@@ -105,6 +107,7 @@ def _telegram_text(
             f"{service_line}\n"
             f"💬 {_text_value(payload.get('summary'))}\n"
             f"🕐 {_text_value(timestamp)}"
+            f"{dialog_line}"
         )
 
     if event_type == "operator_requested":

@@ -160,13 +160,14 @@ def _contact_safe_context(
     message: str,
     phone: str,
     service,
+    known_services: list[object] | None = None,
     *,
     booking_request: bool = False,
     service_unresolved: bool = False,
 ) -> dict[str, object]:
     safe_context: dict[str, object] = {
         "contact": {
-            "name": extract_name(message, phone),
+            "name": extract_name(message, phone, known_services=known_services),
             "phone": phone,
         },
         "service": service.model_dump() if service else None,
@@ -1692,6 +1693,7 @@ def analyze_message(
                 message,
                 phone,
                 service,
+                knowledge_base.services,
                 service_unresolved=service_unresolved,
             ),
         )
@@ -2003,6 +2005,7 @@ def analyze_message(
                     message,
                     phone,
                     None,
+                    knowledge_base.services,
                     service_unresolved=True,
                 ),
             )
@@ -2042,7 +2045,7 @@ def analyze_message(
                 reason=PolicyReason.CONTACT_PROVIDED,
                 service_id=service.id if service else None,
                 confidence=0.95,
-                safe_context=_contact_safe_context(message, phone, service),
+                safe_context=_contact_safe_context(message, phone, service, knowledge_base.services),
             )
         # Кнопка "Передать администратору" из engagement-offer напоминания — уже явное
         # подтверждение (пользователь отвечает на прямой вопрос "подключить
@@ -2101,6 +2104,7 @@ def analyze_message(
                         message,
                         phone,
                         None,
+                        knowledge_base.services,
                         booking_request=True,
                         service_unresolved=True,
                     ),
@@ -2137,7 +2141,13 @@ def analyze_message(
                 reason=PolicyReason.BOOKING_REQUEST,
                 service_id=service.id if service else None,
                 confidence=0.94,
-                safe_context=_contact_safe_context(message, phone, service, booking_request=True),
+                safe_context=_contact_safe_context(
+                    message,
+                    phone,
+                    service,
+                    knowledge_base.services,
+                    booking_request=True,
+                ),
             )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -2162,7 +2172,13 @@ def analyze_message(
             reason=PolicyReason.BOOKING_REQUEST,
             service_id=service.id if service else None,
             confidence=0.94,
-            safe_context=_contact_safe_context(message, phone, service, booking_request=True),
+            safe_context=_contact_safe_context(
+                message,
+                phone,
+                service,
+                knowledge_base.services,
+                booking_request=True,
+            ),
         )
 
     if phone:
@@ -2171,7 +2187,7 @@ def analyze_message(
             reason=PolicyReason.CONTACT_PROVIDED,
             service_id=service.id if service else None,
             confidence=0.93,
-            safe_context=_contact_safe_context(message, phone, service),
+            safe_context=_contact_safe_context(message, phone, service, knowledge_base.services),
         )
 
     if price_requested:

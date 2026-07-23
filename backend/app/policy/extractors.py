@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import MessageRole, Session
@@ -14,6 +14,7 @@ from .constants import (
     NEGATIVE_MESSAGES,
     PHONE_PATTERN,
 )
+from .variants import _stem, _tokens
 
 try:
     from rapidfuzz.distance import Levenshtein
@@ -108,7 +109,42 @@ def extract_phone(message: str) -> Optional[str]:
     return phone
 
 
-def extract_name(message: str, phone: Optional[str]) -> Optional[str]:
+def _service_field(service: Any, field_name: str) -> object:
+    if isinstance(service, dict):
+        return service.get(field_name)
+    return getattr(service, field_name, None)
+
+
+def _known_service_stems(known_services: Iterable[Any] | None) -> set[str]:
+    if known_services is None:
+        return set()
+
+    stems: set[str] = set()
+    for service in known_services:
+        values = [
+            _service_field(service, "name"),
+            _service_field(service, "category"),
+        ]
+        synonyms = _service_field(service, "synonyms")
+        if isinstance(synonyms, list):
+            values.extend(synonyms)
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            stems.update(
+                _stem(token)
+                for token in _tokens(value)
+                if len(token) >= 3
+            )
+    return stems
+
+
+def extract_name(
+    message: str,
+    phone: Optional[str],
+    *,
+    known_services: Iterable[Any] | None = None,
+) -> Optional[str]:
     source = message
     if phone is not None:
         match = PHONE_PATTERN.search(message)
@@ -145,11 +181,14 @@ def extract_name(message: str, phone: Optional[str]) -> Optional[str]:
         "на",
         "по",
     }
+    service_stems = _known_service_stems(known_services)
     for word in cleaned.split():
         normalized_word = normalize_text(word)
         if len(normalized_word) < 2 or normalized_word in stop_words:
             continue
         if re.search(r"[A-Za-zА-Яа-яЁё]", normalized_word):
+            if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
+                return None
             return normalized_word.title()
     return None
 

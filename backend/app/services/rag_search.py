@@ -91,22 +91,67 @@ def _document_frequencies(chunks: list[dict[str, Any]]) -> Counter[str]:
     return frequencies
 
 
+def _word_window(text: str, center: int, size: int) -> str:
+    start = max(0, center - size // 3)
+    end = min(len(text), start + size)
+    if start > 0:
+        next_space = text.find(" ", start)
+        if 0 <= next_space < end:
+            start = next_space + 1
+    if end < len(text):
+        prev_space = text.rfind(" ", start, end)
+        if prev_space > start:
+            end = prev_space
+    return text[start:end].strip(" ,;:—-")
+
+
 def _snippet(text: str, query_tokens: list[str], size: int = 420) -> str:
-    normalized_text = normalize_text(text)
-    first_match = len(text) // 3
+    clean_text = re.sub(r"\s+", " ", text).strip()
+    if not clean_text:
+        return ""
+
+    normalized_text = clean_text.lower().replace("ё", "е")
+    first_match = len(clean_text) // 3
     for token in query_tokens:
         index = normalized_text.find(token)
         if index >= 0:
             first_match = index
             break
-    start = max(0, first_match - size // 3)
-    end = min(len(text), start + size)
-    snippet = re.sub(r"\s+", " ", text[start:end]).strip()
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(text):
-        snippet += "..."
-    return snippet
+
+    sentence_start = max(
+        clean_text.rfind(".", 0, first_match),
+        clean_text.rfind("!", 0, first_match),
+        clean_text.rfind("?", 0, first_match),
+    )
+    sentence_start = 0 if sentence_start < 0 else sentence_start + 1
+
+    # набираем СКОЛЬКО ПОЛУЧИТСЯ полных предложений подряд (не одно), пока не подойдём
+    # к бюджету size — иначе модели не хватает контекста для содержательного ответа,
+    # а граница всё равно остаётся на конце предложения, не обрывается на полуслове
+    end = sentence_start
+    while end - sentence_start < size:
+        sentence_ends = [
+            index
+            for index in (
+                clean_text.find(".", end),
+                clean_text.find("!", end),
+                clean_text.find("?", end),
+            )
+            if index >= 0
+        ]
+        if not sentence_ends:
+            end = len(clean_text)
+            break
+        next_end = min(sentence_ends) + 1
+        if next_end - sentence_start > size and end > sentence_start:
+            break
+        end = next_end
+
+    snippet = clean_text[sentence_start:end].strip(" ,;:—-")
+    if len(snippet) >= 40:
+        return snippet
+
+    return _word_window(clean_text, first_match, size)
 
 
 def _score_chunk(

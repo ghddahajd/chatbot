@@ -214,7 +214,7 @@ def _policy_marker(policy_result: Any, classification: dict[str, object]) -> str
     safe_context = getattr(policy_result, "safe_context", {}) or {}
     if safe_context.get("question_type") == "list_services":
         return "list_services"
-    if safe_context.get("question_type") == "price":
+    if safe_context.get("question_type") in {"price", "variants_list", "variant_price"}:
         return "price"
     if safe_context.get("question_type") == "cosmetic_concern":
         return "cosmetic_concern"

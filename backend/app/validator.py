@@ -74,6 +74,23 @@ ARTICLE_GUIDANCE_FORBIDDEN_PATTERNS = (
     *UNSUPPORTED_EQUIPMENT_PATTERNS,
     *UNSUPPORTED_EFFICACY_CLAIM_PATTERNS,
 )
+FAQ_ALLOWED_WORDS = {
+    "данным",
+    "статьи",
+    "статья",
+    "указано",
+    "подробности",
+    "уточнит",
+    "уточнить",
+    "менеджер",
+    "менеджеру",
+    "специалист",
+    "специалисту",
+    "важно",
+    "лучше",
+    "вопросу",
+    "индивидуально",
+}
 
 
 def _digit_groups(value: str) -> set[str]:
@@ -90,6 +107,43 @@ def _significant_words(value: str) -> set[str]:
     return {word for word in normalized.split() if len(word) >= 5 and word not in stop_words}
 
 
+def _brand_like_tokens(text: str) -> set[str]:
+    """Слова с заглавной буквы НЕ в начале предложения — типичный паттерн для названий
+    брендов/препаратов. LLM иногда придумывает несуществующие бренды (опечатки/галлюцинации
+    вроде "Миктоца") или называет реально существующий, но незаявленный бренд (например
+    "Диспорт") — оба случая выглядят одинаково: заглавная буква не на старте предложения."""
+
+    tokens: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        words = sentence.split()
+        for index, raw_word in enumerate(words):
+            cleaned = re.sub(r"[^A-Za-zА-Яа-яЁё-]", "", raw_word)
+            if index == 0 or len(cleaned) < 4:
+                continue
+            if cleaned[0].isupper() and not cleaned.isupper():
+                tokens.add(cleaned.lower().replace("ё", "е"))
+    return tokens
+
+
+def _article_context_answer(context: dict[str, Any]) -> str:
+    article_context = context.get("article_context")
+    if not isinstance(article_context, list) or not article_context:
+        return ""
+
+    first_match = article_context[0]
+    if not isinstance(first_match, dict):
+        return ""
+
+    title = str(first_match.get("title") or "статьи").strip()
+    snippet = re.sub(r"\s+", " ", str(first_match.get("snippet") or "")).strip(" .")
+    if not snippet:
+        return ""
+    if len(snippet) > 360:
+        cutoff = snippet.rfind(" ", 0, 360)
+        snippet = snippet[: cutoff if cutoff > 240 else 360].strip(" ,;:—-") + "..."
+    return f"По данным статьи «{title}»: {snippet}. Подробности уточнит менеджер."
+
+
 def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
     question_type = context.get("question_type")
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
@@ -97,7 +151,7 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(
         phrasebook.get("price_disclaimer")
-        or "Предварительно так, точнее сообщит менеджер."
+        or "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей."
     )
 
     if question_type == "price":
@@ -145,8 +199,16 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
                 for item in article_context
                 if isinstance(item, dict)
             )
-        safe_words = _significant_words(snippets_text)
+        grounding_text = f"{snippets_text} {context.get('user_message') or ''}"
+        safe_words = _significant_words(grounding_text)
         if safe_words and not (_significant_words(answer) & safe_words):
+            return False
+        answer_words = _significant_words(answer)
+        ungrounded_words = answer_words - safe_words - FAQ_ALLOWED_WORDS
+        if any("токс" in word for word in ungrounded_words):
+            return False
+        ungrounded_brand_words = _brand_like_tokens(answer) - _brand_like_tokens(grounding_text) - safe_words
+        if ungrounded_brand_words:
             return False
         if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
             return False
@@ -236,12 +298,17 @@ def clean_template_answer(context: dict[str, Any]) -> str:
                 + ". Точные рекомендации даст менеджер на консультации."
             )
 
+    if context.get("question_type") == "faq_question":
+        article_answer = _article_context_answer(context)
+        if article_answer:
+            return article_answer
+
     service = context.get("service") if isinstance(context.get("service"), dict) else {}
     price = context.get("price") if isinstance(context.get("price"), dict) else {}
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(
         phrasebook.get("price_disclaimer")
-        or "Предварительно так, точнее сообщит менеджер."
+        or "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей."
     )
     parts: list[str] = []
     if service.get("name"):

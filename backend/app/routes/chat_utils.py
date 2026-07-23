@@ -303,17 +303,17 @@ def _contextual_frame_classification(
             frame.frame_type in {"service_interest", "fact_question"}
             and frame.entity_id
             and contextual_service is not None
-            and (
-                is_variant_list_question(message)
-                or find_variant_matches(contextual_service, message, limit=1)
-            )
         ):
-            return {
-                "intent": "service_mention",
-                "service_id": frame.entity_id,
-                "confidence": 0.9,
-                "context_topic": "variants_list" if is_variant_list_question(message) else "variant_lookup",
-            }
+            # Конкретное совпадение варианта важнее общего списка: слова вроде "зона"
+            # входят и в общий вопрос ("какие зоны?"), и в названия вариантов ("Т зона").
+            has_variant_match = bool(find_variant_matches(contextual_service, message, limit=1))
+            if has_variant_match or is_variant_list_question(message):
+                return {
+                    "intent": "service_mention",
+                    "service_id": frame.entity_id,
+                    "confidence": 0.9,
+                    "context_topic": "variant_lookup" if has_variant_match else "variants_list",
+                }
         return None
 
     local_service_id = str(local_result.get("service_id") or "").strip()
@@ -349,19 +349,19 @@ def _contextual_frame_classification(
                 "context_topic": "variant_repeat_price",
                 "context_variant": frame_variant,
             }
-        if is_variant_list_question(message):
-            return {
-                "intent": "service_mention",
-                "service_id": frame.entity_id,
-                "confidence": 0.9,
-                "context_topic": "variants_list",
-            }
         if contextual_service is not None and find_variant_matches(contextual_service, message, limit=1):
             return {
                 "intent": "service_mention",
                 "service_id": frame.entity_id,
                 "confidence": 0.9,
                 "context_topic": "variant_lookup",
+            }
+        if is_variant_list_question(message):
+            return {
+                "intent": "service_mention",
+                "service_id": frame.entity_id,
+                "confidence": 0.9,
+                "context_topic": "variants_list",
             }
         if fuzzy_contains(normalized_message, PRICE_KEYWORDS) or normalized_message in {
             "а сколько",

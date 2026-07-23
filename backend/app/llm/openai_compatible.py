@@ -335,9 +335,11 @@ class OpenAIClient(BaseLLMClient):
             .get("content", DEFAULT_FALLBACK)
             .strip()
         )
-        answer = enforce_required_disclaimers(answer, context)
-        if not validate_response(answer, context):
-            return fallback_after_invalid_response(answer, context)
+        validation_context = dict(context)
+        validation_context["user_message"] = user_message
+        answer = enforce_required_disclaimers(answer, validation_context)
+        if not validate_response(answer, validation_context):
+            return fallback_after_invalid_response(answer, validation_context)
         return answer
 
     async def classify_and_extract(

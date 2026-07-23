@@ -317,7 +317,8 @@ def _run_api_checks(
         price_payload = price_response.json()
         if price_response.status_code == 200 and price_payload.get("answer"):
             answer = str(price_payload.get("answer") or "")
-            if "Предварительно" in answer:
+            lower_answer = answer.lower()
+            if "предварительн" in lower_answer and ("точн" in lower_answer or "подтверд" in lower_answer):
                 state.ok("цена с оговоркой")
             else:
                 state.warn("цена отвечает, но без стандартной оговорки")

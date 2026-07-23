@@ -1063,9 +1063,15 @@ def _wide_price_range_clarify_result(
     variants = getattr(service, "variants", []) or []
     remaining = max(0, len(variants) - len(labels))
     tail = f" и ещё {remaining}" if remaining else ""
+    price_disclaimer = _phrase(
+        knowledge_base,
+        "price_disclaimer",
+        "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей.",
+    )
     message_to_user = (
         f"У услуги «{service.name}» цена сильно зависит от варианта: {', '.join(labels)}{tail}. "
-        "Уточните, какой вариант интересует, и я подскажу цену по конкретной позиции."
+        "Уточните, какой вариант интересует, и я подскажу цену по конкретной позиции. "
+        f"{price_disclaimer}"
     )
     return PolicyResult(
         action=PolicyAction.CLARIFY,
@@ -1082,9 +1088,43 @@ def _wide_price_range_clarify_result(
     )
 
 
+def _variant_price_answer(
+    knowledge_base: KnowledgeBase,
+    service,
+    matches: list[dict[str, object]],
+    *,
+    confidence: float,
+) -> PolicyResult:
+    lines = [variant_price_line(service, variant) for variant in matches]
+    price_disclaimer = _phrase(
+        knowledge_base,
+        "price_disclaimer",
+        "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей.",
+    )
+    message_to_user = (
+        f"По услуге «{service.name}»: {'; '.join(line for line in lines if line)}. "
+        f"{price_disclaimer}"
+    )
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.PRICE_QUESTION,
+        service_id=service.id,
+        confidence=confidence,
+        safe_context={
+            **knowledge_base.get_service_context(service),
+            "force_direct_answer": True,
+            "question_type": "variant_price",
+            "message_to_user": message_to_user,
+            "variant_matches": matches,
+        },
+        quick_actions=_service_quick_actions(service, "Оставить телефон"),
+    )
+
+
 def _known_service_price_result(
     knowledge_base: KnowledgeBase,
     service,
+    message: str = "",
     *,
     confidence: float = 0.95,
 ) -> PolicyResult:
@@ -1100,6 +1140,18 @@ def _known_service_price_result(
                 "message_to_user": _phrase(knowledge_base, "contact_prompt"),
             },
         )
+
+    if message:
+        # Пользователь мог сразу назвать конкретный вариант ("Механическая чистка лица
+        # цена") — тогда отвечаем по нему напрямую, а не общим списком всех вариантов.
+        variant_matches = find_variant_matches(service, message)
+        if variant_matches:
+            return _variant_price_answer(
+                knowledge_base,
+                service,
+                variant_matches,
+                confidence=confidence,
+            )
 
     wide_range_result = _wide_price_range_clarify_result(
         knowledge_base,
@@ -1131,7 +1183,15 @@ def _variant_followup_result(
     if not variants:
         return None
 
-    if context_topic == "variants_list" or is_variant_list_question(message):
+    if context_topic == "variant_repeat_price" and context_variant is not None:
+        matches = [context_variant]
+    else:
+        matches = find_variant_matches(service, message)
+
+    # Конкретное совпадение варианта важнее общего списка: слова вроде "зона"/"варианты"
+    # входят и в общий вопрос ("какие зоны?"), и в названия самих вариантов ("Т зона"),
+    # поэтому список показываем только если точный вариант не нашёлся.
+    if not matches and (context_topic == "variants_list" or is_variant_list_question(message)):
         labels = variant_list_labels(service, limit=8)
         if not labels:
             return None
@@ -1155,32 +1215,10 @@ def _variant_followup_result(
             quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
         )
 
-    if context_topic == "variant_repeat_price" and context_variant is not None:
-        matches = [context_variant]
-    else:
-        matches = find_variant_matches(service, message)
     if not matches:
         return None
 
-    lines = [variant_price_line(service, variant) for variant in matches]
-    message_to_user = (
-        f"По услуге «{service.name}»: {'; '.join(line for line in lines if line)}. "
-        "Это предварительно, точнее подскажет менеджер после уточнения деталей."
-    )
-    return PolicyResult(
-        action=PolicyAction.ANSWER,
-        reason=PolicyReason.PRICE_QUESTION,
-        service_id=service.id,
-        confidence=0.92,
-        safe_context={
-            **knowledge_base.get_service_context(service),
-            "force_direct_answer": True,
-            "question_type": "variant_price",
-            "message_to_user": message_to_user,
-            "variant_matches": matches,
-        },
-        quick_actions=_service_quick_actions(service, "Оставить телефон"),
-    )
+    return _variant_price_answer(knowledge_base, service, matches, confidence=0.92)
 
 
 FACT_VALUE_QUESTION_KEYWORDS = {
@@ -2006,7 +2044,15 @@ def analyze_message(
                 confidence=0.95,
                 safe_context=_contact_safe_context(message, phone, service),
             )
-        if session.pending_action != PendingAction.OFFERED_OPERATOR.value:
+        # Кнопка "Передать администратору" из engagement-offer напоминания — уже явное
+        # подтверждение (пользователь отвечает на прямой вопрос "подключить
+        # администратора?"), а не первое двусмысленное упоминание оператора. Без этой
+        # проверки такой клик снова уходил в soft-offer вместо реальной передачи.
+        operator_already_confirmed = (
+            session.pending_action == PendingAction.OFFERED_OPERATOR.value
+            or normalized_message == "передать администратору"
+        )
+        if not operator_already_confirmed:
             return PolicyResult(
                 action=PolicyAction.CLARIFY,
                 reason=PolicyReason.OPERATOR_REQUESTED,
@@ -2038,7 +2084,7 @@ def analyze_message(
         )
 
     if price_requested and booking_requested and service is not None:
-        return _known_service_price_result(knowledge_base, service, confidence=0.95)
+        return _known_service_price_result(knowledge_base, service, message, confidence=0.95)
 
     if booking_requested:
         if service is None and not booking_mentions_clinic_doctor:
@@ -2161,7 +2207,7 @@ def analyze_message(
                 quick_actions=["Позвать менеджера", "Посмотреть услуги"],
             )
 
-        return _known_service_price_result(knowledge_base, service)
+        return _known_service_price_result(knowledge_base, service, message)
 
     if explanation_requested:
         if service is None:

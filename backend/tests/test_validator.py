@@ -1,6 +1,11 @@
 """проверки domain-aware response validator."""
 
-from app.validator import validate_article_guidance_response, validate_consultation_response, validate_response
+from app.validator import (
+    fallback_after_invalid_response,
+    validate_article_guidance_response,
+    validate_consultation_response,
+    validate_response,
+)
 
 
 def test_consultation_validator_blocks_medical_terms_for_medical_profile() -> None:
@@ -124,6 +129,30 @@ def test_faq_validator_blocks_ungrounded_equipment_brand() -> None:
     assert not validate_response(
         "Мужская лазерная эпиляция выполняется на эффективных диодных системах Palomar Vectus.",
         context,
+    )
+
+
+def test_faq_validator_blocks_ungrounded_toxin_name_and_falls_back_to_article() -> None:
+    context = {
+        "question_type": "faq_question",
+        "user_message": "чем отличается ксеомин от миотокса",
+        "article_context": [
+            {
+                "title": "Ксеомин в косметологии",
+                "snippet": (
+                    "Ксеомин отличается от других препаратов на основе ботулотоксина "
+                    "отсутствием комплексообразующих белков."
+                ),
+            }
+        ],
+    }
+
+    assert not validate_response(
+        "Ксеомин отличается от Микротокса отсутствием комплексообразующих белков.",
+        context,
+    )
+    assert fallback_after_invalid_response("Ксеомин отличается от Микротокса.", context).startswith(
+        "По данным статьи «Ксеомин в косметологии»: Ксеомин отличается"
     )
 
 

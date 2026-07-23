@@ -163,7 +163,8 @@ def test_build_system_prompt_uses_question_type_block() -> None:
 
 def test_openai_complete_sends_history_as_chat_turns_not_system_json() -> None:
     client = _RecordingCompletionClient(
-        "Чистка лица стоит от 4 500 ₽. Это предварительно, точнее подскажет менеджер после уточнения деталей."
+        "Чистка лица стоит от 4 500 ₽. Это предварительная стоимость. "
+        "Точную сумму подтвердит менеджер после уточнения деталей."
     )
     context = {
         "question_type": "price",

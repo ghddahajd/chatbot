@@ -166,6 +166,25 @@ def find_variant_matches(service, message: str, *, limit: int = 5) -> list[dict[
     if not variants:
         return []
 
+    # Точное имя варианта в сообщении важнее нечёткого совпадения по стемам: короткие
+    # уточнения вроде "Т зона" после стемминга дают пустой набор слов (однобуквенный
+    # токен и "зона" как общий стоп-токен отфильтровываются), поэтому их иначе не найти,
+    # даже если пользователь дословно скопировал название варианта из ответа бота.
+    normalized_message = normalize_text(message)
+    exact_matches = [
+        (variant, normalized_name)
+        for variant in variants
+        if isinstance(variant, dict)
+        and (normalized_name := normalize_text(str(variant.get("name") or "")))
+        and normalized_name in normalized_message
+    ]
+    if exact_matches:
+        # Более длинное имя — более специфичное совпадение: короткое имя может быть
+        # подстрокой более длинного ("Механическая чистка лица" входит в
+        # "Механическая чистка лица ( Т зона )"), а не отдельным независимым вариантом.
+        longest = max(len(name) for _, name in exact_matches)
+        return [variant for variant, name in exact_matches if len(name) == longest][:limit]
+
     query_stems = _query_stems(message)
     if not query_stems:
         return []

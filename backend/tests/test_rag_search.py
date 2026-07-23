@@ -50,6 +50,39 @@ def test_retrieve_article_context_filters_confident_matches(
     assert set(matches[0]) == {"title", "url", "snippet", "chunk_id", "score"}
 
 
+def test_retrieve_article_context_snippet_starts_on_sentence_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    long_prefix = " ".join(["служебный текст"] * 40)
+    rows = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "title": "Ксеомин",
+            "url": "https://example.test/kseomin",
+            "chunk_index": 0,
+            "source_type": "article",
+            "text": (
+                f"{long_prefix}. "
+                "Ксеомин отличается отсутствием комплексообразующих белков и применяется в косметологии. "
+                "Подробности обсуждаются на консультации."
+            ),
+        }
+    ]
+    chunks_file.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    matches = retrieve_article_context("чем отличается ксеомин", top_k=1, min_score=1.0)
+
+    assert matches[0]["snippet"].startswith("Ксеомин отличается")
+    assert not matches[0]["snippet"].startswith("...")
+
+
 def test_retrieve_article_context_returns_empty_when_score_is_low(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

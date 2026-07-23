@@ -12,11 +12,9 @@ scenarios:
     action: "list_services"
 
   - message: "сколько стоит {first_service}"
-    action: "answer"
-    marker: "price"
+    action: "price"
   - message: "цена на {second_service}"
-    action: "answer"
-    marker: "price"
+    action: "price"
   - message: "сколько стоит?"
     action: "clarify"
     marker: "price_question_no_service"

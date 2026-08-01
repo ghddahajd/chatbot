@@ -135,6 +135,7 @@ def test_doctor_info_classification_matches_show_doctors_without_kto() -> None:
         "context_topic": "doctors",
     }
     assert _doctor_info_classification("какие врачи есть") is not None
+    assert _doctor_info_classification("покаж врачей") is not None
 
 
 def test_doctor_info_classification_still_requires_a_trigger_word() -> None:

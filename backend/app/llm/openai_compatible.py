@@ -304,10 +304,17 @@ class OpenAIClient(BaseLLMClient):
             f"Клиентская оговорка цены/сроков: {price_disclaimer}\n\n"
             f"Контекст для ответа:\n{context_for_model}"
         )
+        # "Список услуг" — самодостаточный фактический ответ, история диалога ему не нужна
+        # и может тематически "утянуть" ответ в сторону недавней темы (проверено живьём:
+        # после разговора про врачей "расскажи про процедуру" начинал придумывать детали
+        # про консультацию с врачом вместо честного списка услуг).
+        history_for_model = (
+            [] if context.get("question_type") == "list_services" else self._history_messages_for_model(history)
+        )
         messages = [
             {"role": "system", "content": system_content},
             *FEW_SHOT_MESSAGES,
-            *self._history_messages_for_model(history),
+            *history_for_model,
             {
                 "role": "user",
                 "content": (

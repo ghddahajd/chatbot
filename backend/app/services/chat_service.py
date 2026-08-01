@@ -764,6 +764,48 @@ class ChatService:
                 type(error).__name__,
             )
 
+        await self._ensure_telegram_topic(session_id=session_id, last_message=message)
+
+    async def _ensure_telegram_topic(self, *, session_id: str, last_message: str) -> None:
+        bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
+        if bridge is None or not bridge.enabled:
+            return
+        try:
+            session = await self.request.app.state.session_store.get(session_id)
+            contact_name = str((session.contact_draft or {}).get("name") or "").strip() if session else ""
+            topic_name = contact_name or f"Сессия {session_id[:8]}"
+            card_text = (
+                f"⚡️ *{topic_name}*\n\n"
+                f"💬 \"{last_message}\"\n\n"
+                "Нажмите «Взять в работу», чтобы вести диалог прямо в этой теме."
+            )
+            await bridge.ensure_topic_for_session(
+                session_id=session_id,
+                topic_name=topic_name,
+                card_text=card_text,
+            )
+        except Exception as error:
+            logger.warning(
+                "telegram_bridge topic creation failed session_id=%s error=%s",
+                session_id,
+                type(error).__name__,
+            )
+
+    async def _forward_to_telegram_topic(self, session, message: str) -> None:
+        if not session.telegram_topic_id:
+            return
+        bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
+        if bridge is None or not bridge.enabled:
+            return
+        try:
+            await bridge.forward_client_message(session.session_id, message)
+        except Exception as error:
+            logger.warning(
+                "telegram_bridge forward failed session_id=%s error=%s",
+                session.session_id,
+                type(error).__name__,
+            )
+
     async def handle_message(
         self,
         *,
@@ -824,6 +866,7 @@ class ChatService:
 
         message = stripped_message[:MAX_MESSAGE_LENGTH]
         session = await session_store.append_message(session.session_id, MessageRole.USER, message) or session
+        await self._forward_to_telegram_topic(session, message)
 
         pending_contact_response = await self._handle_pending_contact(
             session_store=session_store,

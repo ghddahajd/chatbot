@@ -21,6 +21,7 @@ from .policy import analyze_message
 from .rate_limit import RateLimiter
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .sessions import SessionStore
+from .telegram_bridge import TelegramBridgeService
 from .ws_manager import ConnectionManager
 
 
@@ -85,6 +86,12 @@ async def lifespan(app: FastAPI):
     app.state.policy_analyzer = analyze_message
     app.state.ws_manager = ConnectionManager(app.state.session_store)
     app.state.chat_rate_limiter = RateLimiter(limit=settings.chat_rate_limit_per_minute)
+    app.state.telegram_bridge_service = TelegramBridgeService(
+        bot_token=settings.telegram_bot_token,
+        group_chat_id=settings.telegram_operators_group_id,
+        session_store=app.state.session_store,
+        ws_manager=app.state.ws_manager,
+    )
 
     retry_task = None
     if settings.delivery_retry_enabled:
@@ -101,10 +108,17 @@ async def lifespan(app: FastAPI):
                 snapshot_file=snapshot_file,
             )
         )
+    telegram_bridge_task = None
+    if settings.telegram_bridge_enabled:
+        telegram_bridge_task = asyncio.create_task(app.state.telegram_bridge_service.run_polling_loop())
 
     try:
         yield
     finally:
+        if telegram_bridge_task is not None:
+            telegram_bridge_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await telegram_bridge_task
         if eviction_task is not None:
             eviction_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

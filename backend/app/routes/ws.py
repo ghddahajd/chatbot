@@ -28,6 +28,8 @@ async def client_ws(websocket: WebSocket, session_id: str) -> None:
     await manager.connect_client(session_id, websocket)
     await manager.flush_pending_to_client(session_id)
 
+    telegram_bridge = getattr(websocket.app.state, "telegram_bridge_service", None)
+
     try:
         while True:
             text = await websocket.receive_text()
@@ -36,6 +38,15 @@ async def client_ws(websocket: WebSocket, session_id: str) -> None:
                 session_id,
                 {"type": "message", "role": "user", "text": text, "session_id": session_id},
             )
+            if telegram_bridge is not None and telegram_bridge.enabled:
+                try:
+                    await telegram_bridge.forward_client_message(session_id, text)
+                except Exception as error:
+                    logger.warning(
+                        "telegram_bridge forward failed session_id=%s error=%s",
+                        session_id,
+                        type(error).__name__,
+                    )
     except WebSocketDisconnect:
         await manager.disconnect_client(session_id)
 

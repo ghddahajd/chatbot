@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_operators_group_id: str = ""
+    telegram_bridge_enabled: bool = True
     delivery_retry_enabled: bool = True
     delivery_retry_interval_seconds: int = 60
     session_ttl_seconds: int = 86400

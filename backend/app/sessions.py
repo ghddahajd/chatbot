@@ -154,6 +154,31 @@ class SessionStore:
             session.updated_at = datetime.utcnow()
             return session
 
+    async def set_telegram_bridge(
+        self,
+        session_id: str,
+        *,
+        topic_id: Optional[int] = None,
+        claimed_by: Optional[str] = None,
+    ) -> Optional[Session]:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if topic_id is not None:
+                session.telegram_topic_id = topic_id
+            if claimed_by is not None:
+                session.telegram_claimed_by = claimed_by
+            session.updated_at = datetime.utcnow()
+            return session
+
+    async def find_by_telegram_topic(self, topic_id: int) -> Optional[Session]:
+        async with self._lock:
+            for session in self._sessions.values():
+                if session.telegram_topic_id == topic_id:
+                    return session
+            return None
+
     async def update_context(
         self,
         session_id: str,

@@ -94,6 +94,8 @@ class Session(BaseModel):
     last_intent: Optional[str] = None
     active_frame: Optional[ContextFrame] = None
     contact_draft: dict[str, Any] = Field(default_factory=dict)
+    telegram_topic_id: Optional[int] = None
+    telegram_claimed_by: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

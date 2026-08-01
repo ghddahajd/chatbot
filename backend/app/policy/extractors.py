@@ -52,15 +52,44 @@ def _distance_at_most_one(left: str, right: str) -> bool:
     return True
 
 
+# Некоторые фразы в keyword-списках намеренно обрезаны как стем (например "во сколько
+# открывае" вместо "открываете"/"открываетесь"), чтобы ловить все словоформы через
+# substring-логику. Сохраняем это через префиксное сравнение, но только для достаточно
+# длинных токенов keyword'а — иначе короткие токены ("во", "не") будут случайно матчить
+# префиксом совсем другие слова ("вопрос" начинается на "во").
+_TOKEN_PREFIX_MIN_LENGTH = 5
+
+
+def _keyword_token_matches(message_token: str, keyword_token: str) -> bool:
+    if message_token == keyword_token:
+        return True
+    return len(keyword_token) >= _TOKEN_PREFIX_MIN_LENGTH and message_token.startswith(keyword_token)
+
+
+def _contains_token_sequence(tokens: list[str], keyword_tokens: list[str]) -> bool:
+    span = len(keyword_tokens)
+    return any(
+        all(
+            _keyword_token_matches(tokens[start + offset], keyword_tokens[offset])
+            for offset in range(span)
+        )
+        for start in range(len(tokens) - span + 1)
+    )
+
+
 def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
-    tokens = set(normalized_text.split())
+    tokens = normalized_text.split()
+    token_set = set(tokens)
     for keyword in keywords:
         if " " in keyword:
-            if keyword in normalized_text:
+            # Многословные фразы матчим по последовательности целых токенов, а не сырой
+            # подстрокой по всей строке — иначе граница слов может случайно "склеить" фразу
+            # (например "мне нужно" содержит "не нужно" как символьную подстроку: м[не нужно]).
+            if _contains_token_sequence(tokens, keyword.split()):
                 return True
             continue
         if len(keyword) <= 3:
-            if keyword in tokens:
+            if keyword in token_set:
                 return True
             continue
         if keyword in normalized_text:

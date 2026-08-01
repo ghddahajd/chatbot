@@ -53,6 +53,7 @@ class PolicyReason(str, Enum):
     OUT_OF_SCOPE = "out_of_scope"
     SMALL_TALK = "small_talk"
     OFF_TOPIC = "off_topic"
+    OFF_TOPIC_BODY_REDIRECT = "off_topic_body_redirect"
 
 
 class PendingAction(str, Enum):

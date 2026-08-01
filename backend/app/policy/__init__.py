@@ -10,6 +10,7 @@ from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phra
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import retrieve_article_context
 from .constants import (
+    BODY_TOPIC_SIGNAL_KEYWORDS,
     BOOKING_KEYWORDS,
     AMBULANCE_ACTION_KEYWORDS,
     AMBULANCE_SUBJECT_KEYWORDS,
@@ -320,6 +321,32 @@ def _cosmetic_article_guidance_result(
             return result
 
     return None
+
+
+def _has_strong_article_overlap(normalized_message: str, guidance_result: PolicyResult) -> bool:
+    """Отсекает случайные однословные RAG-совпадения (например "руки" в статье про
+    уход после 30, где это просто одна из зон тела, а не то, о чём спросил пользователь) —
+    для мягкого off-topic редиректа нужно 2+ значимых пересечения, не одно случайное слово.
+    Куратированный trigger_phrase-матч (человек уже подтвердил фразу) считается достаточным
+    сам по себе."""
+
+    mapping = guidance_result.safe_context.get("article_service_mapping")
+    if isinstance(mapping, dict) and str(mapping.get("matched_phrase") or "").strip():
+        return True
+
+    article_context = guidance_result.safe_context.get("article_context")
+    if not isinstance(article_context, list) or not article_context:
+        return False
+
+    message_tokens = {token for token in normalized_message.split() if len(token) >= 4}
+    for item in article_context:
+        if not isinstance(item, dict):
+            continue
+        text = f"{item.get('title') or ''} {item.get('snippet') or ''}"
+        text_tokens = {token for token in normalize_text(text).split() if len(token) >= 4}
+        if len(message_tokens & text_tokens) >= 2:
+            return True
+    return False
 
 
 def _service_variant_examples(service, limit: int = 5) -> list[str]:
@@ -1812,6 +1839,40 @@ def analyze_message(
         )
 
     if intent == "off_topic":
+        if contains_keyword(normalized_message, BODY_TOPIC_SIGNAL_KEYWORDS):
+            article_matches = _retrieve_article_context_safe(message)
+            guidance_result = _cosmetic_article_guidance_result(
+                knowledge_base,
+                article_matches,
+                normalized_message,
+            )
+            if guidance_result is not None and _has_strong_article_overlap(
+                normalized_message, guidance_result
+            ):
+                return guidance_result
+
+            # Не называем случайную услугу наугад при слабом совпадении (см. "руки" —
+            # одно случайное слово раньше давало уверенный, но неверный матч) — вместо
+            # этого честный мягкий редирект. Не повторяем питч второй раз подряд в сессии.
+            already_offered = session.last_intent == PolicyReason.OFF_TOPIC_BODY_REDIRECT.value
+            phrase_key = (
+                "off_topic_body_redirect_repeat" if already_offered else "off_topic_body_redirect"
+            )
+            return PolicyResult(
+                action=PolicyAction.OFF_TOPIC,
+                reason=PolicyReason.OFF_TOPIC_BODY_REDIRECT,
+                confidence=classifier_confidence or 0.85,
+                safe_context={
+                    "force_direct_answer": True,
+                    "message_to_user": _phrase(
+                        knowledge_base,
+                        phrase_key,
+                        seed=_phrase_seed(session, "off_topic_body_redirect"),
+                    ),
+                },
+                quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+            )
+
         return PolicyResult(
             action=PolicyAction.OFF_TOPIC,
             reason=PolicyReason.OFF_TOPIC,
@@ -2035,8 +2096,34 @@ def analyze_message(
             article_matches,
             normalized_message,
         )
-        if guidance_result is not None:
+        if guidance_result is not None and _has_strong_article_overlap(
+            normalized_message, guidance_result
+        ):
             return guidance_result
+
+        if contains_keyword(normalized_message, BODY_TOPIC_SIGNAL_KEYWORDS):
+            # Реальный маршрут для тем вроде "узи полового члена" — классификатор чаще
+            # даёт unknown_service, а не off_topic, для таких сообщений (проверено живьём).
+            # "Похожие варианты" тут не предлагаем — для тем вне профиля клиники их
+            # обычно честно нет, лучше прямой мягкий редирект на консультацию.
+            already_offered = session.last_intent == PolicyReason.OFF_TOPIC_BODY_REDIRECT.value
+            phrase_key = (
+                "off_topic_body_redirect_repeat" if already_offered else "off_topic_body_redirect"
+            )
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.OFF_TOPIC_BODY_REDIRECT,
+                confidence=classifier_confidence or 0.85,
+                safe_context={
+                    "force_direct_answer": True,
+                    "message_to_user": _phrase(
+                        knowledge_base,
+                        phrase_key,
+                        seed=_phrase_seed(session, "off_topic_body_redirect"),
+                    ),
+                },
+                quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+            )
 
         return PolicyResult(
             action=PolicyAction.CLARIFY,

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 CLAIM_CALLBACK_PREFIX = "claim:"
 GET_UPDATES_TIMEOUT_SECONDS = 30
 HTTP_TIMEOUT_SECONDS = 40.0
+CLOSE_SESSION_COMMANDS = {"/done", "/close", "/end", "/завершить", "/закрыть"}
 
 
 class TelegramBridgeService:
@@ -185,6 +186,10 @@ class TelegramBridgeService:
         if session is None:
             return
 
+        if text.lower() in CLOSE_SESSION_COMMANDS:
+            await self._close_session_from_topic(session.session_id, int(thread_id))
+            return
+
         await self.session_store.append_message(session.session_id, MessageRole.OPERATOR, text)
         payload = {
             "type": "message",
@@ -193,6 +198,21 @@ class TelegramBridgeService:
             "session_id": session.session_id,
         }
         await self.ws_manager.send_to_client(session.session_id, payload)
+
+    async def _close_session_from_topic(self, session_id: str, thread_id: int) -> None:
+        """Завершает диалог по команде оператора из темы (/done и т.д.) — переиспользует
+        тот же путь закрытия, что и веб-панель оператора (disconnect_operator), плюс
+        закрывает саму тему."""
+
+        await self.ws_manager.disconnect_operator(session_id, close_session=True)
+        # Сообщение — до закрытия темы: Telegram не даёт постить в уже закрытую тему.
+        await self._call(
+            "sendMessage",
+            chat_id=self.group_chat_id,
+            message_thread_id=thread_id,
+            text="✅ Диалог завершён.",
+        )
+        await self.close_topic(session_id)
 
     async def _process_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:

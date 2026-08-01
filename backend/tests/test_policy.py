@@ -1784,3 +1784,43 @@ def test_objection_does_not_override_medical_escalation(policy_session, knowledg
     assert result.reason != PolicyReason.OBJECTION_HANDLED
     assert result.action == PolicyAction.TRANSFER_OPERATOR
     assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_list_services_uses_curated_article_match_over_generic_catalog(
+    policy_session, knowledge_base
+) -> None:
+    from app.models import ArticleServiceMapEntry
+
+    service_id = knowledge_base.services[0].id
+    knowledge_base.article_service_map = {
+        "https://example.test/zimniy-uhod": ArticleServiceMapEntry(
+            url="https://example.test/zimniy-uhod",
+            title="Уход за кожей зимой",
+            trigger_phrases=["уход за кожей зимой"],
+            service_ids=[service_id],
+        )
+    }
+
+    result = analyze_message(
+        "Расскажите про уход за кожей зимой",
+        policy_session,
+        knowledge_base,
+        {"intent": "list_services", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.safe_context.get("question_type") == "cosmetic_article_guidance"
+    assert "Уход за кожей зимой" in str(result.safe_context.get("message_to_user"))
+
+
+def test_list_services_still_returns_full_catalog_without_curated_match(
+    policy_session, knowledge_base
+) -> None:
+    result = analyze_message(
+        "покажи список услуг",
+        policy_session,
+        knowledge_base,
+        {"intent": "list_services", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.safe_context.get("question_type") == "list_services"
+    assert "all_services" in result.safe_context

@@ -1977,6 +1977,21 @@ def analyze_message(
         return equipment_result
 
     if intent == "list_services":
+        # Куратированная статья (например сезонный уход) может отвечать точнее, чем
+        # безусловный полный каталог — но только при уверенном совпадении (curated
+        # trigger_phrase или 2+ значимых слова пересечения), иначе для честного "покажи все
+        # услуги" каталог остаётся правильным ответом.
+        article_matches = _retrieve_article_context_safe(message)
+        guidance_result = _cosmetic_article_guidance_result(
+            knowledge_base,
+            article_matches,
+            normalized_message,
+        )
+        if guidance_result is not None and _has_strong_article_overlap(
+            normalized_message, guidance_result
+        ):
+            return guidance_result
+
         return PolicyResult(
             action=PolicyAction.ANSWER,
             reason=PolicyReason.OK,

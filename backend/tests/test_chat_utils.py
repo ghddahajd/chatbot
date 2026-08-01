@@ -7,6 +7,7 @@ import pytest
 from app.routes.chat_utils import (
     CONSULTATION_RISK_SAFE,
     _contextual_frame_classification,
+    _doctor_info_classification,
     classify_consultation_risk,
     should_ignore_model_location_mismatch,
     should_ignore_model_regulated_advice,
@@ -124,6 +125,20 @@ def test_context_frame_does_not_treat_bioresonance_as_variant_list() -> None:
     )
 
     assert result is None
+
+
+def test_doctor_info_classification_matches_show_doctors_without_kto() -> None:
+    assert _doctor_info_classification("покажи врачей") == {
+        "intent": "clinic_info",
+        "service_id": None,
+        "confidence": 0.88,
+        "context_topic": "doctors",
+    }
+    assert _doctor_info_classification("какие врачи есть") is not None
+
+
+def test_doctor_info_classification_still_requires_a_trigger_word() -> None:
+    assert _doctor_info_classification("врач хороший") is None
 
 
 def test_context_frame_resolves_doctor_followup_even_if_local_unknown() -> None:

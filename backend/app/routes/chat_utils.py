@@ -259,6 +259,17 @@ DOCTOR_FOLLOWUP_KEYWORDS = {
     "врач",
     "доктор",
 }
+# "кто" ловит "кто ведёт дерматологию", но не "покажи врачей"/"какие врачи есть" — без
+# "кто" такие сообщения раньше уезжали на нестабильный LLM-классификатор.
+DOCTOR_INFO_TRIGGER_KEYWORDS = {
+    "кто",
+    "покажи",
+    "покажите",
+    "какие",
+    "какой",
+    "список",
+    "есть ли",
+}
 
 
 def _active_frame(session: Session | None):
@@ -394,7 +405,7 @@ def _contextual_frame_classification(
 
 def _doctor_info_classification(message: str) -> dict[str, object] | None:
     normalized_message = normalize_text(message)
-    if "кто" not in normalized_message:
+    if not contains_keyword(normalized_message, DOCTOR_INFO_TRIGGER_KEYWORDS):
         return None
     if not contains_keyword(normalized_message, DOCTOR_FOLLOWUP_KEYWORDS):
         return None

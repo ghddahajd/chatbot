@@ -6,6 +6,7 @@ import re
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from ..delivery import _escape_markdown
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
 from ..knowledge import normalize_text, phrasebook_value_to_text
 from ..models import (
@@ -613,6 +614,11 @@ class ChatService:
         )
         await session_store.set_lead_requested(session.session_id, True)
         await self._clear_contact_state(session_store, session.session_id)
+        await self._ensure_telegram_topic(
+            session_id=session.session_id,
+            last_message=lead.summary,
+            reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
+        )
 
         if is_booking_request:
             answer = self._phrase(
@@ -764,25 +770,41 @@ class ChatService:
                 type(error).__name__,
             )
 
-        await self._ensure_telegram_topic(session_id=session_id, last_message=message)
+        await self._ensure_telegram_topic(session_id=session_id, last_message=message, reason="⚡️ Запросил оператора")
 
-    async def _ensure_telegram_topic(self, *, session_id: str, last_message: str) -> None:
+    _TELEGRAM_ROLE_LABELS = {"user": "👤 Клиент", "assistant": "🤖 Бот", "operator": "🧑‍💼 Оператор"}
+
+    def _format_telegram_transcript(self, session) -> str:
+        if session is None or not session.messages:
+            return ""
+        lines = [
+            f"{self._TELEGRAM_ROLE_LABELS.get(entry['role'], entry['role'])}: {entry['text']}"
+            for entry in recent_messages_for(session, limit=15)
+            if entry.get("text")
+        ]
+        return "\n".join(lines)
+
+    async def _ensure_telegram_topic(self, *, session_id: str, last_message: str, reason: str) -> None:
         bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
         if bridge is None or not bridge.enabled:
             return
         try:
             session = await self.request.app.state.session_store.get(session_id)
+            if session is not None and session.telegram_topic_id is not None:
+                return  # тема уже есть — не дублируем карточку/транскрипт
             contact_name = str((session.contact_draft or {}).get("name") or "").strip() if session else ""
             topic_name = contact_name or f"Сессия {session_id[:8]}"
             card_text = (
-                f"⚡️ *{topic_name}*\n\n"
-                f"💬 \"{last_message}\"\n\n"
+                f"{reason} — *{_escape_markdown(topic_name)}*\n\n"
+                f"💬 \"{_escape_markdown(last_message)}\"\n\n"
                 "Нажмите «Взять в работу», чтобы вести диалог прямо в этой теме."
             )
+            transcript = self._format_telegram_transcript(session)
             await bridge.ensure_topic_for_session(
                 session_id=session_id,
                 topic_name=topic_name,
                 card_text=card_text,
+                transcript=transcript,
             )
         except Exception as error:
             logger.warning(
@@ -945,6 +967,11 @@ class ChatService:
                 await self._finalize_lead_summary(session, lead)
                 await lead_service.save(lead)
                 await session_store.set_lead_requested(session.session_id, True)
+                await self._ensure_telegram_topic(
+                    session_id=session.session_id,
+                    last_message=lead.summary,
+                    reason="🔔 Новый лид",
+                )
                 answer = self._phrase(
                     "lead_success",
                     "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
@@ -1070,6 +1097,11 @@ class ChatService:
                 lead_created = True
                 await session_store.set_lead_requested(session.session_id, True)
                 await self._clear_contact_state(session_store, session.session_id)
+                await self._ensure_telegram_topic(
+                    session_id=session.session_id,
+                    last_message=lead.summary,
+                    reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
+                )
                 if is_booking_request:
                     answer = self._phrase(
                         "booking_success",

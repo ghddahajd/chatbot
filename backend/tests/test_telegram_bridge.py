@@ -109,6 +109,37 @@ def test_ensure_topic_for_session_creates_topic_with_claim_button(monkeypatch) -
     assert keyboard["callback_data"].startswith("claim:")
 
 
+def test_ensure_topic_for_session_sends_transcript_before_claim_card(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        session = await store.get_or_create(None, "rosh_demo")
+        FakeAsyncClient.responses["createForumTopic"] = {
+            "ok": True,
+            "result": {"message_thread_id": 42},
+        }
+        service = _service(store, ws_manager)
+        await service.ensure_topic_for_session(
+            session_id=session.session_id,
+            topic_name="Иван",
+            card_text="карточка",
+            transcript="👤 Клиент: привет\n🤖 Бот: чем помочь?",
+        )
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == 2
+    # транскрипт уходит первым, без parse_mode (это данные пользователя, не наш markdown)
+    assert send_calls[0]["json"]["text"] == "👤 Клиент: привет\n🤖 Бот: чем помочь?"
+    assert "parse_mode" not in send_calls[0]["json"]
+    # карточка с кнопкой — вторым сообщением
+    assert send_calls[1]["json"]["text"] == "карточка"
+    assert send_calls[1]["json"]["parse_mode"] == "Markdown"
+
+
 def test_ensure_topic_for_session_is_idempotent(monkeypatch) -> None:
     _reset_fake_client(monkeypatch)
     store = SessionStore()

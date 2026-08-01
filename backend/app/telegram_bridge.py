@@ -66,6 +66,7 @@ class TelegramBridgeService:
         session_id: str,
         topic_name: str,
         card_text: str,
+        transcript: str = "",
     ) -> Optional[int]:
         """Создаёт тему для сессии, если её ещё нет. Возвращает topic_id или None."""
 
@@ -88,6 +89,16 @@ class TelegramBridgeService:
 
         topic_id = result["result"]["message_thread_id"]
         await self.session_store.set_telegram_bridge(session_id, topic_id=topic_id)
+
+        if transcript:
+            # Без parse_mode: текст переписки — это данные пользователя, не наш markdown,
+            # экранировать его ради Markdown-разметки не имеет смысла (может сломать парсинг).
+            await self._call(
+                "sendMessage",
+                chat_id=self.group_chat_id,
+                message_thread_id=topic_id,
+                text=transcript[:4000],
+            )
 
         keyboard = {
             "inline_keyboard": [

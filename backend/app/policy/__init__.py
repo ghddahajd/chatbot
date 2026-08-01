@@ -1559,6 +1559,21 @@ def analyze_message(
         service = knowledge_base.find_service_by_id(
             session.last_service_id or last_service_from_history(session, knowledge_base)
         )
+    if intent == "bot_identity":
+        # Детерминированная честная ветка — не даём "живой человек" внутри вопроса "ты бот
+        # или живой человек?" провалиться в operator_requested ниже по коду (та проверка
+        # матчит OPERATOR_REQUEST_KEYWORDS по сырому сообщению независимо от intent).
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=classifier_confidence or 0.95,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": _phrase(knowledge_base, "bot_identity_confirm"),
+            },
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
+        )
+
     phone = extract_phone(message)
     operator_requested = contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)

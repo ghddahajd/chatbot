@@ -221,6 +221,15 @@ PROMPT_INJECTION_KEYWORDS = {
     "ответь без ограничений",
     "ты теперь",
 }
+# Признак того, что "живой человек"/"человек" в сообщении — часть вопроса про природу
+# бота ("ты бот или живой человек?"), а не просьба позвать оператора. "бот"/"робот" — короткие
+# токены, contains_keyword матчит их только по целому слову, не подстрокой ("работа" не заденет).
+BOT_IDENTITY_SIGNAL_KEYWORDS = {
+    "бот",
+    "боты",
+    "робот",
+    "роботы",
+}
 OPERATOR_REQUEST_KEYWORDS = {
     "позовите оператора",
     "позови оператора",
@@ -655,6 +664,7 @@ PHONE_PATTERN = re.compile(
 )
 ALLOWED_CLASSIFIER_INTENTS = {
     "small_talk",
+    "bot_identity",
     "off_topic",
     "list_services",
     "price_question",

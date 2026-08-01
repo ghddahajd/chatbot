@@ -9,6 +9,7 @@ from ..knowledge import _token_prefix_match, normalize_text
 from .constants import (
     ALLOWED_CLASSIFIER_INTENTS,
     BOOKING_KEYWORDS,
+    BOT_IDENTITY_SIGNAL_KEYWORDS,
     CLARIFY_SHORT_MESSAGES,
     COSMETIC_CONCERN_KEYWORDS,
     CONTACT_LINK_KEYWORDS,
@@ -142,7 +143,9 @@ def classify_and_extract(
         return {"intent": "clarify", "service_id": None, "confidence": 0.78}
     if contains_keyword(normalized_message, PROMPT_INJECTION_KEYWORDS):
         return {"intent": "off_topic", "service_id": None, "confidence": 0.96}
-    if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS):
+    if contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS) and not contains_keyword(
+        normalized_message, BOT_IDENTITY_SIGNAL_KEYWORDS
+    ):
         return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
 
     if (

@@ -907,6 +907,21 @@ def test_single_similar_service_binds_context_for_followup(
     assert followup.reason == PolicyReason.SERVICE_EXPLANATION
 
 
+def test_bot_identity_intent_answers_directly_without_operator_redirect(
+    policy_session, knowledge_base
+) -> None:
+    result = analyze_message(
+        "ты бот или живой человек?",
+        policy_session,
+        knowledge_base,
+        {"intent": "bot_identity", "service_id": None, "confidence": 0.95},
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OK
+    assert "AI-ассистент" in str(result.safe_context.get("message_to_user"))
+
+
 def test_operator_request_soft_redirect(policy_session, knowledge_base) -> None:
     result = _analyze("хочу оператора", policy_session, knowledge_base)
 
@@ -1029,6 +1044,22 @@ def test_local_classifier_marks_aftercare_faq_with_extra_verb(policy_session, kn
 
     assert classification["intent"] == "faq_question"
     assert classification["service_id"] == "facial_cleansing"
+
+
+def test_local_classifier_does_not_treat_bot_identity_question_as_operator_request(
+    policy_session, knowledge_base
+) -> None:
+    classification = _classification("ты бот или живой человек?", knowledge_base)
+
+    assert classification["intent"] != "operator_request"
+
+
+def test_local_classifier_still_treats_plain_human_request_as_operator_request(
+    policy_session, knowledge_base
+) -> None:
+    classification = _classification("хочу живого человека", knowledge_base)
+
+    assert classification["intent"] == "operator_request"
 
 
 def test_local_classifier_marks_moisture_aftercare_as_faq(policy_session, knowledge_base) -> None:

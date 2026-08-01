@@ -17,6 +17,7 @@ from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import (
     AFFIRMATIVE_MESSAGES,
+    BOT_IDENTITY_SIGNAL_KEYWORDS,
     CLARIFY_SHORT_MESSAGES,
     DURATION_KEYWORDS,
     EXPLANATION_KEYWORDS,
@@ -403,6 +404,20 @@ def _contextual_frame_classification(
     return None
 
 
+def _bot_identity_classification(message: str) -> dict[str, object] | None:
+    """"ты бот?" — детерминированный ответ, не полагаемся на LLM: локальная модель ненадёжно
+    следует нюансированным инструкциям (не путать с "хочу оператора"), см. structured-классификатор."""
+
+    normalized_message = normalize_text(message)
+    if not contains_keyword(normalized_message, BOT_IDENTITY_SIGNAL_KEYWORDS):
+        return None
+    return {
+        "intent": "bot_identity",
+        "service_id": None,
+        "confidence": 0.95,
+    }
+
+
 def _doctor_info_classification(message: str) -> dict[str, object] | None:
     normalized_message = normalize_text(message)
     if not contains_keyword(normalized_message, DOCTOR_INFO_TRIGGER_KEYWORDS):
@@ -453,6 +468,9 @@ async def resolve_classification(
         return local_result
     if extract_phone(message):
         return local_result
+    bot_identity_result = _bot_identity_classification(message)
+    if bot_identity_result is not None:
+        return bot_identity_result
     doctor_info_result = _doctor_info_classification(message)
     if doctor_info_result is not None:
         return doctor_info_result

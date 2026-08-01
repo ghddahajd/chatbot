@@ -1687,3 +1687,100 @@ def test_unit_price_note_for_injection_variants(
 
     assert "за единицу" in context["price_unit_note"].lower()
     assert "количество определит менеджер" in context["price_unit_note"].lower()
+
+
+def _objection_classification(topic: str) -> dict[str, object]:
+    return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": topic}
+
+
+def test_objection_price_answers_with_value_argument_not_backoff(policy_session, knowledge_base) -> None:
+    result = analyze_message(
+        "Ого, а почему так дорого?",
+        policy_session,
+        knowledge_base,
+        _objection_classification("price"),
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OBJECTION_HANDLED
+    assert "вход" in str(result.safe_context.get("message_to_user")).lower()
+
+
+def test_objection_hesitation_asks_one_clarifying_question(policy_session, knowledge_base) -> None:
+    result = analyze_message(
+        "Спасибо, я подумаю.",
+        policy_session,
+        knowledge_base,
+        _objection_classification("hesitation"),
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OBJECTION_HANDLED
+    assert "?" in str(result.safe_context.get("message_to_user"))
+
+
+def test_objection_competitor_does_not_criticize_competitor(policy_session, knowledge_base) -> None:
+    result = analyze_message(
+        "В соседней клинике эта же процедура стоит дешевле",
+        policy_session,
+        knowledge_base,
+        _objection_classification("competitor"),
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OBJECTION_HANDLED
+    message = str(result.safe_context.get("message_to_user")).lower()
+    for negative_word in ("хуже", "плохо", "некачествен", "обман"):
+        assert negative_word not in message
+
+
+def test_objection_guarantee_does_not_promise_result(policy_session, knowledge_base) -> None:
+    result = analyze_message(
+        "А вы гарантируете, что поможет?",
+        policy_session,
+        knowledge_base,
+        _objection_classification("guarantee"),
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OBJECTION_HANDLED
+    message = str(result.safe_context.get("message_to_user")).lower()
+    assert "гарантируем" not in message
+    assert "100%" not in message
+
+
+def test_objection_backs_off_after_two_soft_attempts(policy_session, knowledge_base) -> None:
+    policy_session.objection_response_count = 0
+    first = analyze_message(
+        "так дорого", policy_session, knowledge_base, _objection_classification("price")
+    )
+    assert first.reason == PolicyReason.OBJECTION_HANDLED
+
+    policy_session.objection_response_count = 1
+    second = analyze_message(
+        "я подумаю", policy_session, knowledge_base, _objection_classification("hesitation")
+    )
+    assert second.reason == PolicyReason.OBJECTION_HANDLED
+
+    policy_session.objection_response_count = 2
+    third = analyze_message(
+        "в другой клинике дешевле", policy_session, knowledge_base, _objection_classification("competitor")
+    )
+    assert third.action == PolicyAction.ANSWER
+    assert third.reason == PolicyReason.OBJECTION_BACKOFF
+    assert "не буду торопить" in str(third.safe_context.get("message_to_user")).lower()
+
+
+def test_objection_does_not_override_medical_escalation(policy_session, knowledge_base) -> None:
+    # "больно" уже жёстко в MEDICAL_KEYWORDS — комбинированное сообщение с возражением
+    # по цене всё равно должно уйти в медицинскую эскалацию, а не в шаблон возражения.
+    result = analyze_message(
+        "так дорого и очень больно после процедуры",
+        policy_session,
+        knowledge_base,
+        _objection_classification("price"),
+    )
+
+    assert result.reason != PolicyReason.OBJECTION_HANDLED
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE

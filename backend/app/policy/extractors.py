@@ -97,6 +97,15 @@ def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
     return False
 
 
+def contains_exact_token(normalized_text: str, tokens: set[str]) -> bool:
+    """Строгая проверка вхождения ЦЕЛОГО токена — в отличие от contains_keyword, не матчит
+    по сырой подстроке для длинных однословных ключей. Нужна для слов, у которых есть частая
+    приставочная форма с противоположным смыслом ("дорого" vs "недорого", "дешевле" vs
+    "подешевле") — contains_keyword такие приставки не отличает."""
+
+    return bool(set(normalized_text.split()) & tokens)
+
+
 def fuzzy_contains(normalized_text: str, keywords: set[str], *, min_len: int = 4) -> bool:
     """Узкий fuzzy-match для UX-слов, не для safety/medical."""
 

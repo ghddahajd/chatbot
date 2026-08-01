@@ -595,6 +595,61 @@ def _medical_referral_quick_actions(consultation_service, *, offer_lead: bool = 
     return actions
 
 
+OBJECTION_PHRASE_KEYS = {
+    "price": "objection_price",
+    "hesitation": "objection_hesitation",
+    "competitor": "objection_competitor",
+    "guarantee": "objection_guarantee",
+}
+OBJECTION_BACKOFF_ATTEMPTS = 2
+OBJECTION_QUICK_ACTIONS = ["Позвать менеджера", "Посмотреть услуги"]
+
+
+def _objection_result(
+    knowledge_base: KnowledgeBase,
+    session: Session,
+    classification: dict[str, object],
+    classifier_confidence: float,
+) -> Optional[PolicyResult]:
+    """Возражения (цена/"подумаю"/конкуренты/гарантии) — детерминированные шаблоны, не
+    LLM-генерация: локальная модель ненадёжно следует инструкциям "не критиковать
+    конкурентов"/"не обещать результат", а часть формулировок несёт юридический вес.
+    После двух мягких попыток бот не настаивает третий раз (см. tasks/Скрипты..., п.4.6)."""
+
+    objection_topic = str(classification.get("context_topic") or "")
+    phrase_key = OBJECTION_PHRASE_KEYS.get(objection_topic)
+    if phrase_key is None:
+        return None
+
+    response_count = int(session.objection_response_count or 0)
+    if response_count >= OBJECTION_BACKOFF_ATTEMPTS:
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OBJECTION_BACKOFF,
+            confidence=classifier_confidence or 0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": _phrase(
+                    knowledge_base, "objection_backoff", seed=_phrase_seed(session, "objection_backoff")
+                ),
+                "objection_topic": objection_topic,
+            },
+            quick_actions=OBJECTION_QUICK_ACTIONS,
+        )
+
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.OBJECTION_HANDLED,
+        confidence=classifier_confidence or 0.9,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": _phrase(knowledge_base, phrase_key, seed=_phrase_seed(session, phrase_key)),
+            "objection_topic": objection_topic,
+        },
+        quick_actions=OBJECTION_QUICK_ACTIONS,
+    )
+
+
 def _medical_referral_result(
     normalized_message: str,
     knowledge_base: KnowledgeBase,
@@ -1788,6 +1843,11 @@ def analyze_message(
                 }
             ],
         )
+
+    if intent == "objection":
+        objection_result = _objection_result(knowledge_base, session, classification, classifier_confidence)
+        if objection_result is not None:
+            return objection_result
 
     clinic_info_result = _clinic_info_result(
         message,

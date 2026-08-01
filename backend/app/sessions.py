@@ -189,6 +189,7 @@ class SessionStore:
         clear_active_frame: bool = False,
         substantive_message_count: Optional[int] = None,
         engagement_offer_count: Optional[int] = None,
+        objection_response_count: Optional[int] = None,
     ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
@@ -206,6 +207,8 @@ class SessionStore:
                 session.substantive_message_count = substantive_message_count
             if engagement_offer_count is not None:
                 session.engagement_offer_count = engagement_offer_count
+            if objection_response_count is not None:
+                session.objection_response_count = objection_response_count
             session.updated_at = datetime.utcnow()
             return session
 

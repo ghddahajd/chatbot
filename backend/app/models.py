@@ -54,6 +54,8 @@ class PolicyReason(str, Enum):
     SMALL_TALK = "small_talk"
     OFF_TOPIC = "off_topic"
     OFF_TOPIC_BODY_REDIRECT = "off_topic_body_redirect"
+    OBJECTION_HANDLED = "objection_handled"
+    OBJECTION_BACKOFF = "objection_backoff"
 
 
 class PendingAction(str, Enum):
@@ -87,6 +89,7 @@ class Session(BaseModel):
     message_count: int = 0
     substantive_message_count: int = 0
     engagement_offer_count: int = 0
+    objection_response_count: int = 0
     lead_requested: bool = False
     operator_requested: bool = False
     pending_action: Optional[str] = None

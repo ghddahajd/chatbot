@@ -19,11 +19,19 @@ from ..policy.constants import (
     AFFIRMATIVE_MESSAGES,
     BOT_IDENTITY_SIGNAL_KEYWORDS,
     CLARIFY_SHORT_MESSAGES,
+    COMPETITOR_CONTEXT_TOKENS,
+    COMPETITOR_PRICE_TOKEN,
     DURATION_KEYWORDS,
     EXPLANATION_KEYWORDS,
+    GUARANTEE_REQUEST_KEYWORDS,
+    HESITATION_EXACT_MESSAGES,
+    HESITATION_KEYWORDS,
     PRICE_KEYWORDS,
+    PRICE_OBJECTION_KEYWORDS,
+    PRICE_OBJECTION_TOKENS,
 )
 from ..policy.extractors import (
+    contains_exact_token,
     contains_keyword,
     extract_phone,
     fuzzy_contains,
@@ -421,6 +429,28 @@ def _bot_identity_classification(message: str) -> dict[str, object] | None:
     }
 
 
+def _objection_classification(message: str) -> dict[str, object] | None:
+    """Возражения по цене ("дорого"/"я подумаю"/"у конкурентов дешевле"/"гарантируете?") —
+    детерминированный ответ по той же причине, что и bot_identity: локальная модель ненадёжно
+    следует нюансированным инструкциям (не критиковать конкурентов, не обещать результат), а
+    часть формулировок несёт юридический вес (ст.24 ФЗ "О рекламе", 323-ФЗ)."""
+
+    normalized_message = normalize_text(message)
+    if contains_keyword(normalized_message, PRICE_OBJECTION_KEYWORDS) or contains_exact_token(
+        normalized_message, PRICE_OBJECTION_TOKENS
+    ):
+        return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": "price"}
+    if contains_exact_token(normalized_message, {COMPETITOR_PRICE_TOKEN}) and contains_exact_token(
+        normalized_message, COMPETITOR_CONTEXT_TOKENS
+    ):
+        return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": "competitor"}
+    if contains_keyword(normalized_message, GUARANTEE_REQUEST_KEYWORDS):
+        return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": "guarantee"}
+    if contains_keyword(normalized_message, HESITATION_KEYWORDS) or normalized_message in HESITATION_EXACT_MESSAGES:
+        return {"intent": "objection", "service_id": None, "confidence": 0.88, "context_topic": "hesitation"}
+    return None
+
+
 def _doctor_info_classification(message: str) -> dict[str, object] | None:
     normalized_message = normalize_text(message)
     if not contains_keyword(normalized_message, DOCTOR_INFO_TRIGGER_KEYWORDS):
@@ -474,6 +504,9 @@ async def resolve_classification(
     bot_identity_result = _bot_identity_classification(message)
     if bot_identity_result is not None:
         return bot_identity_result
+    objection_result = _objection_classification(message)
+    if objection_result is not None:
+        return objection_result
     doctor_info_result = _doctor_info_classification(message)
     if doctor_info_result is not None:
         return doctor_info_result

@@ -8,6 +8,7 @@ from app.routes.chat_utils import (
     CONSULTATION_RISK_SAFE,
     _contextual_frame_classification,
     _doctor_info_classification,
+    _objection_classification,
     classify_consultation_risk,
     should_ignore_model_location_mismatch,
     should_ignore_model_regulated_advice,
@@ -291,3 +292,41 @@ async def test_consultation_risk_blocks_worse_after_procedure() -> None:
     )
 
     assert risk != CONSULTATION_RISK_SAFE
+
+
+def test_objection_classification_matches_price_objection() -> None:
+    assert _objection_classification("Ого, а почему так дорого?") == {
+        "intent": "objection",
+        "service_id": None,
+        "confidence": 0.9,
+        "context_topic": "price",
+    }
+    assert _objection_classification("дорого") is not None
+
+
+def test_objection_classification_does_not_match_affordable_option_request() -> None:
+    # "недорого"/"подешевле" — противоположный смысл (просят доступный вариант), не возражение.
+    assert _objection_classification("а что-то недорого у вас есть?") is None
+    assert _objection_classification("хочу подешевле вариант") is None
+
+
+def test_objection_classification_matches_hesitation() -> None:
+    result = _objection_classification("Спасибо, я подумаю.")
+    assert result is not None
+    assert result["context_topic"] == "hesitation"
+
+
+def test_objection_classification_matches_competitor_price() -> None:
+    result = _objection_classification("В соседней клинике эта же процедура стоит дешевле")
+    assert result is not None
+    assert result["context_topic"] == "competitor"
+
+
+def test_objection_classification_matches_guarantee_request() -> None:
+    result = _objection_classification("А вы гарантируете, что поможет?")
+    assert result is not None
+    assert result["context_topic"] == "guarantee"
+
+
+def test_objection_classification_ignores_unrelated_message() -> None:
+    assert _objection_classification("хочу записаться на консультацию") is None

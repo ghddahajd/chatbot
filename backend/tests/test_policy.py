@@ -1037,6 +1037,21 @@ def test_local_classifier_marks_moisture_aftercare_as_faq(policy_session, knowle
     assert classification["intent"] == "faq_question"
 
 
+def test_local_classifier_marks_pochem_as_price_question(policy_session, knowledge_base) -> None:
+    classification = _classification("а чистка лица почём?", knowledge_base)
+
+    assert classification["intent"] == "price_question"
+    assert classification["service_id"] == "facial_cleansing"
+
+
+def test_local_classifier_marks_import_pochem_as_price_question(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    classification = _classification("а пилинги почём?", knowledge_base)
+
+    assert classification["intent"] == "price_question"
+    assert classification["service_id"] == "pilingi_8dde1279"
+
+
 def test_diagnostics_word_is_not_medical_by_itself(policy_session, knowledge_base) -> None:
     result = _analyze("что входит в компьютерная диагностика", policy_session, knowledge_base)
 

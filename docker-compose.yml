@@ -3,6 +3,7 @@ services:
     build:
       context: ./backend
     container_name: chat-widget-backend
+    restart: unless-stopped
     ports:
       - "8000:8000"
     env_file:

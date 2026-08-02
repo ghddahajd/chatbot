@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.rag_search import retrieve_article_context
+from app.services.rag_search import rag_corpus_status, retrieve_article_context
 
 
 def _write_chunks(path: Path) -> None:
@@ -102,3 +102,36 @@ def test_retrieve_article_context_raises_for_missing_corpus(
 
     with pytest.raises(FileNotFoundError):
         retrieve_article_context("как проходит кольпоскопия")
+
+
+def test_rag_corpus_status_ok_for_real_corpus(tmp_path: Path) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_chunks(chunks_file)
+
+    status = rag_corpus_status(chunks_file)
+
+    assert status["ok"] is True
+    assert status["chunk_count"] > 0
+    assert status["error"] is None
+
+
+def test_rag_corpus_status_reports_missing_file_instead_of_raising(tmp_path: Path) -> None:
+    """Раньше отсутствие корпуса ловилось только внутри retrieve_article_context и тихо
+    деградировало (bare except FileNotFoundError -> []). Статус должен явно сказать, что
+    корпуса нет, не бросать исключение — это для лога при старте и /health, не для отказа."""
+
+    status = rag_corpus_status(tmp_path / "missing.jsonl")
+
+    assert status["ok"] is False
+    assert status["error"] == "file_not_found"
+    assert status["chunk_count"] == 0
+
+
+def test_rag_corpus_status_reports_empty_corpus(tmp_path: Path) -> None:
+    chunks_file = tmp_path / "chunks.jsonl"
+    chunks_file.write_text("", encoding="utf-8")
+
+    status = rag_corpus_status(chunks_file)
+
+    assert status["ok"] is False
+    assert status["error"] == "empty_corpus"

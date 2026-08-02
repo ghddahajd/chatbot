@@ -92,6 +92,26 @@ def tokenize(value: str) -> list[str]:
     ]
 
 
+def rag_corpus_status(path: Path | None = None) -> dict[str, Any]:
+    """Статус RAG-корпуса для громкой проверки при старте/health-чека.
+
+    Отсутствие корпуса раньше деградировало молча — retrieve_article_context ловил
+    FileNotFoundError и просто отдавал пустой список, смоук-тест это не ловит (цены и
+    услуги отвечают нормально, статьи тихо пропадают). Явный статус — чтобы это было видно
+    сразу при деплое, а не через жалобу клиента."""
+
+    chunks_path = path or default_rag_chunks_path()
+    if not chunks_path.exists():
+        return {"path": str(chunks_path), "ok": False, "chunk_count": 0, "error": "file_not_found"}
+    try:
+        chunks = load_chunks(chunks_path)
+    except Exception as error:
+        return {"path": str(chunks_path), "ok": False, "chunk_count": 0, "error": type(error).__name__}
+    if not chunks:
+        return {"path": str(chunks_path), "ok": False, "chunk_count": 0, "error": "empty_corpus"}
+    return {"path": str(chunks_path), "ok": True, "chunk_count": len(chunks), "error": None}
+
+
 def load_chunks(path: Path | None = None) -> list[dict[str, Any]]:
     chunks_path = path or default_rag_chunks_path()
     chunks: list[dict[str, Any]] = []

@@ -1,0 +1,25 @@
+# Реальные данные клиента не должны попасть в образ через COPY backend/data ./data —
+# gitignore защищает только git, а не docker build (COPY читает то, что реально лежит на
+# диске машины, которая собирает образ, независимо от git). Без этого файла образ,
+# собранный на машине разработчика с настоящими клиентскими данными, унёс бы их с собой.
+backend/data/clients/*
+!backend/data/clients/.gitkeep
+
+# Локальные логи — не артефакт сборки, а рантайм-состояние конкретного контейнера.
+backend/logs/*.jsonl
+
+# Секреты
+.env
+.env.*
+!.env.production.example
+
+# Обычный мусор разработки
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.DS_Store

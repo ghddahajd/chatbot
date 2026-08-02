@@ -102,6 +102,38 @@ def _clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+# Виджеты вроде "Закажите обратный звонок"/"Вас также может заинтересовать" повторяются
+# ВНУТРИ тела страницы (после каждой секции/FAQ), не только в начале/конце — markers_start/
+# markers_end их не ловят (это одноразовая обрезка головы/хвоста всего текста). Ловим их
+# отдельно, где бы они ни встретились, чтобы это не долетало до ответа пользователю дословно
+# ("Закажите обратный звонок, мы ответим на все ваши вопросы Перезвонить мне" посреди ответа
+# про процедуру звучит как не пойми что).
+INLINE_BOILERPLATE_PATTERNS = (
+    # "\Z" на конце — граница чанка иногда режет саму фразу пополам, дочищаем и обрубок.
+    re.compile(
+        r"Закажите обратный звонок.*?(?:Перезвонить мне|\Z)",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    # "Вас также может заинтересовать" — блок перелинковки на другие статьи переменной
+    # длины без чёткого конца; проще и безопаснее обрезать до конца текста чанка целиком,
+    # чем пытаться угадать границу списком регулярок под каждый вариант.
+    re.compile(r"Вас также может заинтересовать.*", re.IGNORECASE | re.DOTALL),
+    # Футер с адресом/телефоном/часами работы — фиксированный якорь "Метро Киевская",
+    # дальше произвольный (но короткий) хвост до ближайшего маркера конца футера.
+    re.compile(
+        r"Метро Киевская.{0,180}?(?:Сообщение в Telegram|Записаться на при[её]м|$)",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r"\bОглавление\b", re.IGNORECASE),
+)
+
+
+def _strip_inline_boilerplate(text: str) -> str:
+    for pattern in INLINE_BOILERPLATE_PATTERNS:
+        text = pattern.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _strip_site_boilerplate(text: str) -> str:
     markers_start = [
         "Главная",
@@ -124,6 +156,7 @@ def _strip_site_boilerplate(text: str) -> str:
         index = clean.find(marker)
         if index > 500:
             clean = clean[:index]
+    clean = _strip_inline_boilerplate(clean)
     return _strip_price_facts(clean)
 
 

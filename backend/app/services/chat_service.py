@@ -839,6 +839,26 @@ class ChatService:
         session_id: str | None,
         message: str,
     ) -> ChatMessageResponse | JSONResponse:
+        """Тонкая обёртка: резолвит/создаёт session_id и сериализует всю обработку одного
+        сообщения per-session локом (см. SessionStore.lock_for) — сам pipeline не тронут,
+        просто выполняется целиком под локом в _handle_message_locked."""
+
+        session_store = self.request.app.state.session_store
+        session = await session_store.get_or_create(session_id, company_id)
+        async with session_store.lock_for(session.session_id):
+            return await self._handle_message_locked(
+                company_id=company_id,
+                session_id=session.session_id,
+                message=message,
+            )
+
+    async def _handle_message_locked(
+        self,
+        *,
+        company_id: str,
+        session_id: str | None,
+        message: str,
+    ) -> ChatMessageResponse | JSONResponse:
         request = self.request
         session_store = request.app.state.session_store
         try:

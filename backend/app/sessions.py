@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
@@ -21,6 +22,16 @@ class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
         self._lock = asyncio.Lock()
+        # Отдельный лок на сессию — per-operation локов (self._lock) недостаточно: они защищают
+        # только одну мутацию за раз, а handle_message делает несколько последовательных чтений/
+        # записей (get_or_create -> append_message -> analyze_message -> remember_policy_context
+        # и т.д.) по одному session_id — между этими шагами конкурентный запрос к той же сессии
+        # мог вклиниться и потерять/перепутать обновления. lock_for сериализует всю обработку
+        # одной сессии целиком, не трогая параллелизм между РАЗНЫМИ сессиями.
+        self._session_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    def lock_for(self, session_id: str) -> asyncio.Lock:
+        return self._session_locks[session_id]
 
     async def get_or_create(self, session_id: Optional[str], company_id: str) -> Session:
         async with self._lock:
@@ -62,6 +73,7 @@ class SessionStore:
             ]
             for session_id in stale_session_ids:
                 del self._sessions[session_id]
+                self._session_locks.pop(session_id, None)
             return len(stale_session_ids)
 
     async def snapshot_to(self, path: Path, *, ttl_seconds: Optional[int] = None) -> int:

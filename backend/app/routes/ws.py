@@ -33,20 +33,23 @@ async def client_ws(websocket: WebSocket, session_id: str) -> None:
     try:
         while True:
             text = await websocket.receive_text()
-            await session_store.append_message(session_id, MessageRole.USER, text)
-            await manager.send_to_operator(
-                session_id,
-                {"type": "message", "role": "user", "text": text, "session_id": session_id},
-            )
-            if telegram_bridge is not None and telegram_bridge.enabled:
-                try:
-                    await telegram_bridge.forward_client_message(session_id, text)
-                except Exception as error:
-                    logger.warning(
-                        "telegram_bridge forward failed session_id=%s error=%s",
-                        session_id,
-                        type(error).__name__,
-                    )
+            # Тот же per-session лок, что и REST /api/chat/message — не даёт этому сообщению
+            # вклиниться посреди многошаговой обработки REST-пайплайна для той же сессии.
+            async with session_store.lock_for(session_id):
+                await session_store.append_message(session_id, MessageRole.USER, text)
+                await manager.send_to_operator(
+                    session_id,
+                    {"type": "message", "role": "user", "text": text, "session_id": session_id},
+                )
+                if telegram_bridge is not None and telegram_bridge.enabled:
+                    try:
+                        await telegram_bridge.forward_client_message(session_id, text)
+                    except Exception as error:
+                        logger.warning(
+                            "telegram_bridge forward failed session_id=%s error=%s",
+                            session_id,
+                            type(error).__name__,
+                        )
     except WebSocketDisconnect:
         await manager.disconnect_client(session_id)
 

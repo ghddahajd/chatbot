@@ -27,8 +27,29 @@ from .constants import (
     UNKNOWN_SERVICE_KEYWORDS,
     VISIT_KEYWORDS,
 )
-from .extractors import _distance_at_most_one, contains_keyword, fuzzy_contains, is_location_mismatch, mentions_company_city
+from .extractors import (
+    _distance_at_most_one,
+    contains_exact_token,
+    contains_keyword,
+    fuzzy_contains,
+    is_location_mismatch,
+    mentions_company_city,
+)
 from .restricted import is_restricted_question
+
+
+# "чем X отличается от Y" / "в чем разница между X и Y" — естественный порядок слов вставляет
+# название услуги/аппарата МЕЖДУ "чем" и "отличается" ("чем Morpheus8 отличается от MiniFX"),
+# так что contains_keyword (сравнивает смежные токены) фразу "чем отличается" не ловит. Токены
+# по отдельности, в любом порядке в сообщении, — надёжнее для этого паттерна сравнения.
+COMPARISON_QUESTION_TOKENS = {"чем", "отличается", "отличие", "различие", "разница"}
+
+
+def _looks_like_comparison_question(normalized_message: str) -> bool:
+    tokens = set(normalized_message.split())
+    has_subject = bool(tokens & {"чем", "разница", "отличие", "различие"})
+    has_predicate = bool(tokens & {"отличается", "отличаются", "разница", "отличие", "различие"})
+    return has_subject and has_predicate
 
 
 def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
@@ -149,7 +170,7 @@ def classify_and_extract(
         return {"intent": "operator_request", "service_id": None, "confidence": 0.9}
 
     if (
-        contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS)
+        (contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS) or _looks_like_comparison_question(normalized_message))
         and not fuzzy_contains(normalized_message, PRICE_KEYWORDS)
         and not contains_keyword(normalized_message, DURATION_KEYWORDS)
     ):

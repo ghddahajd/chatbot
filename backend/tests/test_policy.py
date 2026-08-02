@@ -185,16 +185,29 @@ clinic_info:
     assert result.safe_context["sensitive_handling"] == "escalate"
 
 
-def test_rosh_pregnancy_management_declines_from_real_config(policy_session, resolver, managed_env) -> None:
-    """Реальный ответ клиента: Rosh не ведёт/не прерывает беременность — честный decline, не эскалация."""
+def test_rosh_abortion_declines_from_real_config(policy_session, resolver, managed_env) -> None:
+    """Реальный ответ клиента: Rosh не прерывает беременность — честный decline, не эскалация."""
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
-    for message in ["можно ли сделать у вас аборт", "прерывание на позднем сроке", "ведете беременность?"]:
+    for message in ["можно ли сделать у вас аборт", "прерывание на позднем сроке"]:
         result = _analyze(message, policy_session, knowledge_base)
         assert result.action == PolicyAction.CLARIFY
         assert result.reason == PolicyReason.REGULATED_ADVICE
         assert result.safe_context["sensitive_handling"] == "decline"
         assert "не занимается" in result.safe_context["message_to_user"].lower()
+
+
+def test_rosh_pregnancy_management_is_inactive_not_declined(policy_session, resolver, managed_env) -> None:
+    """"Ведение беременности" временно выведено из decline-блока — сайт клиники (страница
+    GE Logiq 7 PRO) утверждает обратное тому, что клиент сказал в июле; ждём уточнения у
+    клиента скопом с другими вопросами (2026-08-02). Пока не должно ни жёстко отказывать
+    ("не занимается"), ни подтверждать услугу — безопасный default: эскалация к специалисту."""
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("ведете беременность?", policy_session, knowledge_base)
+
+    assert result.safe_context.get("sensitive_handling") != "decline"
+    assert "не занимается" not in str(result.safe_context.get("message_to_user", "")).lower()
 
 
 def test_rosh_gynecologist_specialty_resolves_from_real_config(policy_session, resolver, managed_env) -> None:

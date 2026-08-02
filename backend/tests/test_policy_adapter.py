@@ -90,6 +90,20 @@ def test_merge_accepts_model_faq_question_without_losing_local_service_id() -> N
     }
 
 
+def test_merge_keeps_local_faq_question_over_model_unknown_service() -> None:
+    """"чем Morpheus8 отличается от MiniFX" — локальный классификатор верно ловит сравнение
+    ("чем"+"отличается" как отдельные токены, см. _looks_like_comparison_question), но модель
+    часто путает названия аппаратов/брендов с unknown_service. Локальный faq_question должен
+    побеждать, иначе RAG-контент по оборудованию никогда не используется."""
+
+    result = merge_policy_classifications(
+        {"intent": "faq_question", "service_id": None, "confidence": 0.84},
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.95},
+    )
+
+    assert result["intent"] == "faq_question"
+
+
 def test_merge_keeps_local_price_over_model_faq_question() -> None:
     result = merge_policy_classifications(
         {"intent": "price_question", "service_id": "laser_epilation", "confidence": 0.86},

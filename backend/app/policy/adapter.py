@@ -82,6 +82,7 @@ def merge_policy_classifications(
         "service_mention",
         "faq_question",
         "cosmetic_concern",
+        "unknown_service",
     }:
         return local_result
     if model_intent == "faq_question" and model_confidence >= 0.6:

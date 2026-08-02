@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     session_snapshot_file: str = ""
     chat_rate_limit_enabled: bool = True
     chat_rate_limit_per_minute: int = 30
+    # Сколько доверенных обратных прокси стоит перед приложением (Render = минимум 1).
+    # Клиент управляет только тем, что сам вписал в X-Forwarded-For, — всё, что ДОПИСАЛИ
+    # наши прокси (справа), подделать нельзя. Если появится ещё слой (например Cloudflare
+    # перед Render) — увеличить до 2, иначе rate-limit снова обходится подменой заголовка.
+    trusted_proxy_count: int = 1
     operator_token: str = "demo-operator-token"
     allowed_origins: str = "http://localhost:8000"
     default_company_id: str = "rosh_demo"

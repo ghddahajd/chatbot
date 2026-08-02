@@ -345,6 +345,38 @@ def test_chat_rate_limit_blocks_single_ip_but_not_other_ips(managed_env, monkeyp
     get_settings.cache_clear()
 
 
+def test_chat_rate_limit_survives_client_rotating_x_forwarded_for(managed_env, monkeypatch) -> None:
+    """Раньше client_ip брал ПЕРВОЕ (клиентское) значение X-Forwarded-For — атакующий менял
+    заголовок на каждый запрос и получал новый rate-limit "ключ" каждый раз, лимит не работал
+    вообще. С учётом доверенного прокси (Render = 1 hop) нужно брать значение С КОНЦА — то,
+    что дописал НАШ прокси, а не то, что вписал клиент."""
+
+    monkeypatch.setenv("CHAT_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
+
+    from app.config import get_settings
+    from app.main import app
+
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        statuses = []
+        for i in range(5):
+            # Каждый запрос выглядит как будто пришёл с нашего прокси (последнее значение —
+            # то, что дописал доверенный hop) от одного и того же реального клиента, но с
+            # РАЗНЫМ поддельным клиентским префиксом — именно так атака и выглядела в аудите.
+            headers = {"X-Forwarded-For": f"1.2.3.{i}, 203.0.113.10"}
+            response = client.post(
+                "/api/chat/message",
+                json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+                headers=headers,
+            )
+            statuses.append(response.status_code)
+
+    assert statuses == [200, 200, 429, 429, 429]
+    get_settings.cache_clear()
+
+
 def test_message_count_limit_closes_session_for_real_reset_button(test_client) -> None:
     from app.models import SessionStatus
     from app.routes.chat_utils import MAX_SESSION_MESSAGES

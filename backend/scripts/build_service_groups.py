@@ -179,16 +179,46 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--staging-dir", type=Path, default=DEFAULT_STAGING_DIR)
     parser.add_argument("--company", default="rosh_demo")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--source",
+        choices=["candidate", "staging"],
+        default="candidate",
+        help=(
+            "candidate — только уже отобранный public-слой (services_candidate.json, поведение "
+            "по умолчанию, как раньше); staging — полный набор из прайса (services_staging.json), "
+            "нужен вместе с --categories, чтобы точечно вытащить direct_search-категории."
+        ),
+    )
+    parser.add_argument(
+        "--categories",
+        default=None,
+        help="Список категорий через запятую (только с --source staging) — точечно добавить, а не весь прайс.",
+    )
+    parser.add_argument(
+        "--output-suffix",
+        default="",
+        help="Суффикс для выходных файлов (например '_batch2'), чтобы не перезаписать candidate-набор.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     staging_dir = args.staging_dir.resolve()
-    services = _load_json(staging_dir / "services_candidate.json")
-    prices = _load_json(staging_dir / "prices_candidate.json")
+
+    services_file = "services_candidate.json" if args.source == "candidate" else "services_staging.json"
+    prices_file = "prices_candidate.json" if args.source == "candidate" else "prices_staging.json"
+    services = _load_json(staging_dir / services_file)
+    prices = _load_json(staging_dir / prices_file)
     if not isinstance(services, list) or not isinstance(prices, list):
-        raise SystemExit("candidate services/prices must be lists")
+        raise SystemExit("services/prices must be lists")
+
+    if args.categories:
+        wanted = {item.strip() for item in args.categories.split(",") if item.strip()}
+        services = [s for s in services if isinstance(s, dict) and str(s.get("category") or "") in wanted]
+        missing = wanted - {str(s.get("category") or "") for s in services}
+        if missing:
+            raise SystemExit(f"категории не найдены в {services_file}: {sorted(missing)}")
 
     groups = _build_groups(args.company, services, prices)
     print("Service groups")
@@ -202,11 +232,13 @@ def main() -> int:
         print("dry-run: files were not written")
         return 0
 
-    _write_json(staging_dir / "service_groups_candidate.json", groups)
-    (staging_dir / "service_groups_report.md").write_text(_build_report(groups), encoding="utf-8")
+    groups_path = staging_dir / f"service_groups_candidate{args.output_suffix}.json"
+    report_path = staging_dir / f"service_groups_report{args.output_suffix}.md"
+    _write_json(groups_path, groups)
+    report_path.write_text(_build_report(groups), encoding="utf-8")
     print("")
-    print(f"written: {staging_dir / 'service_groups_candidate.json'}")
-    print(f"written: {staging_dir / 'service_groups_report.md'}")
+    print(f"written: {groups_path}")
+    print(f"written: {report_path}")
     return 0
 
 

@@ -66,7 +66,14 @@ def test_biorevit_short_form_still_resolves_to_biorevitalization(resolver, manag
     assert result["service_id"] == "biorevitalizaciya_9d426f68"
 
 
-def test_bioresonance_question_defers_in_policy(policy_session, resolver, managed_env) -> None:
+def test_bioresonance_question_resolves_to_real_bicom_service_not_biorevit(
+    policy_session, resolver, managed_env
+) -> None:
+    """Раньше "биорезонансная" ложно фаззи-матчилась на "Биоревитализация" (общий 5-символьный
+    префикс "биоре") — эту коллизию не должно быть независимо от того, есть ли в данных
+    реальная услуга BICOM. С тех пор как BICOM-услуги реально добавлены в rosh_import_demo,
+    вопрос корректно резолвится в них (а не в defer, как было раньше при отсутствии данных)."""
+
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
     classification = _classify("в чем заключается биорезонансная диагностика", knowledge_base)
 
@@ -77,8 +84,12 @@ def test_bioresonance_question_defers_in_policy(policy_session, resolver, manage
         classification,
     )
 
-    assert result.action == PolicyAction.CLARIFY
+    assert result.action == PolicyAction.ANSWER
     assert result.service_id != "biorevitalizaciya_9d426f68"
+    assert result.service_id in {
+        "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07",
+        "diagnostika_na_apparate_bicom_body_check_9bf8a621",
+    }
 
 
 def test_missing_article_service_map_is_empty(knowledge_base) -> None:

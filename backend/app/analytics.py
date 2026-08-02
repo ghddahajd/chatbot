@@ -47,6 +47,28 @@ class AnalyticsService:
         with self.analytics_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
+    async def track_answer(
+        self,
+        *,
+        company_id: str,
+        session_id: str,
+        message: str,
+        answer: str,
+        action: str,
+        policy_reason: Optional[str] = None,
+    ) -> None:
+        """Пишет КАЖДЫЙ обмен репликами (не только исключения), чтобы разбор "бот ответил
+        ерунду" был по логу, а не по памяти или повторному прогону через LLM (она
+        недетерминирована — повтор через /api/debug/trace может дать другой ответ)."""
+
+        await self.track_event(
+            company_id=company_id,
+            session_id=session_id,
+            event_type="message_answered",
+            message=message,
+            metadata={"answer": answer, "action": action, "policy_reason": policy_reason},
+        )
+
     async def track_policy_result(
         self,
         *,

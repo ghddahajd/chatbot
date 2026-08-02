@@ -846,10 +846,38 @@ class ChatService:
         session_store = self.request.app.state.session_store
         session = await session_store.get_or_create(session_id, company_id)
         async with session_store.lock_for(session.session_id):
-            return await self._handle_message_locked(
+            response = await self._handle_message_locked(
                 company_id=company_id,
                 session_id=session.session_id,
                 message=message,
+            )
+        await self._track_answer_safe(company_id, session.session_id, message, response)
+        return response
+
+    async def _track_answer_safe(
+        self,
+        company_id: str,
+        session_id: str,
+        message: str,
+        response: ChatMessageResponse | JSONResponse,
+    ) -> None:
+        if not isinstance(response, ChatMessageResponse):
+            return
+        analytics_service = self.request.app.state.analytics_service
+        session_store = self.request.app.state.session_store
+        session = await session_store.get(session_id)
+        try:
+            await analytics_service.track_answer(
+                company_id=company_id,
+                session_id=session_id,
+                message=message,
+                answer=response.answer,
+                action=response.action.value,
+                policy_reason=session.last_intent if session else None,
+            )
+        except Exception as error:
+            logger.warning(
+                "analytics track_answer failed session_id=%s error=%s", session_id, type(error).__name__
             )
 
     async def _handle_message_locked(

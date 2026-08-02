@@ -1338,3 +1338,36 @@ def test_new_question_breaks_out_of_pending_booking_contact(test_client) -> None
     assert second_response.status_code == 200
     assert "Какие" not in second_payload["answer"]
     assert "напишите, пожалуйста, телефон — передам заявку" not in second_payload["answer"]
+
+
+def test_every_answer_is_logged_to_analytics_not_just_exceptions(test_client, managed_env) -> None:
+    """Раньше analytics.jsonl писал только исключения (unknown_service/operator/regulated) —
+    разбор "бот ответил ерунду" был невозможен для обычного, успешного ответа. Каждое
+    сообщение должно логироваться с текстом ответа, не только проблемные."""
+
+    response = _post_chat(test_client, message="привет")
+    assert response["action"] != ""  # обычный small_talk, не исключение
+
+    analytics_path = managed_env["temp_dir"] / "analytics.jsonl"
+    events = [json.loads(line) for line in analytics_path.read_text(encoding="utf-8").splitlines()]
+    answered = [event for event in events if event["event_type"] == "message_answered"]
+
+    assert len(answered) == 1
+    assert answered[0]["message"] == "привет"
+    assert answered[0]["metadata"]["answer"] == response["answer"]
+    assert answered[0]["metadata"]["action"] == response["action"]
+
+
+def test_analytics_logs_answer_even_for_unknown_service_exception_path(test_client, managed_env) -> None:
+    """message_answered должен писаться ВСЕГДА, включая уже-логируемые исключения — не
+    заменяет track_policy_result, а дополняет его текстом реального ответа."""
+
+    response = _post_chat(test_client, message="делаете ли вы татуаж бровей")
+
+    analytics_path = managed_env["temp_dir"] / "analytics.jsonl"
+    events = [json.loads(line) for line in analytics_path.read_text(encoding="utf-8").splitlines()]
+    event_types = {event["event_type"] for event in events}
+
+    assert "message_answered" in event_types
+    answered = next(event for event in events if event["event_type"] == "message_answered")
+    assert answered["metadata"]["answer"] == response["answer"]

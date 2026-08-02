@@ -177,6 +177,23 @@ def _known_service_stems(known_services: Iterable[Any] | None) -> set[str]:
     return stems
 
 
+# Позитивные маркеры — если сообщение грамматически указывает, ГДЕ имя, берём именно
+# оттуда, а не гадаем "первое слово не из стоп-листа". Устраняет целый класс багов
+# (не только конкретные слова "здравствуйте"/"это"/"меня", которые случайно не попали в
+# список), а не 9 частных случаев из него. Порядок — от однозначных к более слабым сигналам.
+NAME_MARKER_PATTERNS = (
+    re.compile(r"\bменя\s+зовут\s+([а-яё]+)", re.IGNORECASE),
+    re.compile(r"\bзовут\s+меня\s+([а-яё]+)", re.IGNORECASE),
+    # обратный порядок слов — "меня Тимур зовут" — не менее естественная разговорная форма
+    re.compile(r"\bменя\s+([а-яё]+)\s+зовут\b", re.IGNORECASE),
+    re.compile(r"\bзовут\s+([а-яё]+)", re.IGNORECASE),
+    re.compile(r"\bмо[её]\s+имя\s+([а-яё]+)", re.IGNORECASE),
+    re.compile(r"\bимя\s*[-:]?\s*([а-яё]+)", re.IGNORECASE),
+    re.compile(r"\bэто\s+([а-яё]+)", re.IGNORECASE),
+    re.compile(r"^\s*я\s+([а-яё]+)", re.IGNORECASE),
+)
+
+
 def extract_name(
     message: str,
     phone: Optional[str],
@@ -207,7 +224,9 @@ def extract_name(
 
     stop_words = {
         "хочу",
+        "можно",
         "записаться",
+        "записать",
         "запиши",
         "запишите",
         "заявку",
@@ -218,8 +237,43 @@ def extract_name(
         "оставляю",
         "на",
         "по",
+        # приветствия/филлеры — раньше отсутствовали, из-за этого "Здравствуйте"/"Добрый"/
+        # "Меня"/"Это" извлекались как имя вместо реального слова после них.
+        "здравствуйте",
+        "здравствуй",
+        "привет",
+        "приветствую",
+        "добрый",
+        "доброе",
+        "день",
+        "вечер",
+        "утро",
+        "это",
+        "меня",
+        "мое",
+        "моё",
+        "мой",
+        "моя",
+        "имя",
+        "зовут",
+        "я",
+        "мне",
+        "пожалуйста",
+        "спасибо",
     }
     service_stems = _known_service_stems(known_services)
+
+    for pattern in NAME_MARKER_PATTERNS:
+        match = pattern.search(cleaned)
+        if match is None:
+            continue
+        normalized_word = normalize_text(match.group(1))
+        if len(normalized_word) < 2 or normalized_word in stop_words:
+            continue
+        if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
+            continue
+        return normalized_word.title()
+
     for word in cleaned.split():
         normalized_word = normalize_text(word)
         if len(normalized_word) < 2 or normalized_word in stop_words:

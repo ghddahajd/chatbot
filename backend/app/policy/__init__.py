@@ -436,6 +436,38 @@ def _clinic_equipment(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     return equipment
 
 
+def undisclosed_equipment_terms(knowledge_base: KnowledgeBase) -> list[str]:
+    """Бренд-специфичные термины оборудования, которые LLM не должен подтверждать в ответе —
+    последняя линия защиты валидатора, независимая от захардкоженного общего списка в
+    validator.py. Только записи с реальным equipment_name (не null) — для записей, где
+    equipment_name не задан, question_aliases это синонимы НАЗВАНИЯ УСЛУГИ ("лазерная
+    эпиляция"/"эпиляция"), а не бренда, их блокировать нельзя.
+
+    Даже когда equipment_name задан, question_aliases для этой же записи могут СМЕШИВАТЬ
+    бренд-токены ("морфеус", "инмод") с синонимами самой услуги ("рф лифтинг", "игольчатый
+    rf") — на реальных данных ROSH это подтвердилось: те же 3 фразы дословно совпадают с
+    services.json.synonyms связанной услуги. Такие фразы нужны в обычных ответах постоянно —
+    блокировать их нельзя. Оставляем только алиасы, которых нет среди имени/синонимов услуги."""
+
+    terms: list[str] = []
+    for equipment in _clinic_equipment(knowledge_base):
+        if equipment.get("disclose") is True:
+            continue
+        equipment_name = equipment.get("equipment_name")
+        if not equipment_name:
+            continue
+        terms.append(str(equipment_name))
+
+        service = knowledge_base.find_service_by_id(str(equipment.get("service_id") or ""))
+        service_terms = {str(service.name).strip().lower()} | {
+            str(synonym).strip().lower() for synonym in (service.synonyms if service else [])
+        }
+        for alias in equipment.get("question_aliases") or []:
+            if str(alias).strip().lower() not in service_terms:
+                terms.append(str(alias))
+    return terms
+
+
 def _should_suppress_service_variant_examples(
     knowledge_base: KnowledgeBase,
     service,

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from ..auth import verify_operator_token
 from ..knowledge import normalize_text
 from ..models import Message, MessageRole, PolicyAction, PolicyReason, Session
-from ..policy import classify_and_extract
+from ..policy import classify_and_extract, undisclosed_equipment_terms
 from ..policy.constants import DURATION_KEYWORDS, PRICE_KEYWORDS
 from ..policy.extractors import contains_keyword
 from ..policy.restricted import is_restricted_question
@@ -54,6 +54,8 @@ async def _final_answer_for_policy(
     knowledge_base,
 ) -> tuple[str, PolicyAction, str, bool]:
     """повторяет answer-selection без сайд-эффектов ChatService."""
+
+    policy_result.safe_context["undisclosed_equipment_terms"] = undisclosed_equipment_terms(knowledge_base)
 
     if policy_result.action == PolicyAction.ASK_CONTACT:
         contact = policy_result.safe_context.get("contact")

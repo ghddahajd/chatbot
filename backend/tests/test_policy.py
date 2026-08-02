@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from app.models import PendingAction, PolicyAction, PolicyReason
-from app.policy import analyze_message, classify_and_extract
+from app.policy import analyze_message, classify_and_extract, undisclosed_equipment_terms
 
 
 def _classification(message: str, knowledge_base) -> dict[str, object]:
@@ -1837,3 +1837,49 @@ def test_list_services_still_returns_full_catalog_without_curated_match(
 
     assert result.safe_context.get("question_type") == "list_services"
     assert "all_services" in result.safe_context
+
+
+def test_undisclosed_equipment_terms_includes_real_named_brand(resolver, managed_env) -> None:
+    """B6: захардкоженный UNSUPPORTED_EQUIPMENT_PATTERNS в validator.py не знает про реальный
+    закрытый бренд ROSH (InMode Morpheus8, RF-лифтинг, disclose: false) — этот список берётся
+    из клиентского config.yaml и должен его содержать вместе с алиасами."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    terms = undisclosed_equipment_terms(knowledge_base)
+
+    assert "InMode Morpheus8" in terms
+    assert "инмод" in terms
+    assert "морфеус" in terms
+
+
+def test_undisclosed_equipment_terms_skips_entries_without_named_brand(resolver, managed_env) -> None:
+    """Записи с equipment_name: null (лазерная эпиляция, skin tyte) не должны попадать в
+    список — их question_aliases это синонимы НАЗВАНИЯ УСЛУГИ ("эпиляция"), а не бренда;
+    блокировать их в ответах сломало бы обычные ответы про эти услуги."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    terms = undisclosed_equipment_terms(knowledge_base)
+
+    assert "эпиляция" not in terms
+    assert "skin tyte" not in terms
+
+
+def test_undisclosed_equipment_terms_excludes_service_synonyms_sharing_an_entry_with_a_brand(
+    resolver, managed_env
+) -> None:
+    """Даже у InMode-записи (equipment_name задан) часть question_aliases — это дословные
+    синонимы самой услуги ("рф лифтинг", "игольчатый rf", есть в services.json.synonyms), не
+    бренд-токены. Бот обязан уметь называть услугу этими словами в обычных ответах — их нельзя
+    блокировать наравне с реальными бренд-словами вроде "морфеус"/"инмод"."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    terms = undisclosed_equipment_terms(knowledge_base)
+
+    assert "рф лифтинг" not in terms
+    assert "rf лифтинг" not in terms
+    assert "игольчатый rf" not in terms
+    assert "морфеус" in terms
+    assert "инмод" in terms

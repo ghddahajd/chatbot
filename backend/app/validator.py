@@ -125,6 +125,26 @@ def _brand_like_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _undisclosed_equipment_pattern(context: dict[str, Any]) -> re.Pattern[str] | None:
+    """Динамический, per-клиентский аналог UNSUPPORTED_EQUIPMENT_PATTERNS — построен из
+    context["undisclosed_equipment_terms"] (см. policy.undisclosed_equipment_terms()), а не из
+    захардкоженного generic-списка. Захардкоженный список писался не под конкретных клиентов и
+    не содержит, например, реальный закрытый бренд ROSH ("InMode Morpheus8") — эта проверка
+    закрывает именно тот пробел."""
+
+    terms = context.get("undisclosed_equipment_terms")
+    if not isinstance(terms, list):
+        return None
+    escaped = sorted(
+        (re.escape(str(term)) for term in terms if str(term).strip()),
+        key=len,
+        reverse=True,
+    )
+    if not escaped:
+        return None
+    return re.compile(r"(?:" + "|".join(escaped) + r")", re.IGNORECASE)
+
+
 def _article_context_answer(context: dict[str, Any]) -> str:
     article_context = context.get("article_context")
     if not isinstance(article_context, list) or not article_context:
@@ -207,10 +227,16 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         ungrounded_words = answer_words - safe_words - FAQ_ALLOWED_WORDS
         if any("токс" in word for word in ungrounded_words):
             return False
-        ungrounded_brand_words = _brand_like_tokens(answer) - _brand_like_tokens(grounding_text) - safe_words
+        # только реальный источник (статьи), НЕ user_message — иначе пользователь может сам
+        # назвать бренд в вопросе и тем самым "разблокировать" его в ответе модели.
+        brand_safe_words = _significant_words(snippets_text)
+        ungrounded_brand_words = _brand_like_tokens(answer) - _brand_like_tokens(snippets_text) - brand_safe_words
         if ungrounded_brand_words:
             return False
         if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
+            return False
+        undisclosed_pattern = _undisclosed_equipment_pattern(context)
+        if undisclosed_pattern and undisclosed_pattern.search(answer):
             return False
         if any(pattern.search(answer) for pattern in UNSUPPORTED_EFFICACY_CLAIM_PATTERNS):
             return False
@@ -246,6 +272,9 @@ def validate_consultation_response(answer: str, context: dict[str, Any] | None =
         return False
     if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
         return False
+    undisclosed_pattern = _undisclosed_equipment_pattern(context or {})
+    if undisclosed_pattern and undisclosed_pattern.search(answer):
+        return False
     if _context_has_medical_restrictions(context):
         return not any(pattern.search(answer) for pattern in MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS)
     return True
@@ -259,6 +288,9 @@ def validate_article_guidance_response(answer: str, context: dict[str, Any] | No
     if any(pattern.search(answer) for pattern in ARTICLE_GUIDANCE_FORBIDDEN_PATTERNS):
         return False
     if context is None:
+        return False
+    undisclosed_pattern = _undisclosed_equipment_pattern(context)
+    if undisclosed_pattern and undisclosed_pattern.search(answer):
         return False
 
     guidance = context.get("article_guidance_candidate")

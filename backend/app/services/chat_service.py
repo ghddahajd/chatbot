@@ -19,7 +19,7 @@ from ..models import (
     PolicyReason,
     SessionStatus,
 )
-from ..policy import classify_and_extract
+from ..policy import classify_and_extract, undisclosed_equipment_terms
 from ..policy.constants import NEGATIVE_MESSAGES, PHONE_PATTERN
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
@@ -1085,6 +1085,7 @@ class ChatService:
         prior_last_intent = session.last_intent
         prior_contact_draft = dict(session.contact_draft)
         await self._remember_policy_context(session_store, session, policy_result)
+        policy_result.safe_context["undisclosed_equipment_terms"] = undisclosed_equipment_terms(knowledge_base)
 
         lead_created = False
         answer = ""

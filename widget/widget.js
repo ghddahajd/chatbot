@@ -15,6 +15,7 @@
     UNAVAILABLE: "UNAVAILABLE",
   };
   const MIN_TYPING_VISIBLE_MS = 450;
+  const SEND_TIMEOUT_MS = 30000;
 
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
@@ -1088,6 +1089,8 @@
       this.showTyping();
       await nextFrame();
 
+      const timeoutController = new AbortController();
+      const timeoutId = window.setTimeout(() => timeoutController.abort(), SEND_TIMEOUT_MS);
       try {
         const res = await fetch(API_BASE + "/api/chat/message", {
           method: "POST",
@@ -1097,6 +1100,7 @@
             company_id: this.state.companyId,
             message: text,
           }),
+          signal: timeoutController.signal,
         });
         if (!res.ok) throw new Error("request failed");
         const data = await res.json();
@@ -1113,10 +1117,17 @@
         }
         this.addQuickActions(data.quick_actions);
         if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
-      } catch (_) {
+      } catch (err) {
         await this.hideTyping();
-        this.addMsg("system", "Не удалось отправить. Попробуйте ещё раз.");
+        const isTimeout = err && err.name === "AbortError";
+        this.addMsg(
+          "system",
+          isTimeout
+            ? "Сервер отвечает дольше обычного. Попробуйте отправить сообщение ещё раз через минуту."
+            : "Не удалось отправить. Попробуйте ещё раз."
+        );
       } finally {
+        window.clearTimeout(timeoutId);
         this.state.sending = false;
         this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
       }

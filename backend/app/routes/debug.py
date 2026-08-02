@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import json
 from typing import Any, Optional
@@ -302,7 +303,9 @@ async def debug_trace(
     )
 
     policy_started_at = time.perf_counter()
-    policy_result = request.app.state.policy_analyzer(message, session, knowledge_base, classification)
+    policy_result = await asyncio.to_thread(
+        request.app.state.policy_analyzer, message, session, knowledge_base, classification
+    )
     rag_step = steps[-1]
     rag_step["result"]["used"] = policy_result.safe_context.get("question_type") == "faq_question"
     cosmetic_mapping = policy_result.safe_context.get("article_service_mapping")

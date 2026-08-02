@@ -1,5 +1,6 @@
 """сервис обработки сообщений чата."""
 
+import asyncio
 import logging
 import re
 
@@ -979,7 +980,8 @@ class ChatService:
                 knowledge_base.company.city,
                 knowledge_base.domain_profile,
             )
-            waiting_policy_result = request.app.state.policy_analyzer(
+            waiting_policy_result = await asyncio.to_thread(
+                request.app.state.policy_analyzer,
                 message,
                 session,
                 knowledge_base,
@@ -1066,7 +1068,8 @@ class ChatService:
             classification = maybe_contextual_classification(message, session)
             if classification is None:
                 classification = await resolve_classification(message, request, knowledge_base, session)
-            policy_result = request.app.state.policy_analyzer(
+            policy_result = await asyncio.to_thread(
+                request.app.state.policy_analyzer,
                 message,
                 session,
                 knowledge_base,

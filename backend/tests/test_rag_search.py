@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services.rag_search import rag_corpus_status, retrieve_article_context
+import app.services.rag_search as rag_search_module
+from app.services.rag_search import clear_corpus_cache, rag_corpus_status, retrieve_article_context, search_rag_chunks
 
 
 def _write_chunks(path: Path) -> None:
@@ -125,6 +126,71 @@ def test_rag_corpus_status_reports_missing_file_instead_of_raising(tmp_path: Pat
     assert status["ok"] is False
     assert status["error"] == "file_not_found"
     assert status["chunk_count"] == 0
+
+
+def test_search_rag_chunks_reads_file_once_across_repeated_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Раньше load_chunks (перечитать файл) + _document_frequencies (пересчитать IDF по
+    всем чанкам) выполнялись заново на КАЖДЫЙ вызов search_rag_chunks — а вызовов до 6 на
+    одно сообщение. Кэш по пути+mtime должен читать файл один раз, не на каждый запрос."""
+
+    clear_corpus_cache()
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_chunks(chunks_file)
+
+    read_calls = {"count": 0}
+    original_load_chunks = rag_search_module.load_chunks
+
+    def _counting_load_chunks(path=None):
+        read_calls["count"] += 1
+        return original_load_chunks(path)
+
+    monkeypatch.setattr(rag_search_module, "load_chunks", _counting_load_chunks)
+
+    search_rag_chunks("кольпоскопия", path=chunks_file)
+    search_rag_chunks("уход за кожей", path=chunks_file)
+    search_rag_chunks("кольпоскопия матки", path=chunks_file)
+
+    assert read_calls["count"] == 1
+
+
+def test_search_rag_chunks_reloads_after_file_changes(tmp_path: Path) -> None:
+    """Кэш не должен залипать навсегда — если корпус реально перегенерировали (mtime
+    изменился), новый вызов должен подхватить новое содержимое, не старое из кэша."""
+
+    clear_corpus_cache()
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_chunks(chunks_file)
+    search_rag_chunks("кольпоскопия", path=chunks_file)
+
+    import os
+    import time
+
+    time.sleep(0.01)
+    chunks_file.write_text(
+        json.dumps(
+            {
+                "chunk_id": "chunk-new",
+                "document_id": "doc-new",
+                "title": "Новая статья",
+                "url": "https://example.test/new",
+                "chunk_index": 0,
+                "source_type": "article",
+                "text": "Новая статья про совершенно другую тему поиска.",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.utime(chunks_file, None)
+
+    result = search_rag_chunks("новая статья другую тему", path=chunks_file)
+
+    assert result["total_chunks"] == 1
+    assert result["matches"][0]["chunk_id"] == "chunk-new"
 
 
 def test_rag_corpus_status_reports_empty_corpus(tmp_path: Path) -> None:

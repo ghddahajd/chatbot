@@ -237,7 +237,16 @@ def find_unsupported_city(normalized_message: str, company_city: str) -> Optiona
         return f"not_{company_city}"
 
     for city_form, city_name in KNOWN_CITY_FORMS.items():
-        if city_form in normalized_message and normalize_text(city_name) != normalized_company_city:
+        if normalize_text(city_name) == normalized_company_city:
+            continue
+        # Целыми токенами, не подстрокой — иначе форма города может оказаться спрятана
+        # внутри неродственного слова (например "казани" внутри "противопоказания").
+        matches = (
+            contains_keyword(normalized_message, {city_form})
+            if " " in city_form
+            else contains_exact_token(normalized_message, {city_form})
+        )
+        if matches:
             return city_name
     return None
 

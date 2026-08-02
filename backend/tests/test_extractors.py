@@ -1,7 +1,8 @@
 """проверки извлечения контактов из пользовательского мусора."""
 
+from app.knowledge import normalize_text
 from app.models import Service
-from app.policy.extractors import contains_keyword, extract_name
+from app.policy.extractors import contains_keyword, extract_name, find_unsupported_city
 
 
 def _service(name: str, *, category: str = "Косметология", synonyms: list[str] | None = None) -> Service:
@@ -50,3 +51,20 @@ def test_contains_keyword_still_matches_real_negative_phrase() -> None:
 def test_contains_keyword_still_matches_truncated_stem_phrase() -> None:
     # "открывае" — намеренно обрезанный стем для "открываете"/"открываетесь" и т.д.
     assert contains_keyword("во сколько открываетесь", {"во сколько открывае"}) is True
+
+
+def test_find_unsupported_city_does_not_match_word_containing_city_form() -> None:
+    # "казани" (форма Казани) — подстрока "противопоказания", но это не тот же токен.
+    for message in ["а есть противопоказания", "какие противопоказания у пилинга"]:
+        assert find_unsupported_city(normalize_text(message), "Москва") is None
+
+
+def test_find_unsupported_city_still_matches_real_city_mention() -> None:
+    assert find_unsupported_city(normalize_text("а вы в Казани работаете?"), "Москва") == "Казань"
+
+
+def test_find_unsupported_city_matches_multiword_city_form() -> None:
+    assert (
+        find_unsupported_city(normalize_text("а филиал в Санкт Петербурге есть?"), "Москва")
+        == "Санкт-Петербург"
+    )

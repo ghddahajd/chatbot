@@ -6,6 +6,7 @@ from app.policy.extractors import (
     contains_keyword,
     extract_name,
     find_unsupported_city,
+    is_location_mismatch,
     strip_anaphoric_pronouns,
 )
 
@@ -142,6 +143,30 @@ def test_find_unsupported_city_without_raw_message_falls_back_to_dict_only() -> 
     assert find_unsupported_city(normalize_text(message), "Москва") is None
 
 
+def test_find_unsupported_city_ner_does_not_flag_districts_within_own_city() -> None:
+    """Живой регресс, найден внешним аудитом: NER тегирует LOC район/станцию метро/ориентир
+    так же, как город — "я с Таганки" (москвич говорит о своём районе) ложно давало "не тот
+    город". Предлог перед сущностью — сигнал уровня: "в"/"из" вводят город, "на"/"с" —
+    район/ориентир внутри города (та же прилагательная падежная форма в обоих случаях)."""
+
+    for message in [
+        "я с Таганки",
+        "живу на Соколе",
+        "я с Арбата",
+        "я рядом с Курской",
+        "живу на Юго-Западной",
+    ]:
+        assert find_unsupported_city(normalize_text(message), "Москва", message=message) is None, message
+
+
+def test_find_unsupported_city_ner_still_catches_real_city_with_v_or_iz_preposition() -> None:
+    """Регрессия не должна съесть настоящие случаи — предлоги 'в'/'из' перед городом
+    по-прежнему считаются надёжным сигналом уровня."""
+
+    message = "я из Казани"
+    assert find_unsupported_city(normalize_text(message), "Москва", message=message) == "Казань"
+
+
 def test_strip_anaphoric_pronouns_unblocks_wedged_phrase_match() -> None:
     """'а сколько ЭТО стоит' не матчился с ключом 'сколько стоит' (consecutive-token
     matching), потому что анафора 'это' вклинивается между словами фразы — та же проблема,
@@ -245,3 +270,37 @@ def test_extract_name_ner_retry_still_rejects_insult_even_capitalized() -> None:
 
     assert extract_name("дура тупая", None) is None
     assert extract_name("дура", None) is None
+
+
+def test_is_location_mismatch_ner_recognizes_own_city_outside_hardcoded_dict() -> None:
+    """Живой баг (research.md #2): KNOWN_CITY_FORMS вручную заполнен падежами только для
+    Москвы/Казани/Питера — 'я из Ярославля' клиенту из Ярославля давало ложный location_mismatch,
+    потому что словарь про Ярославль вообще ничего не знает. NER+лемма ловит любой город
+    независимо от того, вписан ли он в словарь вручную."""
+
+    cases = [
+        ("я из Ярославля, можно к вам записаться?", "Ярославль"),
+        ("живу в Ярославле", "Ярославль"),
+        ("живу в Перми, а филиал у вас есть?", "Пермь"),
+        ("живу в Твери", "Тверь"),
+        ("живу в Нижнем Новгороде", "Нижний Новгород"),
+    ]
+    for message, company_city in cases:
+        normalized = normalize_text(message)
+        assert is_location_mismatch(message, normalized, company_city) is False, message
+
+
+def test_is_location_mismatch_still_catches_real_mismatch_for_non_dict_city() -> None:
+    """Регрессия не должна съесть настоящий mismatch — если клиника в Ярославле, а пишут из
+    Казани, это по-прежнему location_mismatch."""
+
+    message = "я из Казани, можно к вам записаться?"
+    assert is_location_mismatch(message, normalize_text(message), "Ярославль") is True
+
+
+def test_is_location_mismatch_recognizes_bare_peterburg_without_sankt_prefix() -> None:
+    """'Петербург' без 'Санкт-' — обиходная форма, которой не было в KNOWN_CITY_FORMS (там
+    только полное 'санкт-петербург'/'санкт петербург' и синоним 'питер')."""
+
+    message = "я из Петербурга"
+    assert is_location_mismatch(message, normalize_text(message), "Санкт-Петербург") is False

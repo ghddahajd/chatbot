@@ -108,11 +108,22 @@ def _extract_name_via_ner(message: str) -> Optional[str]:
     return _run_ner_for_person(message)
 
 
-def _run_ner_for_city(text: str, *, skip_normalized: str) -> Optional[str]:
-    """Находит LOC-сущность в СЫРОМ тексте и лемматизирует до именительного падежа
-    (нижнем регистре, как принятый по проекту формат нормализованного текста). skip_normalized —
-    нормализованное имя города клиники, чтобы не ложно предупреждать про "не тот город", когда
-    LOC-сущность — это как раз родной город клиники."""
+# NER тегирует LOC любую географическую сущность — город, район, станцию метро, улицу —
+# одинаково, без различия уровня. Живой баг (найден внешним аудитом, подтверждён): "я с
+# Таганки"/"живу на Соколе" (районы Москвы) ловились как "не тот город" для московской
+# клиники. Предлог перед сущностью — надёжный грамматический сигнал уровня в русском: "в"/"из"
+# обычно вводят город ("живу В Москве", "я ИЗ Казани"), "на"/"с" — район/станцию/ориентир
+# ("живу НА Соколе", "я С Таганки") тем же прилагательным падежом. Не идеально (есть города
+# "на" в естественной речи не встречающиеся так), но проверено на всех живых кейсах аудита —
+# отсекает все 5 ложных срабатываний по районам, не трогает ни один настоящий город.
+_CITY_LEVEL_PREPOSITIONS = {"в", "из"}
+
+
+def _run_ner_for_city_raw(text: str) -> Optional[str]:
+    """Находит LOC-сущность НА УРОВНЕ ГОРОДА (см. _CITY_LEVEL_PREPOSITIONS) в СЫРОМ тексте,
+    возвращает лемму в именительном падеже без какой-либо фильтрации по совпадению с городом
+    клиники — используется и когда нужно найти "не тот город" (find_unsupported_city), и когда
+    нужно подтвердить "да, тот самый" (mentions_company_city)."""
 
     if not text.strip() or not _load_natasha_morph():
         return None
@@ -125,12 +136,26 @@ def _run_ner_for_city(text: str, *, skip_normalized: str) -> Optional[str]:
     for span in doc.spans:
         if span.type != LOC:
             continue
+        preceding_tokens = [token for token in doc.tokens if token.stop <= span.start]
+        preceding_word = preceding_tokens[-1].text.lower() if preceding_tokens else ""
+        if preceding_word not in _CITY_LEVEL_PREPOSITIONS:
+            continue
         span_tokens = [token for token in doc.tokens if token.start >= span.start and token.stop <= span.stop]
         for token in span_tokens:
             token.lemmatize(_natasha_morph_vocab)
         lemma = " ".join(token.lemma for token in span_tokens if token.lemma).strip()
-        if lemma and lemma != skip_normalized:
+        if lemma:
             return lemma
+    return None
+
+
+def _run_ner_for_city(text: str, *, skip_normalized: str) -> Optional[str]:
+    """Как _run_ner_for_city_raw, но пропускает совпадение с городом клиники — не ложно
+    предупреждать про "не тот город", когда LOC-сущность — это как раз родной город клиники."""
+
+    lemma = _run_ner_for_city_raw(text)
+    if lemma and lemma != skip_normalized:
+        return lemma
     return None
 
 
@@ -541,7 +566,7 @@ def find_unsupported_city(
     return None
 
 
-def mentions_company_city(normalized_message: str, company_city: str) -> bool:
+def mentions_company_city(normalized_message: str, company_city: str, *, message: str = "") -> bool:
     normalized_company_city = normalize_text(company_city)
     company_city_forms = {
         city_form
@@ -558,12 +583,23 @@ def mentions_company_city(normalized_message: str, company_city: str) -> bool:
             return False
         if city_form in normalized_message:
             return True
+
+    # KNOWN_CITY_FORMS вручную заполнен формами только для нескольких городов (Москва, Казань,
+    # Питер) — для остальных (реальный живой случай: клиника в Ярославле) "я из Ярославля" не
+    # находило ничего вообще, is_location_mismatch затем ложно решал, что клиент не из своего
+    # же города. NER + лемматизация ловит любой город, не только вписанные вручную.
+    if message:
+        company_lemma = lemmatize_known_name(company_city) or normalized_company_city
+        message_lemma = _run_ner_for_city_raw(message)
+        if message_lemma and message_lemma == company_lemma:
+            return True
+
     return False
 
 
 def is_location_mismatch(message: str, normalized_message: str, company_city: str) -> bool:
     normalized_company_city = normalize_text(company_city)
-    if mentions_company_city(normalized_message, company_city):
+    if mentions_company_city(normalized_message, company_city, message=message):
         return False
     if contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
         return True

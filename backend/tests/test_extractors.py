@@ -6,6 +6,7 @@ from app.policy.extractors import (
     contains_keyword,
     extract_name,
     find_unsupported_city,
+    inflect_city_prepositional,
     is_location_mismatch,
     strip_anaphoric_pronouns,
 )
@@ -270,6 +271,38 @@ def test_extract_name_ner_retry_still_rejects_insult_even_capitalized() -> None:
 
     assert extract_name("дура тупая", None) is None
     assert extract_name("дура", None) is None
+
+
+def test_inflect_city_prepositional_covers_any_city_not_just_hardcoded_two() -> None:
+    """Живой баг (research.md #4): city_prepositional был словарём на 2 города (Москва/Питер),
+    для любого другого клиента текст падал в именительный падеж ('Очный приём только в
+    Ярославль' вместо 'в Ярославле') — грамматически неверно для любого нестоличного клиента."""
+
+    cases = {
+        "Ярославль": "Ярославле",
+        "Казань": "Казани",
+        "Екатеринбург": "Екатеринбурге",
+        "Тверь": "Твери",
+        "Пермь": "Перми",
+        "Уфа": "Уфе",
+    }
+    for city, expected in cases.items():
+        assert inflect_city_prepositional(city) == expected, city
+
+
+def test_inflect_city_prepositional_handles_multiword_agreement() -> None:
+    """Аудит явно предупреждал: многословные названия ('Нижний Новгород') склоняются пословно
+    неверно без согласования — прилагательное 'нижний' само по себе не подстроится под
+    существительное. Дефисные составные ('Ростов-на-Дону') — отдельный случай, pymorphy2 хранит
+    их как один словарный токен."""
+
+    assert inflect_city_prepositional("Нижний Новгород") == "Нижнем Новгороде"
+    assert inflect_city_prepositional("Ростов-на-Дону") == "Ростове-на-Дону"
+
+
+def test_inflect_city_prepositional_still_handles_moscow_and_petersburg() -> None:
+    assert inflect_city_prepositional("Москва") == "Москве"
+    assert inflect_city_prepositional("Санкт-Петербург") == "Санкт-Петербурге"
 
 
 def test_is_location_mismatch_ner_recognizes_own_city_outside_hardcoded_dict() -> None:

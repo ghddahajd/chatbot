@@ -40,6 +40,7 @@ from .constants import (
     WEBSITE_KEYWORDS,
 )
 from .extractors import (
+    contains_day_or_time_lemma,
     contains_keyword,
     extract_name,
     extract_person_lemma_via_ner,
@@ -415,6 +416,25 @@ def _clinic_doctors(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
         if name:
             doctors.append({"name": name, "specialty": specialty, "schedule": schedule})
     return doctors
+
+
+_DOCTOR_SPECIALTY_QUESTION_TEMPLATES = ("как зовут {specialty}", "кто {specialty}", "кто у вас {specialty}")
+
+
+def _doctor_specialty_info_keywords(doctors: list[dict[str, str]]) -> set[str]:
+    """Строит фразы вида 'кто гинеколог'/'как зовут дерматолог' из specialty САМОГО тенанта,
+    а не из захардкоженного списка 5 специальностей — раньше это был декартово произведение
+    (специальность × формулировка), вписанное вручную и не покрывавшее ничьи специальности,
+    кроме тех, что кто-то успел добавить (живой пробел: 'невролог'/'трихолог' у ROSH не
+    ловились вообще, хотя есть в данных клиники)."""
+
+    specialties = {normalize_text(doctor.get("specialty", "")) for doctor in doctors}
+    specialties.discard("")
+    return {
+        template.format(specialty=specialty)
+        for specialty in specialties
+        for template in _DOCTOR_SPECIALTY_QUESTION_TEMPLATES
+    }
 
 
 def _clinic_equipment(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
@@ -1039,6 +1059,7 @@ def _clinic_info_result(
     doctor_info_requested = (
         context_topic == "doctors"
         or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS)
+        or contains_keyword(normalized_message, _doctor_specialty_info_keywords(doctors))
         or (doctor_name_matched and not booking_requested)
     )
     if doctor_info_requested:
@@ -1173,7 +1194,9 @@ def _lead_followup_result(normalized_message: str, knowledge_base: KnowledgeBase
     tokens = normalized_message.split()
     if not tokens or len(tokens) > 3:
         return None
-    if not contains_keyword(normalized_message, LEAD_FOLLOWUP_SHORT_KEYWORDS):
+    if not contains_keyword(normalized_message, LEAD_FOLLOWUP_SHORT_KEYWORDS) and not contains_day_or_time_lemma(
+        normalized_message
+    ):
         return None
     return PolicyResult(
         action=PolicyAction.CLARIFY,

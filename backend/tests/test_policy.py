@@ -60,6 +60,40 @@ def _copy_rosh_import_kb(resolver, managed_env, *, config_append: str = ""):
     return resolver.get("rosh_import_demo", fallback=False)
 
 
+def test_classify_and_extract_does_not_flag_tenants_own_service_as_unknown() -> None:
+    """Живой баг (research.md #6): UNKNOWN_SERVICE_KEYWORDS/OFF_TOPIC_KEYWORDS общие для всех
+    тенантов и содержат лексику конкретных доменов ('уборка', 'авто', 'филлеры') — клининговая
+    компания получала 'такой услуги нет' на буквально свою собственную услугу."""
+
+    cleaning_services = [
+        {"id": "uborka_kvartir", "name": "Уборка квартир", "synonyms": ["уборка"], "category": "Клининг"},
+        {"id": "uborka_posle_remonta", "name": "Уборка после ремонта", "synonyms": [], "category": "Клининг"},
+    ]
+
+    for message in [
+        "сколько стоит уборка?",
+        "хочу заказать уборку",
+        "клининг сколько стоит",
+        "а уборке дома есть скидка?",
+    ]:
+        result = classify_and_extract(message, cleaning_services, "Ярославль")
+        assert result["intent"] not in {"unknown_service", "off_topic"}, message
+
+
+def test_classify_and_extract_still_flags_off_topic_and_unknown_service_when_not_in_catalog() -> None:
+    """Регрессия не должна съесть настоящие случаи — если услуги правда нет в каталоге тенанта,
+    сигнал должен остаться (иначе бот начнёт выдумывать несуществующие услуги)."""
+
+    rosh_services = [{"id": "fillers", "name": "Филлеры", "synonyms": [], "category": "Косметология"}]
+
+    off_topic_result = classify_and_extract("машина не заводится, поможете?", rosh_services, "Москва")
+    assert off_topic_result["intent"] == "off_topic"
+
+    no_filler_services = [{"id": "chistka", "name": "Чистка лица", "synonyms": [], "category": "Косметология"}]
+    unknown_result = classify_and_extract("а филлеры делаете?", no_filler_services, "Москва")
+    assert unknown_result["intent"] == "unknown_service"
+
+
 def test_medical_question_blocked(policy_session, knowledge_base) -> None:
     result = _analyze("что попить от прыщей?", policy_session, knowledge_base)
 
@@ -353,6 +387,35 @@ clinic_info:
     assert "Петрова Мария Ивановна" not in result.safe_context["message_to_user"]
 
 
+def test_clinic_doctor_info_answers_for_specialty_never_hardcoded(policy_session, resolver, managed_env) -> None:
+    """Живой баг (research.md #5): DOCTOR_INFO_KEYWORDS раньше вручную перечислял ровно 5
+    специальностей (гинеколог/дерматолог/косметолог/терапевт + остеопат-артефакт) — "невролог"/
+    "трихолог" не были в списке вообще, хотя запросто могут быть в данных другого клиента.
+    Теперь фразы строятся из doctors[].specialty самого тенанта — любая специальность работает
+    без правки констант."""
+
+    knowledge_base = _copy_rosh_import_kb(
+        resolver,
+        managed_env,
+        config_append="""
+clinic_info:
+  doctors:
+    - {name: "Соколов Пётр Ильич", specialty: "невролог"}
+  facts:
+    oms: false
+    ambulance_brings: false
+    sells_products: false
+    discloses_doctor_schedule: false
+""",
+    )
+
+    for message in ["кто у вас невролог?", "как зовут невролога"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.ANSWER, message
+        assert result.reason == PolicyReason.OK, message
+        assert "Соколов Пётр Ильич" in result.safe_context["message_to_user"], message
+
+
 def test_clinic_doctor_name_alone_answers_from_config(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
@@ -367,12 +430,19 @@ def test_clinic_doctor_name_alone_answers_from_config(policy_session, resolver, 
 
 
 def test_clinic_doctor_info_defers_without_data(policy_session, resolver, managed_env) -> None:
+    """До перехода DOCTOR_INFO_KEYWORDS на динамическую генерацию (research.md #5) "остеопата"
+    было захардкожено как один из бывших специальность-специфичных keyword'ов — сообщение
+    попадало в общий "врача с такой специальностью нет" defer. Теперь эти keyword'ы строятся
+    из doctors[].specialty самого тенанта (ни у одного доктора ROSH нет specialty "остеопат"),
+    поэтому сообщение вообще не гейтится в doctor-info ветку и корректно доходит до
+    настроенного клиникой fact_guard ("остеопатия"), который даёт даже более точный ответ."""
+
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
     result = _analyze("а как зовут остеопата", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.CLARIFY
-    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+    assert "нет отдельного приёма остеопата" in result.safe_context["message_to_user"].lower()
 
 
 def test_clinic_doctor_schedule_answers_from_config(policy_session, resolver, managed_env) -> None:
@@ -686,13 +756,18 @@ def test_ambulance_question_uses_clinic_fact_before_medical(policy_session, reso
 
 
 def test_unknown_doctor_specialty_uses_clinic_defer_not_offtopic(policy_session, resolver, managed_env) -> None:
+    """Ядро проверки — не сваливается в off_topic, остаётся клиникоспецифичным CLARIFY. Точный
+    reason/текст сместился на fact_guard (см. test_clinic_doctor_info_defers_without_data) после
+    перехода doctor-info keyword'ов на данные тенанта (research.md #5) — это не регресс,
+    doctor-info ветка больше не перехватывает специальность, которой нет ни у одного доктора."""
+
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
     result = _analyze("напишите фамилию остеопата", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.CLARIFY
-    assert result.reason == PolicyReason.OK
-    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+    assert result.reason != PolicyReason.OFF_TOPIC
+    assert "остеопат" in result.safe_context["message_to_user"].lower()
 
 
 def test_unknown_medical_product_is_clarify_not_offtopic(policy_session, resolver, managed_env) -> None:
@@ -741,6 +816,21 @@ def test_post_lead_short_followup_is_not_offtopic(policy_session, resolver, mana
     assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.CONTACT_PROVIDED
     assert "Заявку уже передали" in result.safe_context["message_to_user"]
+
+
+def test_post_lead_declined_weekday_followup_is_not_offtopic(policy_session, resolver, managed_env) -> None:
+    """Живой баг (research.md #3): LEAD_FOLLOWUP_SHORT_KEYWORDS содержал только именительный
+    падеж дней недели ('среда'/'пятница'/'суббота') — ответ на 'когда вам удобно' в разговорной
+    форме ('в среду', 'на выходных') не распознавался вообще, падал в общий clarify/similar_services
+    вместо CONTACT_PROVIDED."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    policy_session.lead_requested = True
+
+    for message in ["в среду", "в пятницу", "в субботу", "на выходных"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.CLARIFY, message
+        assert result.reason == PolicyReason.CONTACT_PROVIDED, message
 
 
 def test_post_lead_service_mention_does_not_claim_new_booking(policy_session, resolver, managed_env) -> None:

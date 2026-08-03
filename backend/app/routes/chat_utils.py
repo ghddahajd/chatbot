@@ -105,6 +105,7 @@ def service_classifier_payload(
             "id": service.id,
             "name": service.name,
             "synonyms": service.synonyms,
+            "category": service.category,
         }
         for service in selected_knowledge_base.services
     ]

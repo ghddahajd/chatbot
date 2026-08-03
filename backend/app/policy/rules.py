@@ -7,6 +7,7 @@ from typing import Any, Optional
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import PolicyAction, PolicyReason, PolicyResult
 from .constants import COSMETIC_CONCERN_SERVICE_MAP, GENERIC_PRICE_MESSAGES
+from .extractors import inflect_city_prepositional
 from .quick_actions import services_summary
 
 
@@ -95,11 +96,19 @@ def mentions_unknown_service(normalized_message: str) -> bool:
     return bool(tokens)
 
 
-def city_prepositional(city: str) -> str:
-    """маленькая вспомогательная функция для демо-текста, не полноценная морфология."""
+_CITY_PREPOSITIONAL_FORMS = {
+    "Москва": "Москве",
+    "Санкт-Петербург": "Санкт-Петербурге",
+}
 
-    city_forms = {
-        "Москва": "Москве",
-        "Санкт-Петербург": "Санкт-Петербурге",
-    }
-    return city_forms.get(city, city)
+
+def city_prepositional(city: str) -> str:
+    """Предложный падеж города для текста ответа ('Очный приём только в {city_prepositional}').
+    Словарь оставлен как быстрый путь без обращения к pymorphy2 для двух самых частых городов;
+    для остальных — общее склонение через pymorphy2 (см. inflect_city_prepositional), с
+    фолбэком на именительный, если pymorphy2 не загрузился."""
+
+    known_form = _CITY_PREPOSITIONAL_FORMS.get(city)
+    if known_form:
+        return known_form
+    return inflect_city_prepositional(city)

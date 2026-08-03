@@ -48,6 +48,33 @@ _natasha_morph_tagger: Any = None
 _natasha_morph_vocab: Any = None
 _natasha_ner_load_failed = False
 _natasha_morph_load_failed = False
+_pymorphy_analyzer: Any = None
+_pymorphy_load_failed = False
+
+
+def _load_pymorphy() -> bool:
+    """pymorphy2.MorphAnalyzer() напрямую (не через natasha) — нужен для СКЛОНЕНИЯ
+    (nominative -> любой другой падеж), а не только для лемматизации (любой падеж ->
+    nominative), которую даёт NewsMorphTagger. На Python 3.12 pymorphy2.MorphAnalyzer() падает
+    с AttributeError('inspect' has no attribute 'getargspec'), ЕСЛИ natasha не была
+    импортирована раньше (natasha тянет свой шим для этого); поэтому сначала грузим
+    natasha-морфологию, потом уже pymorphy2 напрямую."""
+
+    global _pymorphy_analyzer, _pymorphy_load_failed
+    if _pymorphy_analyzer is not None:
+        return True
+    if _pymorphy_load_failed:
+        return False
+    if not _load_natasha_morph():
+        return False
+    try:
+        import pymorphy2
+
+        _pymorphy_analyzer = pymorphy2.MorphAnalyzer()
+        return True
+    except Exception:
+        _pymorphy_load_failed = True
+        return False
 
 
 def _load_natasha_ner() -> bool:
@@ -204,6 +231,96 @@ def lemmatize_known_name(name: str) -> Optional[str]:
         token.lemmatize(_natasha_morph_vocab)
     lemma = " ".join(token.lemma for token in doc.tokens if token.lemma).strip()
     return lemma or None
+
+
+def _recapitalize_like(original: str, transformed: str) -> str:
+    orig_parts = re.split(r"([\s-]+)", original)
+    new_parts = re.split(r"([\s-]+)", transformed)
+    if len(orig_parts) != len(new_parts):
+        return transformed
+    result = []
+    for orig_part, new_part in zip(orig_parts, new_parts):
+        if orig_part[:1].isupper():
+            result.append(new_part[:1].upper() + new_part[1:])
+        else:
+            result.append(new_part)
+    return "".join(result)
+
+
+def inflect_city_prepositional(city: str) -> str:
+    """Склоняет ЛЮБОЙ город в предложный падеж ("Москва" -> "Москве", "Ярославль" ->
+    "Ярославле") вместо словаря на 2 города с фолбэком на именительный для всех остальных —
+    живой баг: "Очный приём только в Ярославль"/"в Казань" (грамматически неверно) для любого
+    клиента вне Москвы/Питера.
+
+    Дефисные составные ("Санкт-Петербург", "Ростов-на-Дону") склоняются pymorphy2 как ОДИН
+    токен — у него для таких есть готовые словарные статьи, посчитано и проверено вручную,
+    что per-token разбор дефиса ломает согласование. Пробельные составные ("Нижний Новгород")
+    требуют согласования ПО КАЖДОМУ слову отдельно (прилагательное 'нижний' само по себе не
+    просклоняется в 'нижнем' заодно с существительным) — склоняем каждый пробельный токен
+    независимо, что для дефисных токенов совпадает со случаем "один токен"."""
+
+    if not city.strip() or not _load_pymorphy():
+        return city
+
+    tokens = city.split(" ")
+    inflected_tokens = []
+    changed = False
+    for token in tokens:
+        if not token:
+            inflected_tokens.append(token)
+            continue
+        parsed = _pymorphy_analyzer.parse(token)[0]
+        inflected = parsed.inflect({"loct"})
+        if inflected and inflected.word:
+            inflected_tokens.append(inflected.word)
+            changed = True
+        else:
+            inflected_tokens.append(token)
+    if not changed:
+        return city
+    return _recapitalize_like(city, " ".join(inflected_tokens))
+
+
+_DAY_OR_TIME_LEMMAS = {
+    "после",
+    "утро",
+    "вечер",
+    "день",
+    "ночь",
+    "завтра",
+    "сегодня",
+    "послезавтра",
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+    "час",
+    "выходной",
+}
+
+
+def contains_day_or_time_lemma(normalized_message: str) -> bool:
+    """Лемматизирует все слова короткого сообщения и сравнивает с каноническим набором
+    (именительный падеж) вместо того, чтобы вручную перечислять каждую падежную форму — живой
+    баг: 'в среду'/'в пятницу'/'в субботу'/'на выходных' не совпадали с LEAD_FOLLOWUP_SHORT_KEYWORDS,
+    в котором были только 'среда'/'пятница'/'суббота'/'выходные'."""
+
+    if not normalized_message.strip() or not _load_natasha_morph():
+        return False
+    from natasha import Doc
+
+    doc = Doc(normalized_message)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    for token in doc.tokens:
+        token.lemmatize(_natasha_morph_vocab)
+        if token.lemma in _DAY_OR_TIME_LEMMAS:
+            return True
+    return False
 
 
 def _distance_at_most_one(left: str, right: str) -> bool:

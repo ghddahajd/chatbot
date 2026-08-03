@@ -182,6 +182,24 @@ def test_faq_validator_blocks_medical_efficacy_claim_even_when_grounded() -> Non
     assert not validate_response("Эксимерный лазер разрушает бактерии.", context)
 
 
+def test_efficacy_claim_pattern_catches_audit_reported_phrasings() -> None:
+    """Аудит поймал живые фразы, где старый паттерн (только 'эффективна при/от') давал
+    ложноотрицательный результат: 'для' вместо 'при/от', и два обещания результата вообще без
+    слова 'эффективн-'."""
+
+    context = {
+        "question_type": "faq_question",
+        "article_context": [{"title": "Процедура", "snippet": "Нейтральное описание без обещаний."}],
+    }
+
+    for answer in (
+        "Процедура эффективна для пациентов любого возраста.",
+        "Показывает стабильные результаты при работе с проблемной кожей.",
+        "Даёт стойкий результат уже после первого сеанса.",
+    ):
+        assert not validate_response(answer, context), answer
+
+
 def test_faq_validator_blocks_client_specific_undisclosed_equipment_name() -> None:
     """B6: захардкоженный UNSUPPORTED_EQUIPMENT_PATTERNS не знает реальные бренды конкретного
     клиента (например ROSH-овский InMode Morpheus8) — per-клиентский список из

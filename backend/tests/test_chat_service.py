@@ -1479,3 +1479,24 @@ def test_analytics_logs_answer_even_for_unknown_service_exception_path(test_clie
     assert "message_answered" in event_types
     answered = next(event for event in events if event["event_type"] == "message_answered")
     assert answered["metadata"]["answer"] == response["answer"]
+
+
+def test_message_over_max_length_is_rejected(test_client) -> None:
+    """Раньше сообщение любой длины принималось целиком — попадало в историю сессии, в промпт
+    LLM и в логи. 4000 символов — с запасом под реальные вопросы, но не безлимит."""
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "а" * 4001},
+    )
+
+    assert response.status_code == 422
+
+
+def test_message_at_max_length_is_accepted(test_client) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет " * 500},
+    )
+
+    assert response.status_code == 200

@@ -51,6 +51,68 @@ def test_retrieve_article_context_filters_confident_matches(
     assert set(matches[0]) == {"title", "url", "snippet", "chunk_id", "score"}
 
 
+def test_retrieve_article_context_rejects_single_coincidental_body_match_not_in_title(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Живой баг: 'у меня прыщи не проходят полгода' ложно совпадало со статьёй про второй
+    подбородок только по слову 'полгода' (упомянуто мимоходом про сроки термолифтинга, тема
+    статьи вообще не про это) — у редкого слова высокий IDF, одного совпадения хватало пройти
+    порог, хотя 'прыщи'/'проходят' — то есть весь смысл вопроса — в статье не встречаются.
+    Один токен вне заголовка не должен в одиночку решать дело."""
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    rows = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "title": "Второй подбородок",
+            "url": "https://example.test/vtoroi-podborodok",
+            "chunk_index": 0,
+            "source_type": "article",
+            "text": "Оценить результат термолифтинга можно через полгода после курса процедур.",
+        },
+    ]
+    chunks_file.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    assert retrieve_article_context("у меня прыщи не проходят полгода", min_score=1.0) == []
+
+
+def test_retrieve_article_context_allows_two_genuine_token_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Регрессионная защита: правило '2+ совпадения' не должно ломать обычные случаи, где
+    запрос реально пересекается с содержанием статьи по двум и более словам."""
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    rows = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "title": "Шелушение кожи",
+            "url": "https://example.test/shelushenie",
+            "chunk_index": 0,
+            "source_type": "article",
+            "text": "Шелушится кожа на лице часто из-за недостатка увлажнения и сухого воздуха.",
+        },
+    ]
+    chunks_file.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    matches = retrieve_article_context("почему у меня шелушится кожа", min_score=1.0)
+
+    assert matches
+    assert matches[0]["title"] == "Шелушение кожи"
+
+
 def test_retrieve_article_context_snippet_starts_on_sentence_boundary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

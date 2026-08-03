@@ -27,6 +27,7 @@ from .constants import (
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
+    BENIGN_MEDICAL_KEYWORDS,
     MEDICAL_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
@@ -262,6 +263,11 @@ def _article_guidance_result_from_entry(
     result = PolicyResult(
         action=PolicyAction.ANSWER,
         reason=PolicyReason.OK,
+        # Однозначная услуга — запоминаем как контекст (как similar_services_result), чтобы
+        # follow-up («а сколько это стоит?») резолвился. Несколько кандидатов — намеренно НЕ
+        # угадываем один: session context вместо этого хранит весь список кандидатов, см.
+        # _context_frame_from_policy_result → "cosmetic_candidates".
+        service_id=services[0].id if len(services) == 1 else None,
         confidence=0.8,
         safe_context={
             "force_direct_answer": True,
@@ -697,6 +703,14 @@ def _medical_referral_result(
         _phrase(knowledge_base, "medical_referral", seed=_phrase_seed(session, "medical_referral"))
         or knowledge_base.company.safety_disclaimer
     )
+    # "а больно?"/"это нормально?" — бытовые вопросы, попавшие в MEDICAL_KEYWORDS вместе с
+    # реально острыми сигналами (кровотечение, аллергия). Soft-offer текст (regulated_soft_offer)
+    # для ВСЕХ них одинаково заканчивался "если срочно — звоните... в скорую (103)" — пугает на
+    # безобидном вопросе. is_benign_only=True только если В СООБЩЕНИИ НЕТ других медицинских
+    # слов (безопасный дефолт на смешанных фразах вроде "болит и кровит").
+    is_benign_only = contains_keyword(normalized_message, BENIGN_MEDICAL_KEYWORDS) and not contains_keyword(
+        normalized_message, MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS
+    )
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
@@ -708,6 +722,7 @@ def _medical_referral_result(
             "handoff_message": message_to_user,
             "restricted_category": restricted_category,
             "referral_service": consultation_service.model_dump() if consultation_service else None,
+            "escalation_urgency": "calm" if is_benign_only else "urgent",
         },
         quick_actions=_medical_referral_quick_actions(consultation_service),
     )
@@ -2093,6 +2108,48 @@ def analyze_message(
         )
 
     if intent == "cosmetic_concern":
+        # Follow-up ("а сколько это стоит?") на СПИСОК из нескольких кандидатов, который мы
+        # только что явно предложили (см. chat_utils._contextual_frame_classification,
+        # frame_type="cosmetic_candidates") — переспрашиваем среди тех же вариантов, а не
+        # угадываем один и не проваливаемся в общий "не нашёл подтверждения".
+        context_candidate_ids = classification.get("context_candidate_service_ids")
+        if isinstance(context_candidate_ids, list) and context_candidate_ids:
+            candidate_services = [
+                found
+                for service_id in context_candidate_ids
+                if (found := knowledge_base.find_service_by_id(str(service_id))) is not None
+            ]
+            if candidate_services:
+                service_names = ", ".join(service.name for service in candidate_services)
+                return PolicyResult(
+                    action=PolicyAction.CLARIFY,
+                    reason=PolicyReason.OK,
+                    confidence=classifier_confidence or 0.88,
+                    safe_context={
+                        "message_to_user": (
+                            f"Уточните, пожалуйста, какая процедура интересует: {service_names}? "
+                            "Так подскажу точнее."
+                        ),
+                    },
+                    quick_actions=[
+                        {"label": service.name, "type": "message", "value": service.name}
+                        for service in candidate_services
+                    ]
+                    + ["Позвать менеджера"],
+                )
+
+        # Куратированная статья (человек уже проверил формулировку и подобрал услуги) —
+        # более конкретный и информативный ответ, чем общий шаблон ниже. Пробуем её первой;
+        # шаблон "обычно подходят: X, Y" — фолбэк для симптомов без готовой статьи.
+        article_matches = _retrieve_article_context_safe(message)
+        guidance_result = _cosmetic_article_guidance_result(
+            knowledge_base,
+            article_matches,
+            normalized_message,
+        )
+        if guidance_result is not None:
+            return guidance_result
+
         suggested_services = cosmetic_concern_services(message, knowledge_base)
         if suggested_services:
             service_names = ", ".join(service.name for service in suggested_services)
@@ -2115,14 +2172,6 @@ def analyze_message(
                 ]
                 + ["Позвать менеджера"],
             )
-        article_matches = _retrieve_article_context_safe(message)
-        guidance_result = _cosmetic_article_guidance_result(
-            knowledge_base,
-            article_matches,
-            normalized_message,
-        )
-        if guidance_result is not None:
-            return guidance_result
 
     efficacy_claim_result = _efficacy_claim_result(normalized_message, knowledge_base, service)
     if efficacy_claim_result is not None:

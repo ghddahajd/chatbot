@@ -67,7 +67,45 @@ def test_medical_question_blocked(policy_session, knowledge_base) -> None:
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
-def test_acne_without_hard_symptoms_is_cosmetic_concern(policy_session, knowledge_base) -> None:
+def test_benign_pain_question_marked_calm_not_urgent(policy_session, knowledge_base) -> None:
+    """B4-раздел аудита: 'а больно?' попадало в тот же soft-offer, что и реально острые
+    сигналы (кровотечение, аллергия) — с одинаковым 'если срочно — скорая (103)' в обоих
+    случаях. Бытовой вопрос про боль должен помечаться calm, не urgent."""
+
+    for message in ["а больно?", "это нормально после процедуры?"]:
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.action == PolicyAction.TRANSFER_OPERATOR
+        assert result.reason == PolicyReason.REGULATED_ADVICE
+        assert result.safe_context.get("escalation_urgency") == "calm"
+
+
+def test_real_urgent_symptom_stays_urgent_even_with_pain_word(policy_session, knowledge_base) -> None:
+    """Безопасный дефолт: если в сообщении ЕСТЬ другое медицинское слово помимо
+    больно/болит/нормально — не занижаем срочность, даже если оно тоже присутствует."""
+
+    result = _analyze("болит и кровит после процедуры", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context.get("escalation_urgency") == "urgent"
+
+
+def test_bleeding_symptom_stays_urgent(policy_session, knowledge_base) -> None:
+    result = _analyze("у меня кровотечение, что делать", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context.get("escalation_urgency") == "urgent"
+
+
+def test_acne_without_hard_symptoms_is_cosmetic_concern(policy_session, resolver, managed_env) -> None:
+    """Использует реальные данные rosh_import_demo, не устаревшую заглушку rosh_demo —
+    COSMETIC_CONCERN_SERVICE_MAP теперь ссылается на реальные ID прайса клиента (B6-соседний
+    фикс симптом→услуга), а не на facial_cleansing/cosmetologist_consultation из rosh_demo,
+    которых в реальных данных никогда не существовало."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
     for message in [
         "у меня прыщи, что посоветуете?",
         "акне, что делать?",

@@ -71,6 +71,40 @@ def _add_article_excerpt_for_chat_test(test_client, managed_env, excerpt: str) -
     test_client.app.state.knowledge_base_resolver._cache.clear()
 
 
+def test_cosmetic_multi_candidate_followup_reoffers_same_services(test_client, managed_env) -> None:
+    """B4-раздел аудита: 'хочу убрать морщины вокруг глаз' резолвится в НЕСКОЛЬКО кандидатов
+    (Ботулинотерапия/Биоревитализация/Филлеры) — угадывать один нельзя, но follow-up 'а
+    сколько это стоит?' раньше проваливался в общий 'не нашёл подтверждения', потому что
+    (а) ни один service_id не был запомнён как контекст и (б) даже с контекстом анафора
+    'это' ломала consecutive-token матчинг фразы 'сколько стоит'. Оба фиксятся здесь."""
+
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    test_client.app.state.llm_client = _ArticleGuidanceLLMClient("Рекомендую вам Филлеры, это вам подходит.")
+
+    first_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="здравствуйте, хочу убрать морщины вокруг глаз",
+    )
+    assert first_payload["action"] == "answer"
+    first_labels = _quick_action_labels(first_payload)
+    assert {"Ботулинотерапия", "Биоревитализация", "Филлеры"} <= set(first_labels)
+
+    followup_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=first_payload["session_id"],
+        message="а сколько это стоит?",
+    )
+
+    assert followup_payload["action"] == "clarify"
+    assert "не нашёл подтверждения" not in followup_payload["answer"]
+    for service_name in ("Ботулинотерапия", "Биоревитализация", "Филлеры"):
+        assert service_name in followup_payload["answer"]
+    followup_labels = _quick_action_labels(followup_payload)
+    assert {"Ботулинотерапия", "Биоревитализация", "Филлеры"} <= set(followup_labels)
+
+
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",
@@ -503,6 +537,48 @@ def test_regulated_question_soft_offers_without_operator_event(test_client, monk
         "Подключить менеджера",
     ]
     assert events == []
+
+
+def test_benign_pain_question_soft_offer_has_no_emergency_number(test_client) -> None:
+    """B4-раздел аудита: 'а больно?' — обычный бытовой вопрос перед процедурой, не экстренная
+    ситуация. Раньше вёл в тот же soft-offer текст, что и реально острые сигналы, с
+    'если срочно — звоните... в скорую (103)' в любом случае. Пугает и выглядит сломанным."""
+
+    payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "а больно?"},
+    ).json()
+
+    assert payload["action"] == "clarify"
+    assert "103" not in payload["answer"]
+    assert "скорую" not in payload["answer"]
+
+
+def test_cosmetic_multi_candidate_booking_followup_reoffers_same_services(test_client, managed_env) -> None:
+    """Тот же аудитный диалог, шаг 'а когда можно записаться?' — раньше показывал ПОЛНЫЙ
+    каталог услуг ("Внутривенный лазер Шатл Комби" в списке для записи на морщины вокруг
+    глаз — прямая цитата из аудита), а не те 3 варианта, что только что предложили."""
+
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    test_client.app.state.llm_client = _ArticleGuidanceLLMClient("Рекомендую вам Филлеры, это вам подходит.")
+
+    first_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="здравствуйте, хочу убрать морщины вокруг глаз",
+    )
+
+    followup_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=first_payload["session_id"],
+        message="а когда можно записаться?",
+    )
+
+    assert followup_payload["action"] == "clarify"
+    followup_labels = _quick_action_labels(followup_payload)
+    assert {"Ботулинотерапия", "Биоревитализация", "Филлеры"} <= set(followup_labels)
+    assert "Внутривенный лазер Шатл Комби" not in followup_labels
 
 
 def test_engagement_offer_appears_on_5_8_13_substantive_messages(test_client) -> None:

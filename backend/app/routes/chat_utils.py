@@ -17,6 +17,7 @@ from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import (
     AFFIRMATIVE_MESSAGES,
+    BOOKING_KEYWORDS,
     BOT_IDENTITY_SIGNAL_KEYWORDS,
     CLARIFY_SHORT_MESSAGES,
     COMPETITOR_CONTEXT_TOKENS,
@@ -37,6 +38,7 @@ from ..policy.extractors import (
     fuzzy_contains,
     last_service_from_history,
     mentions_company_city,
+    strip_anaphoric_pronouns,
 )
 from ..policy.restricted import (
     get_restricted_categories,
@@ -317,6 +319,40 @@ def _contextual_frame_classification(
                 "context_topic": "doctors",
             }
 
+    if frame.frame_type == "cosmetic_candidates":
+        # Симптом резолвился в НЕСКОЛЬКО кандидатов (см. _context_frame_from_policy_result) —
+        # угадывать один нельзя (тот же принцип, что и в similar_services_result), но
+        # follow-up вида "а сколько это стоит?" не должен проваливаться в общий "не нашёл",
+        # раз мы только что явно предложили конкретные варианты.
+        candidates = frame.slots.get("candidates")
+        anaphora_free_message = strip_anaphoric_pronouns(normalized_message)
+        is_relevant_followup = (
+            fuzzy_contains(anaphora_free_message, PRICE_KEYWORDS)
+            or contains_keyword(anaphora_free_message, DURATION_KEYWORDS)
+            or contains_keyword(anaphora_free_message, BOOKING_KEYWORDS)
+            or normalized_message in {
+                "а сколько",
+                "сколько",
+                "почем",
+                "почём",
+                "а почем",
+                "а почём",
+            }
+        )
+        if isinstance(candidates, list) and candidates and is_relevant_followup:
+            candidate_ids = [
+                str(item.get("id"))
+                for item in candidates
+                if isinstance(item, dict) and item.get("id")
+            ]
+            if candidate_ids:
+                return {
+                    "intent": "cosmetic_concern",
+                    "service_id": None,
+                    "confidence": 0.9,
+                    "context_candidate_service_ids": candidate_ids,
+                }
+
     contextual_service = None
     if knowledge_base is not None and frame.entity_id:
         contextual_service = knowledge_base.find_service_by_id(frame.entity_id)
@@ -351,7 +387,7 @@ def _contextual_frame_classification(
             frame_variant is not None
             and str(frame.slots.get("question_type") or "") == "variant_price"
             and (
-                fuzzy_contains(normalized_message, PRICE_KEYWORDS)
+                fuzzy_contains(strip_anaphoric_pronouns(normalized_message), PRICE_KEYWORDS)
                 or normalized_message
                 in {
                     "а сколько",
@@ -386,7 +422,8 @@ def _contextual_frame_classification(
                 "confidence": 0.9,
                 "context_topic": "variants_list",
             }
-        if fuzzy_contains(normalized_message, PRICE_KEYWORDS) or normalized_message in {
+        anaphora_free_message = strip_anaphoric_pronouns(normalized_message)
+        if fuzzy_contains(anaphora_free_message, PRICE_KEYWORDS) or normalized_message in {
             "а сколько",
             "сколько",
             "почем",
@@ -399,7 +436,7 @@ def _contextual_frame_classification(
             "а все-таки почем",
         }:
             return {"intent": "price_question", "service_id": frame.entity_id, "confidence": 0.92}
-        if contains_keyword(normalized_message, DURATION_KEYWORDS):
+        if contains_keyword(anaphora_free_message, DURATION_KEYWORDS):
             return {"intent": "service_mention", "service_id": frame.entity_id, "confidence": 0.88}
         if contains_keyword(normalized_message, EXPLANATION_KEYWORDS) or normalized_message in {
             "а подробнее",

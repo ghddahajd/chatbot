@@ -96,6 +96,19 @@ MEDICAL_KEYWORDS = {
     "по назначению",
     "стало хуже",
 }
+# Узкое подмножество MEDICAL_KEYWORDS для обычных бытовых вопросов ("а больно?", "это
+# нормально?") — раньше вело в ТОТ ЖЕ soft-offer, что и реально острые сигналы (кровотечение,
+# аллергия), с одинаковым "если срочно — звоните... в скорую (103)" в любом случае. Осознанно
+# УЗКИЙ список: если в сообщении есть ЛЮБОЕ другое медицинское слово помимо этих — считаем
+# срочным (безопасный дефолт, не занижаем тревожность на смешанных фразах вроде "болит и
+# кровит"). Полноценное разделение MEDICAL_KEYWORDS на тиры — отдельная, более крупная задача.
+BENIGN_MEDICAL_KEYWORDS = {
+    "больно",
+    "болит",
+    "боли",
+    "болью",
+    "нормально",
+}
 MEDICAL_REFERRAL_KEYWORDS = {
     "родинка",
     "родинк",
@@ -685,19 +698,27 @@ COSMETIC_CONCERN_KEYWORDS = {
     "тусклая кожа",
     "цвет лица",
     "неровный тон",
+    "морщин",
+    "пигмент",
 }
+# ID реального прайса rosh_import_demo (services.json) — раньше тут были ID из отставной
+# демо-заглушки rosh_demo (facial_cleansing/cosmetologist_consultation/biorevitalization),
+# которых в реальных данных клиента никогда не существовало: find_service_by_id всегда
+# возвращал None, сопоставление никогда не срабатывало, всё падало в общий fuzzy-фолбэк.
 COSMETIC_CONCERN_SERVICE_MAP = {
-    "акне": ["facial_cleansing", "cosmetologist_consultation"],
-    "жирная кожа": ["facial_cleansing", "cosmetologist_consultation"],
-    "прыщ": ["facial_cleansing", "cosmetologist_consultation"],
-    "сальная кожа": ["facial_cleansing", "cosmetologist_consultation"],
-    "поры": ["facial_cleansing", "cosmetologist_consultation"],
-    "расширенные поры": ["facial_cleansing", "cosmetologist_consultation"],
-    "черные точки": ["facial_cleansing", "cosmetologist_consultation"],
-    "тусклый цвет": ["biorevitalization", "cosmetologist_consultation"],
-    "тусклая кожа": ["biorevitalization", "cosmetologist_consultation"],
-    "цвет лица": ["biorevitalization", "cosmetologist_consultation"],
-    "неровный тон": ["cosmetologist_consultation", "facial_cleansing"],
+    "акне": ["chistki_e744e513", "konsultacii_b8520924"],
+    "жирная кожа": ["chistki_e744e513", "konsultacii_b8520924"],
+    "прыщ": ["chistki_e744e513", "konsultacii_b8520924"],
+    "сальная кожа": ["chistki_e744e513", "konsultacii_b8520924"],
+    "поры": ["chistki_e744e513", "konsultacii_b8520924"],
+    "расширенные поры": ["chistki_e744e513", "konsultacii_b8520924"],
+    "черные точки": ["chistki_e744e513", "konsultacii_b8520924"],
+    "тусклый цвет": ["biorevitalizaciya_9d426f68", "konsultacii_b8520924"],
+    "тусклая кожа": ["biorevitalizaciya_9d426f68", "konsultacii_b8520924"],
+    "цвет лица": ["biorevitalizaciya_9d426f68", "konsultacii_b8520924"],
+    "неровный тон": ["konsultacii_b8520924", "chistki_e744e513"],
+    "морщин": ["botulinoterapiya_9d5734af", "biorevitalizaciya_9d426f68", "fillery_f2df3e74"],
+    "пигмент": ["fotolechenie_bbl_85e80491", "lazernaya_shlifovka_8965cb81", "pilingi_8dde1279"],
 }
 GENERIC_PRICE_MESSAGES = {
     "хочу уточнить цену",

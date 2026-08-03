@@ -140,6 +140,9 @@ def normalize_classification(raw_result: dict[str, Any]) -> dict[str, object]:
     context_variant = raw_result.get("context_variant")
     if isinstance(context_variant, dict):
         normalized["context_variant"] = context_variant
+    context_candidate_service_ids = raw_result.get("context_candidate_service_ids")
+    if isinstance(context_candidate_service_ids, list) and context_candidate_service_ids:
+        normalized["context_candidate_service_ids"] = context_candidate_service_ids
     return normalized
 
 

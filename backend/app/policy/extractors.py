@@ -77,6 +77,18 @@ def _contains_token_sequence(tokens: list[str], keyword_tokens: list[str]) -> bo
     )
 
 
+# Местоимения-анафоры ("а сколько ЭТО стоит?") ломают consecutive-token матчинг фраз вроде
+# "сколько стоит" — слово вклинивается между частями фразы. Тот же класс проблемы, что уже
+# чинили для "чем X отличается от Y" (см. _looks_like_comparison_question в intent.py) —
+# только здесь дешевле убрать местоимение перед проверкой, чем городить отдельный parser.
+ANAPHORIC_PRONOUNS = {"это", "он", "она", "оно", "её", "его", "их"}
+
+
+def strip_anaphoric_pronouns(normalized_text: str) -> str:
+    tokens = [token for token in normalized_text.split() if token not in ANAPHORIC_PRONOUNS]
+    return " ".join(tokens)
+
+
 def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
     tokens = normalized_text.split()
     token_set = set(tokens)

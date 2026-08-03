@@ -2,7 +2,12 @@
 
 from app.knowledge import normalize_text
 from app.models import Service
-from app.policy.extractors import contains_keyword, extract_name, find_unsupported_city
+from app.policy.extractors import (
+    contains_keyword,
+    extract_name,
+    find_unsupported_city,
+    strip_anaphoric_pronouns,
+)
 
 
 def _service(name: str, *, category: str = "Косметология", synonyms: list[str] | None = None) -> Service:
@@ -103,4 +108,18 @@ def test_find_unsupported_city_matches_multiword_city_form() -> None:
     assert (
         find_unsupported_city(normalize_text("а филиал в Санкт Петербурге есть?"), "Москва")
         == "Санкт-Петербург"
+    )
+
+
+def test_strip_anaphoric_pronouns_unblocks_wedged_phrase_match() -> None:
+    """'а сколько ЭТО стоит' не матчился с ключом 'сколько стоит' (consecutive-token
+    matching), потому что анафора 'это' вклинивается между словами фразы — та же проблема,
+    что раньше чинили для 'чем X отличается от Y'."""
+
+    assert strip_anaphoric_pronouns(normalize_text("а сколько это стоит?")) == "а сколько стоит"
+
+
+def test_strip_anaphoric_pronouns_leaves_normal_messages_untouched() -> None:
+    assert strip_anaphoric_pronouns(normalize_text("сколько стоит биоревитализация")) == (
+        "сколько стоит биоревитализация"
     )

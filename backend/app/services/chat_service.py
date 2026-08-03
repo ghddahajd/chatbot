@@ -232,6 +232,7 @@ class ChatService:
         session,
         knowledge_base,
         referral_service: object = None,
+        urgent: bool = True,
     ) -> tuple[PolicyAction, str, list[dict[str, str]]]:
         await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
         await session_store.update_context(session.session_id, last_intent=PolicyReason.REGULATED_ADVICE.value)
@@ -239,11 +240,22 @@ class ChatService:
             session.session_id,
             metadata=self._regulated_lead_metadata(knowledge_base),
         )
+        # "Если срочно — звоните... в скорую (103)" уместно для реально острых сигналов
+        # (кровотечение, аллергия), но не для бытовых вопросов вроде "а больно?" — см.
+        # escalation_urgency в _medical_referral_result (policy/__init__.py). По умолчанию
+        # urgent=True (безопасный дефолт для путей без явной оценки срочности, например
+        # LLM-классификатора риска на consultation-ветке).
+        phrase_key = "regulated_soft_offer" if urgent else "regulated_soft_offer_calm"
         answer = self._phrase(
-            "regulated_soft_offer",
+            phrase_key,
             (
                 "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
                 "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
+            )
+            if urgent
+            else (
+                "Заочно тут лучше не гадать — это уточнит специалист. Могу передать ваш контакт "
+                "менеджеру или подключить его сейчас."
             ),
             seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
         )
@@ -735,6 +747,22 @@ class ChatService:
                 expires_at_turn=expires_at_turn,
             )
 
+        if not service_id and safe_context.get("question_type") == "cosmetic_article_guidance":
+            suggested_services = safe_context.get("suggested_services")
+            if isinstance(suggested_services, list) and len(suggested_services) > 1:
+                candidates = [
+                    {"id": str(item.get("id") or ""), "name": str(item.get("name") or "")}
+                    for item in suggested_services
+                    if isinstance(item, dict) and item.get("id")
+                ]
+                if candidates:
+                    return ContextFrame(
+                        frame_type="cosmetic_candidates",
+                        slots={"candidates": candidates},
+                        last_intent=last_intent,
+                        expires_at_turn=expires_at_turn,
+                    )
+
         if service_id:
             slots = {"question_type": safe_context.get("question_type")}
             variant_matches = safe_context.get("variant_matches")
@@ -1186,6 +1214,7 @@ class ChatService:
                     session=session,
                     knowledge_base=knowledge_base,
                     referral_service=policy_result.safe_context.get("referral_service"),
+                    urgent=policy_result.safe_context.get("escalation_urgency") != "calm",
                 )
             else:
                 await session_store.set_operator_requested(session.session_id, True)

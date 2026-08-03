@@ -21,6 +21,59 @@ try:
 except ImportError:  # pragma: no cover - local dev can run before deps are installed.
     Levenshtein = None
 
+# Natasha (github.com/natasha) — офлайн NER для русского, настоящее распознавание имён
+# человека вместо угадывания по регуляркам. Ловит то, что regex в принципе не может:
+# "меня зовут Мария Петровна" -> имя+отчество без ручных костылей на заглавную букву,
+# "моя фамилия Петина" -> "Петина", не слово "фамилия"; и главное — "дура тупая" НЕ
+# считает именем (regex не отличит оскорбление от имени, NER — отличает). Единственный
+# найденный пробел — голое "Иван +7999..." без рамки-глагола natasha не ловит, поэтому
+# ниже он остаётся как regex-фолбэк, не убран целиком.
+#
+# Модели грузятся один раз лениво (~0.3с, ~300МБ) — не на каждый вызов и не если функция
+# вообще не понадобится в этом процессе. Если natasha не установлена или не грузится —
+# тихо остаёмся на regex, не роняем сервис.
+_natasha_segmenter: Any = None
+_natasha_ner_tagger: Any = None
+_natasha_load_failed = False
+
+
+def _load_natasha() -> bool:
+    global _natasha_segmenter, _natasha_ner_tagger, _natasha_load_failed
+    if _natasha_ner_tagger is not None:
+        return True
+    if _natasha_load_failed:
+        return False
+    try:
+        from natasha import NewsEmbedding, NewsNERTagger, Segmenter
+
+        _natasha_segmenter = Segmenter()
+        _natasha_ner_tagger = NewsNERTagger(NewsEmbedding())
+        return True
+    except Exception:
+        _natasha_load_failed = True
+        return False
+
+
+def _run_ner_for_person(text: str) -> Optional[str]:
+    if not text.strip() or not _load_natasha():
+        return None
+    from natasha import PER, Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_ner(_natasha_ner_tagger)
+    for span in doc.spans:
+        if span.type != PER:
+            continue
+        candidate = span.text.strip()
+        if candidate:
+            return candidate.title()
+    return None
+
+
+def _extract_name_via_ner(message: str) -> Optional[str]:
+    return _run_ner_for_person(message)
+
 
 def _distance_at_most_one(left: str, right: str) -> bool:
     if Levenshtein is not None:
@@ -216,6 +269,19 @@ def extract_name(
     *,
     known_services: Iterable[Any] | None = None,
 ) -> Optional[str]:
+    service_stems = _known_service_stems(known_services)
+
+    ner_candidate = _extract_name_via_ner(message)
+    if ner_candidate is not None:
+        # На всякий случай — та же защита, что и у regex-пути: не спутать имя услуги с именем
+        # человека (по каждому слову отдельно — "Мария Петровна" может быть двумя токенами).
+        # NER под это в принципе не должен попадать (это не имя собственное), но дёшево
+        # подстраховаться раз уж проверка уже есть.
+        words = normalize_text(ner_candidate).split()
+        is_service_name = any(len(word) >= 3 and _stem(word) in service_stems for word in words)
+        if not is_service_name:
+            return ner_candidate
+
     source = message
     if phone is not None:
         match = PHONE_PATTERN.search(message)
@@ -282,7 +348,6 @@ def extract_name(
         "фамилию",
         "фамилии",
     }
-    service_stems = _known_service_stems(known_services)
 
     def _is_usable_second_word(raw_word: str) -> bool:
         # Заглавная буква в ОРИГИНАЛЕ — сигнал "это ещё одно имя собственное" (отчество/
@@ -312,22 +377,28 @@ def extract_name(
             full_name = f"{full_name} {normalize_text(second_word).title()}"
         return full_name
 
-    # Без явного маркера ("меня зовут"/"я"/"это" и т.д.) верим только КОРОТКОМУ ответу —
-    # это форма "бот спросил как зовут, человек ответил голым словом", не полноценная фраза.
-    # Раньше брали первое незнакомое слово из ЛЮБОГО по длине сообщения — так же цепляло
-    # случайные слова/оскорбления из развёрнутых ответов, где никто не представлялся. Считаем
+    # Без явного маркера ("меня зовут"/"я"/"это" и т.д.) верим только КОРОТКОМУ ответу — это
+    # форма "бот спросил как зовут, человек ответил голым словом", не полноценная фраза. Считаем
     # длину БЕЗ стоп-слов — "привет, я Виктория" по сути короткий ответ (одно значимое слово),
     # хоть и состоит из 3 токенов, приветствие/местоимение не в счёт.
+    #
+    # NER выше уже посмотрел на СЫРОЕ сообщение и не нашёл имя — часто из-за регистра (Наташа
+    # плохо ловит имена с маленькой буквы: "меня зовут мария" не находит вообще). Пробуем ЕЩЁ
+    # РАЗ — не на всём сообщении, а на изолированной короткой фразе-кандидате, поднятой в
+    # регистр. Вне контекста остального предложения NER даёт куда более надёжный результат:
+    # проверено живьём — "леха"/"мария" находит даже с маленькой буквы после изоляции+регистра,
+    # а "дура"/"дура тупая" всё равно корректно отвергает ДАЖЕ с большой буквы. Это не то же
+    # самое, что просто "верить заглавной букве" (старый компромисс) — NER продолжает отличать
+    # реальное имя от случайного слова семантически, не по одному только регистру. Если и это
+    # ничего не даёт — сдаёмся, не угадываем вслепую первым словом (как было раньше).
     meaningful_words = [word for word in cleaned.split() if normalize_text(word) not in stop_words]
-    if len(meaningful_words) <= 2:
-        for word in meaningful_words:
-            normalized_word = normalize_text(word)
-            if len(normalized_word) < 2:
-                continue
-            if re.search(r"[A-Za-zА-Яа-яЁё]", normalized_word):
-                if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
-                    return None
-                return normalized_word.title()
+    if meaningful_words and len(meaningful_words) <= 2:
+        isolated_candidate = " ".join(word.title() for word in meaningful_words)
+        retry_candidate = _run_ner_for_person(isolated_candidate)
+        if retry_candidate is not None:
+            words = normalize_text(retry_candidate).split()
+            if not any(len(word) >= 3 and _stem(word) in service_stems for word in words):
+                return retry_candidate
     return None
 
 

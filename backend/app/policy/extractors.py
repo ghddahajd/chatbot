@@ -193,16 +193,20 @@ def _known_service_stems(known_services: Iterable[Any] | None) -> set[str]:
 # оттуда, а не гадаем "первое слово не из стоп-листа". Устраняет целый класс багов
 # (не только конкретные слова "здравствуйте"/"это"/"меня", которые случайно не попали в
 # список), а не 9 частных случаев из него. Порядок — от однозначных к более слабым сигналам.
+# Второе слово опционально — для отчества/фамилии ("меня зовут Мария Петровна"). Само по себе
+# в паттерне не различить, имя это или продолжение фразы ("Мария очень приятно") — IGNORECASE
+# на весь паттерн не даёт положиться на регистр в самом regex. Решение — в коде ниже: второе
+# слово принимаем, только если оно написано с заглавной буквы в ОРИГИНАЛЕ сообщения.
 NAME_MARKER_PATTERNS = (
-    re.compile(r"\bменя\s+зовут\s+([а-яё]+)", re.IGNORECASE),
-    re.compile(r"\bзовут\s+меня\s+([а-яё]+)", re.IGNORECASE),
+    re.compile(r"\bменя\s+зовут\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bзовут\s+меня\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
     # обратный порядок слов — "меня Тимур зовут" — не менее естественная разговорная форма
-    re.compile(r"\bменя\s+([а-яё]+)\s+зовут\b", re.IGNORECASE),
-    re.compile(r"\bзовут\s+([а-яё]+)", re.IGNORECASE),
-    re.compile(r"\bмо[её]\s+имя\s+([а-яё]+)", re.IGNORECASE),
-    re.compile(r"\bимя\s*[-:]?\s*([а-яё]+)", re.IGNORECASE),
-    re.compile(r"\bэто\s+([а-яё]+)", re.IGNORECASE),
-    re.compile(r"^\s*я\s+([а-яё]+)", re.IGNORECASE),
+    re.compile(r"\bменя\s+([а-яё]+)(?:\s+([а-яё]+))?\s+зовут\b", re.IGNORECASE),
+    re.compile(r"\bзовут\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bмо[её]\s+имя\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bимя\s*[-:]?\s*([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bэто\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"^\s*я\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
 )
 
 
@@ -272,8 +276,26 @@ def extract_name(
         "мне",
         "пожалуйста",
         "спасибо",
+        # "моя фамилия Петина" — без стоп-слова fallback хватал само слово "фамилия" раньше
+        # реального значения после него (тот же класс бага, что и с "имя вообще").
+        "фамилия",
+        "фамилию",
+        "фамилии",
     }
     service_stems = _known_service_stems(known_services)
+
+    def _is_usable_second_word(raw_word: str) -> bool:
+        # Заглавная буква в ОРИГИНАЛЕ — сигнал "это ещё одно имя собственное" (отчество/
+        # фамилия), а не случайное слово продолжения фразы ("Мария очень приятно" — "очень"
+        # с маленькой). Не железобетонно, но дешёво и без риска для обычного случая.
+        if not raw_word or not raw_word[0].isupper():
+            return False
+        normalized = normalize_text(raw_word)
+        if len(normalized) < 2 or normalized in stop_words:
+            return False
+        if len(normalized) >= 3 and _stem(normalized) in service_stems:
+            return False
+        return True
 
     for pattern in NAME_MARKER_PATTERNS:
         match = pattern.search(cleaned)
@@ -284,16 +306,28 @@ def extract_name(
             continue
         if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
             continue
-        return normalized_word.title()
+        full_name = normalized_word.title()
+        second_word = match.group(2) if pattern.groups >= 2 else None
+        if second_word and _is_usable_second_word(second_word):
+            full_name = f"{full_name} {normalize_text(second_word).title()}"
+        return full_name
 
-    for word in cleaned.split():
-        normalized_word = normalize_text(word)
-        if len(normalized_word) < 2 or normalized_word in stop_words:
-            continue
-        if re.search(r"[A-Za-zА-Яа-яЁё]", normalized_word):
-            if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
-                return None
-            return normalized_word.title()
+    # Без явного маркера ("меня зовут"/"я"/"это" и т.д.) верим только КОРОТКОМУ ответу —
+    # это форма "бот спросил как зовут, человек ответил голым словом", не полноценная фраза.
+    # Раньше брали первое незнакомое слово из ЛЮБОГО по длине сообщения — так же цепляло
+    # случайные слова/оскорбления из развёрнутых ответов, где никто не представлялся. Считаем
+    # длину БЕЗ стоп-слов — "привет, я Виктория" по сути короткий ответ (одно значимое слово),
+    # хоть и состоит из 3 токенов, приветствие/местоимение не в счёт.
+    meaningful_words = [word for word in cleaned.split() if normalize_text(word) not in stop_words]
+    if len(meaningful_words) <= 2:
+        for word in meaningful_words:
+            normalized_word = normalize_text(word)
+            if len(normalized_word) < 2:
+                continue
+            if re.search(r"[A-Za-zА-Яа-яЁё]", normalized_word):
+                if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
+                    return None
+                return normalized_word.title()
     return None
 
 

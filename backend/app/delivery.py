@@ -186,11 +186,13 @@ class DeliveryService:
         knowledge_base_resolver: KnowledgeBaseResolver,
         telegram_bot_token: str = "",
         telegram_chat_id: str = "",
+        telegram_dm_enabled: bool = False,
     ) -> None:
         self.outbox_file = outbox_file
         self.knowledge_base_resolver = knowledge_base_resolver
         self.telegram_bot_token = telegram_bot_token
         self.telegram_chat_id = telegram_chat_id
+        self.telegram_dm_enabled = telegram_dm_enabled
         self._lock = asyncio.Lock()
 
     async def enqueue_lead(self, lead: Lead) -> list[dict[str, Any]]:
@@ -348,7 +350,10 @@ class DeliveryService:
 
             return destinations
 
-        if self.telegram_bot_token and self.telegram_chat_id:
+        # Раньше этот фолбэк срабатывал всегда, дублируя каждый лид/эскалацию личным
+        # sendMessage в обход Тем группы операторов — теперь по умолчанию выключен
+        # (telegram_dm_enabled), Темы/General/Клиенты (telegram_bridge.py) — основной путь.
+        if self.telegram_dm_enabled and self.telegram_bot_token and self.telegram_chat_id:
             destinations.append({"type": "telegram", "target": self.telegram_chat_id})
 
         if knowledge_base.company.lead_webhook_url:

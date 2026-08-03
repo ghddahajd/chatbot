@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_operators_group_id: str = ""
+    # thread_id темы "Клиенты" в группе операторов (создаётся вручную один раз в Telegram) —
+    # сюда падают лиды/записи без живой необходимости в операторе, простой карточкой без клейма.
+    telegram_clients_topic_id: str = ""
+    # раньше лид/эскалация ВСЕГДА дублировались личным sendMessage на telegram_chat_id в
+    # обход тем в группе — тумблер, чтобы включить дублирование в личку по желанию, не по умолчанию.
+    telegram_dm_enabled: bool = False
     telegram_bridge_enabled: bool = True
     delivery_retry_enabled: bool = True
     delivery_retry_interval_seconds: int = 60

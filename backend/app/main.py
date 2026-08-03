@@ -88,6 +88,7 @@ async def lifespan(app: FastAPI):
         knowledge_base_resolver=app.state.knowledge_base_resolver,
         telegram_bot_token=settings.telegram_bot_token,
         telegram_chat_id=settings.telegram_chat_id,
+        telegram_dm_enabled=settings.telegram_dm_enabled,
     )
     app.state.lead_service = LeadService(leads_file=settings.leads_file, delivery_service=app.state.delivery_service)
     app.state.analytics_service = AnalyticsService(
@@ -109,6 +110,7 @@ async def lifespan(app: FastAPI):
         group_chat_id=settings.telegram_operators_group_id,
         session_store=app.state.session_store,
         ws_manager=app.state.ws_manager,
+        clients_topic_id=settings.telegram_clients_topic_id,
     )
 
     retry_task = None

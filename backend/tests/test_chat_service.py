@@ -1500,3 +1500,96 @@ def test_message_at_max_length_is_accepted(test_client) -> None:
     )
 
     assert response.status_code == 200
+
+
+class _FakeTelegramBridge:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.queue_cards: list[dict] = []
+        self.client_cards: list[str] = []
+
+    async def post_operator_queue_card(self, *, session_id, reason, last_message, client_label):
+        self.queue_cards.append(
+            {
+                "session_id": session_id,
+                "reason": reason,
+                "last_message": last_message,
+                "client_label": client_label,
+            }
+        )
+
+    async def post_client_lead_card(self, card_text):
+        self.client_cards.append(card_text)
+
+
+def test_plain_lead_without_operator_need_posts_to_clients_topic(test_client) -> None:
+    """Лид без needs_operator (контакт зафиксирован, бот уже ответил) — карточка в тему
+    "Клиенты", НЕ очередь General с клеймом: никто не ждёт живого человека прямо сейчас."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "Хочу оставить телефон"},
+    ).json()
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +79991234567",
+        },
+    )
+
+    assert len(fake_bridge.client_cards) == 1
+    assert fake_bridge.queue_cards == []
+    assert "Иван" in fake_bridge.client_cards[0]
+
+
+def test_regulated_lead_with_operator_need_posts_to_general_queue(test_client) -> None:
+    """Лид с needs_operator=True (регулируемый флоу) — карточка в General с клеймом, как
+    прямой operator_requested: тут реально нужен живой человек, не просто лог контакта."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "у меня воспаление что делать"},
+    ).json()
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+
+    assert fake_bridge.client_cards == []
+    assert len(fake_bridge.queue_cards) == 1
+    assert fake_bridge.queue_cards[0]["client_label"] == "Иван"
+
+
+def test_direct_operator_request_posts_to_general_queue(test_client) -> None:
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Да, оператора",
+        },
+    )
+
+    assert len(fake_bridge.queue_cards) == 1
+    assert fake_bridge.queue_cards[0]["reason"] == "⚡️ Запросил оператора"
+    assert fake_bridge.client_cards == []

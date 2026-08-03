@@ -134,6 +134,53 @@ def _run_ner_for_city(text: str, *, skip_normalized: str) -> Optional[str]:
     return None
 
 
+def extract_person_lemma_via_ner(text: str) -> Optional[str]:
+    """Находит PER-сущность в СЫРОМ тексте (регистр важен для распознавания) и возвращает её
+    лемму (именительный падеж, нижний регистр) — для сравнения с базой (например, врачей), не
+    для показа пользователю. Используется вместе с lemmatize_known_name() ниже — ОБЕ стороны
+    сравнения должны идти через одну и ту же лемматизацию, иначе не совпадут: pymorphy2 не
+    всегда согласован сам с собой между падежами одной и той же фамилии (проверено живьём:
+    "Джалилов" (именительный) -> лемма "джалил", но "Джалилову" (дательный) -> лемма
+    "джалилов" — РАЗНЫЕ строки при одинаковом человеке). Сравнивать леммы нужно по префиксу
+    токена (см. _doctor_matches), не на точное равенство."""
+
+    if not text.strip() or not _load_natasha_morph():
+        return None
+    from natasha import PER, Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    doc.tag_ner(_natasha_ner_tagger)
+    for span in doc.spans:
+        if span.type != PER:
+            continue
+        span_tokens = [token for token in doc.tokens if token.start >= span.start and token.stop <= span.stop]
+        for token in span_tokens:
+            token.lemmatize(_natasha_morph_vocab)
+        lemma = " ".join(token.lemma for token in span_tokens if token.lemma).strip()
+        if lemma:
+            return lemma
+    return None
+
+
+def lemmatize_known_name(name: str) -> Optional[str]:
+    """Лемматизирует УЖЕ ИЗВЕСТНОЕ имя (например, врача из базы клиента) — не ищет
+    PER-сущность, сразу лемматизирует все токены (имя гарантированно уже нужного типа)."""
+
+    if not name.strip() or not _load_natasha_morph():
+        return None
+    from natasha import Doc
+
+    doc = Doc(name)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    for token in doc.tokens:
+        token.lemmatize(_natasha_morph_vocab)
+    lemma = " ".join(token.lemma for token in doc.tokens if token.lemma).strip()
+    return lemma or None
+
+
 def _distance_at_most_one(left: str, right: str) -> bool:
     if Levenshtein is not None:
         return Levenshtein.distance(left, right) <= 1

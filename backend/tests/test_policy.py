@@ -443,6 +443,35 @@ def test_unknown_doctor_name_defers_instead_of_listing_all(policy_session, resol
     assert result.action == PolicyAction.CLARIFY
     assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
     assert "Хачатурян" not in result.safe_context["message_to_user"]
+
+
+def test_clinic_doctor_matches_declined_surname_via_ner(policy_session, resolver, managed_env) -> None:
+    """NER находит упоминание врача в ЛЮБОМ падеже вместо слепого сравнения префикса по
+    каждому слову сообщения (тот же класс риска ложного совпадения, что уже был у услуг —
+    "биорезонансная" ⊃ "биоревитализация"). Проверено живьём на реальных докторах ROSH:
+    "Джалилову" (дательный) корректно матчится с "Джалилов Руслан Акифович" в базе."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("какой график у Джалилову?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Джалилов Руслан Акифович" in result.safe_context["message_to_user"]
+
+
+def test_clinic_doctor_matches_first_name_and_patronymic_without_surname(
+    policy_session, resolver, managed_env
+) -> None:
+    """Живой краевой случай: NER распознаёт 'Любови Андреевны' (имя+отчество, родительный
+    падеж) как одну сущность и правильно сопоставляет с 'Хачатурян Любовь Андреевна' даже
+    без упоминания фамилии — старый слепой префиксный метод фамилию бы не нашёл вообще."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("а у Любови Андреевны какая специальность?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert "Хачатурян Любовь Андреевна" in result.safe_context["message_to_user"]
     assert "Молотилова" not in result.safe_context["message_to_user"]
 
 

@@ -42,11 +42,13 @@ from .constants import (
 from .extractors import (
     contains_keyword,
     extract_name,
+    extract_person_lemma_via_ner,
     extract_phone,
     find_unsupported_city,
     fuzzy_contains,
     is_location_mismatch,
     last_service_from_history,
+    lemmatize_known_name,
 )
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
@@ -860,6 +862,26 @@ def _equipment_result(
 
 def _doctor_matches(message: str, doctor: dict[str, str]) -> bool:
     normalized_message = normalize_text(message)
+
+    # NER сначала: находит упоминание человека в СЫРОМ сообщении (регистр важен), а не гоняет
+    # префиксное сравнение по КАЖДОМУ слову сообщения вслепую — тот же класс риска ложного
+    # совпадения, что уже давал баг на услугах ("биорезонансная" ⊃ "биоревитализация" по
+    # префиксу). Сравниваем леммы по префиксу токена, не на точное равенство — pymorphy2 не
+    # всегда согласован сам с собой между падежами одной фамилии.
+    message_lemma = extract_person_lemma_via_ner(message)
+    if message_lemma:
+        doctor_lemma = lemmatize_known_name(doctor.get("name", "")) or ""
+        message_lemma_tokens = [token for token in message_lemma.split() if len(token) >= 3]
+        doctor_lemma_tokens = [token for token in doctor_lemma.split() if len(token) >= 3]
+        if any(
+            _token_prefix_match(doctor_token, msg_token)
+            for doctor_token in doctor_lemma_tokens
+            for msg_token in message_lemma_tokens
+        ):
+            return True
+
+    # Фолбэк — как раньше: NER не нашёл сущность (natasha не загрузилась, опечатка сломала
+    # распознавание и т.д.), не теряем совпадение вслепую.
     message_tokens = [token for token in normalized_message.split() if len(token) >= 3]
     name_tokens = [token for token in normalize_text(doctor.get("name", "")).split() if len(token) >= 3]
     if any(

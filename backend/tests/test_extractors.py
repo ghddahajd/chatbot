@@ -111,6 +111,37 @@ def test_find_unsupported_city_matches_multiword_city_form() -> None:
     )
 
 
+def test_find_unsupported_city_ner_catches_declension_not_in_known_forms() -> None:
+    """Живой пробел: KNOWN_CITY_FORMS для большинства городов содержит только именительный
+    падеж — 'живу в Екатеринбурге' (предложный) не ловился словарным путём вообще. NER
+    находит LOC-сущность в СЫРОМ сообщении и лемматизирует до именительного падежа — нужен
+    оригинальный message (регистр важен для распознавания), не только normalized_message."""
+
+    message = "живу в Екатеринбурге, можно у вас лечиться?"
+    assert find_unsupported_city(normalize_text(message), "Москва", message=message) == "Екатеринбург"
+
+
+def test_find_unsupported_city_ner_catches_multiword_declension() -> None:
+    message = "а филиал в Нижнем Новгороде есть?"
+    assert find_unsupported_city(normalize_text(message), "Москва", message=message) == "Нижний Новгород"
+
+
+def test_find_unsupported_city_ner_skips_companys_own_city() -> None:
+    """LOC-сущность, совпадающая с городом клиники — не 'не тот город', а просто клиент
+    упомянул тот же город, что и клиника."""
+
+    message = "вы в Москве находитесь?"
+    assert find_unsupported_city(normalize_text(message), "Москва", message=message) is None
+
+
+def test_find_unsupported_city_without_raw_message_falls_back_to_dict_only() -> None:
+    """message — опциональный параметр (не все вызовы его передают, обратная совместимость) —
+    без него NER не запускается, работает только словарный путь, как раньше."""
+
+    message = "живу в Екатеринбурге, можно у вас лечиться?"
+    assert find_unsupported_city(normalize_text(message), "Москва") is None
+
+
 def test_strip_anaphoric_pronouns_unblocks_wedged_phrase_match() -> None:
     """'а сколько ЭТО стоит' не матчился с ключом 'сколько стоит' (consecutive-token
     matching), потому что анафора 'это' вклинивается между словами фразы — та же проблема,

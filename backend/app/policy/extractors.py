@@ -21,41 +21,74 @@ try:
 except ImportError:  # pragma: no cover - local dev can run before deps are installed.
     Levenshtein = None
 
-# Natasha (github.com/natasha) — офлайн NER для русского, настоящее распознавание имён
-# человека вместо угадывания по регуляркам. Ловит то, что regex в принципе не может:
-# "меня зовут Мария Петровна" -> имя+отчество без ручных костылей на заглавную букву,
-# "моя фамилия Петина" -> "Петина", не слово "фамилия"; и главное — "дура тупая" НЕ
-# считает именем (regex не отличит оскорбление от имени, NER — отличает). Единственный
-# найденный пробел — голое "Иван +7999..." без рамки-глагола natasha не ловит, поэтому
-# ниже он остаётся как regex-фолбэк, не убран целиком.
+# Natasha (github.com/natasha) — офлайн NER для русского, настоящее распознавание сущностей
+# вместо угадывания по регуляркам.
 #
-# Модели грузятся один раз лениво (~0.3с, ~300МБ) — не на каждый вызов и не если функция
-# вообще не понадобится в этом процессе. Если natasha не установлена или не грузится —
-# тихо остаёмся на regex, не роняем сервис.
+# Имена людей (PER): "меня зовут Мария Петровна" -> имя+отчество без ручных костылей на
+# заглавную букву, "моя фамилия Петина" -> "Петина", не слово "фамилия"; и главное —
+# "дура тупая" НЕ считает именем (regex не отличит оскорбление от имени, NER — отличает).
+# Единственный найденный пробел — голое "Иван +7999..." без рамки-глагола natasha не ловит,
+# поэтому ниже он остаётся как regex-фолбэк, не убран целиком.
+#
+# Города (LOC): раньше KNOWN_CITY_FORMS требовал вручную перечислять КАЖДОЕ падежное
+# склонение города ("москва"/"москве"/"москвы") — для большинства городов в списке была только
+# именительная форма, "живу в Екатеринбурге" не ловилось вообще. NER находит LOC-сущность в
+# любом падеже, а отдельный морфологический тэггер лемматизирует до именительного падежа
+# ("Нижнем Новгороде" -> "нижний новгород") — ловит ЛЮБОЙ город, не только перечисленные вручную.
+#
+# Модели грузятся один раз лениво (~0.3с на NER, +43МБ на морфологию поверх — та же embedding
+# переиспользуется) — не на каждый вызов и не если функция вообще не понадобится в этом
+# процессе. Если natasha не установлена или не грузится — тихо остаёмся на regex, не роняем
+# сервис. NER работает на СЫРОМ (не normalize_text) тексте — регистр важен для распознавания,
+# как и для имён.
 _natasha_segmenter: Any = None
+_natasha_embedding: Any = None
 _natasha_ner_tagger: Any = None
-_natasha_load_failed = False
+_natasha_morph_tagger: Any = None
+_natasha_morph_vocab: Any = None
+_natasha_ner_load_failed = False
+_natasha_morph_load_failed = False
 
 
-def _load_natasha() -> bool:
-    global _natasha_segmenter, _natasha_ner_tagger, _natasha_load_failed
+def _load_natasha_ner() -> bool:
+    global _natasha_segmenter, _natasha_embedding, _natasha_ner_tagger, _natasha_ner_load_failed
     if _natasha_ner_tagger is not None:
         return True
-    if _natasha_load_failed:
+    if _natasha_ner_load_failed:
         return False
     try:
         from natasha import NewsEmbedding, NewsNERTagger, Segmenter
 
         _natasha_segmenter = Segmenter()
-        _natasha_ner_tagger = NewsNERTagger(NewsEmbedding())
+        _natasha_embedding = NewsEmbedding()
+        _natasha_ner_tagger = NewsNERTagger(_natasha_embedding)
         return True
     except Exception:
-        _natasha_load_failed = True
+        _natasha_ner_load_failed = True
+        return False
+
+
+def _load_natasha_morph() -> bool:
+    global _natasha_morph_tagger, _natasha_morph_vocab, _natasha_morph_load_failed
+    if _natasha_morph_tagger is not None:
+        return True
+    if _natasha_morph_load_failed:
+        return False
+    if not _load_natasha_ner():  # переиспользуем ту же embedding/segmenter, не грузим заново
+        return False
+    try:
+        from natasha import MorphVocab, NewsMorphTagger
+
+        _natasha_morph_vocab = MorphVocab()
+        _natasha_morph_tagger = NewsMorphTagger(_natasha_embedding)
+        return True
+    except Exception:
+        _natasha_morph_load_failed = True
         return False
 
 
 def _run_ner_for_person(text: str) -> Optional[str]:
-    if not text.strip() or not _load_natasha():
+    if not text.strip() or not _load_natasha_ner():
         return None
     from natasha import PER, Doc
 
@@ -73,6 +106,32 @@ def _run_ner_for_person(text: str) -> Optional[str]:
 
 def _extract_name_via_ner(message: str) -> Optional[str]:
     return _run_ner_for_person(message)
+
+
+def _run_ner_for_city(text: str, *, skip_normalized: str) -> Optional[str]:
+    """Находит LOC-сущность в СЫРОМ тексте и лемматизирует до именительного падежа
+    (нижнем регистре, как принятый по проекту формат нормализованного текста). skip_normalized —
+    нормализованное имя города клиники, чтобы не ложно предупреждать про "не тот город", когда
+    LOC-сущность — это как раз родной город клиники."""
+
+    if not text.strip() or not _load_natasha_morph():
+        return None
+    from natasha import LOC, Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    doc.tag_ner(_natasha_ner_tagger)
+    for span in doc.spans:
+        if span.type != LOC:
+            continue
+        span_tokens = [token for token in doc.tokens if token.start >= span.start and token.stop <= span.stop]
+        for token in span_tokens:
+            token.lemmatize(_natasha_morph_vocab)
+        lemma = " ".join(token.lemma for token in span_tokens if token.lemma).strip()
+        if lemma and lemma != skip_normalized:
+            return lemma
+    return None
 
 
 def _distance_at_most_one(left: str, right: str) -> bool:
@@ -402,10 +461,23 @@ def extract_name(
     return None
 
 
-def find_unsupported_city(normalized_message: str, company_city: str) -> Optional[str]:
+def find_unsupported_city(
+    normalized_message: str,
+    company_city: str,
+    *,
+    message: str = "",
+) -> Optional[str]:
     normalized_company_city = normalize_text(company_city)
     if f"не из {normalized_company_city}" in normalized_message:
         return f"not_{company_city}"
+
+    # NER на СЫРОМ сообщении (регистр важен) — ловит любой город в любом падеже, не только
+    # перечисленные вручную в KNOWN_CITY_FORMS. message — опциональный параметр (не все вызовы
+    # его передают), поэтому это дополнение, не замена словарного пути ниже.
+    if message:
+        ner_city = _run_ner_for_city(message, skip_normalized=normalized_company_city)
+        if ner_city:
+            return " ".join(word.capitalize() for word in ner_city.split())
 
     for city_form, city_name in KNOWN_CITY_FORMS.items():
         if normalize_text(city_name) == normalized_company_city:
@@ -448,7 +520,7 @@ def is_location_mismatch(message: str, normalized_message: str, company_city: st
         return False
     if contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
         return True
-    if find_unsupported_city(normalized_message, company_city):
+    if find_unsupported_city(normalized_message, company_city, message=message):
         return True
 
     for pattern in LOCATION_PATTERNS:

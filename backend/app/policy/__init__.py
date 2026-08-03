@@ -1723,7 +1723,7 @@ def analyze_message(
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):
         medical_requested = False
-    unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
+    unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city, message=message)
     city_in_text = city_prepositional(knowledge_base.company.city)
     sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
 

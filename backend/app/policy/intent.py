@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from functools import lru_cache
 from typing import Any, Optional
 
 from ..knowledge import _token_prefix_match, normalize_text
@@ -33,6 +34,7 @@ from .extractors import (
     contains_keyword,
     fuzzy_contains,
     is_location_mismatch,
+    lemmatize_known_name,
     mentions_company_city,
 )
 from .restricted import is_restricted_question
@@ -58,6 +60,50 @@ def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
     if isinstance(synonyms, list):
         terms.extend(str(synonym) for synonym in synonyms)
     return [term for term in terms if term]
+
+
+def _tenant_catalog_text(known_services: list[dict[str, Any]]) -> str:
+    # Категория намеренно НЕ идёт через _known_service_terms — та же функция используется для
+    # разрешения service_id по сообщению, и категория (часто общая у нескольких услуг) как
+    # matchable term там путает, к какой именно услуге относится сообщение. Здесь нужен только
+    # текст для проверки "это слово вообще про нашу тему", отдельный список безопаснее.
+    terms: list[str] = []
+    for service_payload in known_services:
+        terms.extend(_known_service_terms(service_payload))
+        category = service_payload.get("category")
+        if category:
+            terms.append(str(category))
+    return normalize_text(" ".join(terms))
+
+
+@lru_cache(maxsize=256)
+def _lemma_or_self(word: str) -> str:
+    return lemmatize_known_name(word) or word
+
+
+def _exclude_keywords_covered_by_catalog(keywords: set[str], catalog_text: str) -> set[str]:
+    """OFF_TOPIC_KEYWORDS/UNKNOWN_SERVICE_KEYWORDS общие для всех тенантов и содержат лексику
+    конкретных доменов ("уборка", "авто", "филлеры") — живой баг: для клининговой компании
+    "уборка" в её же каталоге услуг всё равно матчилась как "такой услуги нет". Убираем из
+    списка любое ключевое слово, которое и так встречается в name/synonyms/category самого
+    тенанта — оно не может быть "не нашей темой", если это буквально наша услуга.
+
+    Сравнение идёт и дословно, и по лемме — сама услуга в каталоге почти всегда в именительном
+    падеже ("Уборка квартир"), а в списке ключевых слов рядом лежат разные падежные формы
+    ("уборка"/"уборку"/"уборке") как отдельные строки; дословное сравнение ловит только
+    случайно совпавшую форму, лемма ловит все."""
+
+    if not catalog_text:
+        return keywords
+    catalog_lemma_text = _lemma_or_self(catalog_text)
+    remaining = set()
+    for keyword in keywords:
+        if contains_keyword(catalog_text, {keyword}):
+            continue
+        if contains_keyword(catalog_lemma_text, {_lemma_or_self(keyword)}):
+            continue
+        remaining.add(keyword)
+    return remaining
 
 
 def _service_token_match(term_token: str, query_token: str, *, allow_fuzzy: bool = True) -> bool:
@@ -140,6 +186,9 @@ def normalize_classification(raw_result: dict[str, Any]) -> dict[str, object]:
     context_variant = raw_result.get("context_variant")
     if isinstance(context_variant, dict):
         normalized["context_variant"] = context_variant
+    context_candidate_service_ids = raw_result.get("context_candidate_service_ids")
+    if isinstance(context_candidate_service_ids, list) and context_candidate_service_ids:
+        normalized["context_candidate_service_ids"] = context_candidate_service_ids
     return normalized
 
 
@@ -156,7 +205,11 @@ def classify_and_extract(
         return {"intent": "clarify", "service_id": None, "confidence": 0.7}
     if is_location_mismatch(message, normalized_message, company_city):
         return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
-    has_off_topic_keyword = contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS)
+    catalog_text = _tenant_catalog_text(known_services)
+    off_topic_keywords = _exclude_keywords_covered_by_catalog(OFF_TOPIC_KEYWORDS, catalog_text)
+    unknown_service_keywords = _exclude_keywords_covered_by_catalog(UNKNOWN_SERVICE_KEYWORDS, catalog_text)
+
+    has_off_topic_keyword = contains_keyword(normalized_message, off_topic_keywords)
     service_id = _local_service_id(message, known_services, allow_fuzzy=not has_off_topic_keyword)
     if has_off_topic_keyword and service_id is None:
         return {"intent": "off_topic", "service_id": None, "confidence": 0.82}
@@ -175,7 +228,7 @@ def classify_and_extract(
         and not contains_keyword(normalized_message, DURATION_KEYWORDS)
     ):
         return {"intent": "faq_question", "service_id": service_id, "confidence": 0.84}
-    if contains_keyword(normalized_message, UNKNOWN_SERVICE_KEYWORDS) and service_id is None:
+    if contains_keyword(normalized_message, unknown_service_keywords) and service_id is None:
         return {"intent": "unknown_service", "service_id": None, "confidence": 0.84}
     if service_id is None:
         service_id = _local_service_id(message, known_services)

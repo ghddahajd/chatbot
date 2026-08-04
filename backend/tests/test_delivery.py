@@ -41,6 +41,7 @@ def test_enqueue_event_creates_record_with_event_type(tmp_path: Path, resolver, 
         knowledge_base_resolver=resolver,
         telegram_bot_token="token",
         telegram_chat_id="chat",
+        telegram_dm_enabled=True,
     )
 
     async def fake_send(record: dict[str, Any]) -> int:
@@ -75,6 +76,7 @@ def test_enqueue_lead_keeps_backward_compat_event_type(tmp_path: Path, resolver,
         knowledge_base_resolver=resolver,
         telegram_bot_token="token",
         telegram_chat_id="chat",
+        telegram_dm_enabled=True,
     )
 
     async def fake_send(record: dict[str, Any]) -> int:
@@ -181,6 +183,7 @@ def test_enqueue_event_falls_back_to_global_telegram_when_notifications_missing(
         knowledge_base_resolver=resolver,
         telegram_bot_token="token",
         telegram_chat_id="global-chat",
+        telegram_dm_enabled=True,
     )
 
     async def fake_send(record: dict[str, Any]) -> int:
@@ -202,6 +205,23 @@ def test_enqueue_event_falls_back_to_global_telegram_when_notifications_missing(
     records = anyio.run(run_enqueue_event)
 
     assert records[0]["target"] == "global-chat"
+
+
+def test_global_telegram_fallback_disabled_by_default(tmp_path: Path, resolver) -> None:
+    """Раньше личный telegram_chat_id использовался как фолбэк ВСЕГДА, дублируя каждый
+    лид/эскалацию личным sendMessage в обход Тем группы операторов (telegram_bridge.py) —
+    теперь по умолчанию выключен, включается явно через telegram_dm_enabled."""
+
+    service = DeliveryService(
+        outbox_file=tmp_path / "delivery_outbox.jsonl",
+        knowledge_base_resolver=resolver,
+        telegram_bot_token="token",
+        telegram_chat_id="global-chat",
+    )
+
+    destinations = service._destinations_for(company_id="rosh_demo", event_type="lead_created")
+
+    assert destinations == []
 
 
 def test_enqueue_event_supports_different_client_chat_ids(

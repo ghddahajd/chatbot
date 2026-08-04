@@ -180,3 +180,94 @@ def test_faq_validator_blocks_medical_efficacy_claim_even_when_grounded() -> Non
     }
 
     assert not validate_response("Эксимерный лазер разрушает бактерии.", context)
+
+
+def test_efficacy_claim_pattern_catches_audit_reported_phrasings() -> None:
+    """Аудит поймал живые фразы, где старый паттерн (только 'эффективна при/от') давал
+    ложноотрицательный результат: 'для' вместо 'при/от', и два обещания результата вообще без
+    слова 'эффективн-'."""
+
+    context = {
+        "question_type": "faq_question",
+        "article_context": [{"title": "Процедура", "snippet": "Нейтральное описание без обещаний."}],
+    }
+
+    for answer in (
+        "Процедура эффективна для пациентов любого возраста.",
+        "Показывает стабильные результаты при работе с проблемной кожей.",
+        "Даёт стойкий результат уже после первого сеанса.",
+    ):
+        assert not validate_response(answer, context), answer
+
+
+def test_faq_validator_blocks_client_specific_undisclosed_equipment_name() -> None:
+    """B6: захардкоженный UNSUPPORTED_EQUIPMENT_PATTERNS не знает реальные бренды конкретного
+    клиента (например ROSH-овский InMode Morpheus8) — per-клиентский список из
+    undisclosed_equipment_terms должен ловить их отдельно, даже если источник его упоминает."""
+
+    context = {
+        "question_type": "faq_question",
+        "article_context": [
+            {"title": "RF-лифтинг", "snippet": "Используется аппарат InMode Morpheus8."}
+        ],
+        "undisclosed_equipment_terms": ["InMode Morpheus8", "морфеус", "инмод"],
+    }
+
+    assert not validate_response("Используется аппарат InMode Morpheus8.", context)
+    assert not validate_response("Мы используем Морфеус для лифтинга.", context)
+
+
+def test_faq_validator_allows_answer_when_equipment_is_disclosed() -> None:
+    """Если клиент раскрыл бренд (disclose: true), undisclosed_equipment_terms для этой записи
+    пуст — валидатор не должен блокировать упоминание бренда, которого нет в списке."""
+
+    context = {
+        "question_type": "faq_question",
+        "article_context": [
+            {"title": "RF-лифтинг", "snippet": "Используется аппарат InMode Morpheus8."}
+        ],
+        "undisclosed_equipment_terms": [],
+    }
+
+    assert validate_response("Используется аппарат InMode Morpheus8.", context)
+
+
+def test_faq_validator_no_longer_unlocked_by_user_mentioning_brand_first() -> None:
+    """B6: раньше grounding_text для brand-проверки включал user_message — пользователь мог
+    сам назвать бренд в вопросе и тем самым 'разблокировать' его повтор в ответе модели.
+    Источник (article_context) бренд не упоминает — только пользователь."""
+
+    context = {
+        "question_type": "faq_question",
+        "user_message": "у вас есть аппарат Мегасвет?",
+        "article_context": [{"title": "RF-лифтинг", "snippet": "Обычный текст без брендов."}],
+    }
+
+    assert not validate_response("Да, используется аппарат Мегасвет для процедуры.", context)
+
+
+def test_consultation_validator_blocks_client_specific_undisclosed_equipment_name() -> None:
+    context = {
+        "domain_profile": {"type": "medical", "restricted_advice": ["medical_treatment"]},
+        "undisclosed_equipment_terms": ["InMode Morpheus8"],
+    }
+
+    assert not validate_consultation_response(
+        "Для лифтинга используется InMode Morpheus8.",
+        context,
+    )
+
+
+def test_article_guidance_validator_blocks_client_specific_undisclosed_equipment_name() -> None:
+    context = {
+        "article_guidance_candidate": {
+            "excerpt": "Используется аппарат InMode Morpheus8 для RF-лифтинга.",
+            "service_names": "Игольчатый RF-лифтинг",
+        },
+        "undisclosed_equipment_terms": ["InMode Morpheus8"],
+    }
+
+    assert not validate_article_guidance_response(
+        "В материалах центра указано, что используется аппарат InMode Morpheus8.",
+        context,
+    )

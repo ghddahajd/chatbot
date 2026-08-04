@@ -47,7 +47,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
     settings = request.app.state.settings
     if settings.chat_rate_limit_enabled:
         limiter = request.app.state.chat_rate_limiter
-        if not limiter.allow(client_ip(request)):
+        if not limiter.allow(client_ip(request, trusted_proxy_count=settings.trusted_proxy_count)):
             raise HTTPException(status_code=429, detail="Too many chat messages. Please wait.")
     return await ChatService(request).handle_message(
         company_id=payload.company_id,

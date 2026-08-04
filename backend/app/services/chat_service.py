@@ -1,5 +1,6 @@
 """сервис обработки сообщений чата."""
 
+import asyncio
 import logging
 import re
 
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from ..delivery import _escape_markdown
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
+from ..telegram_bridge import client_label_for_session
 from ..knowledge import normalize_text, phrasebook_value_to_text
 from ..models import (
     ChatMessageResponse,
@@ -18,7 +20,7 @@ from ..models import (
     PolicyReason,
     SessionStatus,
 )
-from ..policy import classify_and_extract
+from ..policy import classify_and_extract, undisclosed_equipment_terms
 from ..policy.constants import NEGATIVE_MESSAGES, PHONE_PATTERN
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
@@ -231,6 +233,7 @@ class ChatService:
         session,
         knowledge_base,
         referral_service: object = None,
+        urgent: bool = True,
     ) -> tuple[PolicyAction, str, list[dict[str, str]]]:
         await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
         await session_store.update_context(session.session_id, last_intent=PolicyReason.REGULATED_ADVICE.value)
@@ -238,11 +241,22 @@ class ChatService:
             session.session_id,
             metadata=self._regulated_lead_metadata(knowledge_base),
         )
+        # "Если срочно — звоните... в скорую (103)" уместно для реально острых сигналов
+        # (кровотечение, аллергия), но не для бытовых вопросов вроде "а больно?" — см.
+        # escalation_urgency в _medical_referral_result (policy/__init__.py). По умолчанию
+        # urgent=True (безопасный дефолт для путей без явной оценки срочности, например
+        # LLM-классификатора риска на consultation-ветке).
+        phrase_key = "regulated_soft_offer" if urgent else "regulated_soft_offer_calm"
         answer = self._phrase(
-            "regulated_soft_offer",
+            phrase_key,
             (
                 "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
                 "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
+            )
+            if urgent
+            else (
+                "Заочно тут лучше не гадать — это уточнит специалист. Могу передать ваш контакт "
+                "менеджеру или подключить его сейчас."
             ),
             seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
         )
@@ -614,9 +628,8 @@ class ChatService:
         )
         await session_store.set_lead_requested(session.session_id, True)
         await self._clear_contact_state(session_store, session.session_id)
-        await self._ensure_telegram_topic(
-            session_id=session.session_id,
-            last_message=lead.summary,
+        await self._notify_telegram_for_lead(
+            lead,
             reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
         )
 
@@ -734,6 +747,22 @@ class ChatService:
                 expires_at_turn=expires_at_turn,
             )
 
+        if not service_id and safe_context.get("question_type") == "cosmetic_article_guidance":
+            suggested_services = safe_context.get("suggested_services")
+            if isinstance(suggested_services, list) and len(suggested_services) > 1:
+                candidates = [
+                    {"id": str(item.get("id") or ""), "name": str(item.get("name") or "")}
+                    for item in suggested_services
+                    if isinstance(item, dict) and item.get("id")
+                ]
+                if candidates:
+                    return ContextFrame(
+                        frame_type="cosmetic_candidates",
+                        slots={"candidates": candidates},
+                        last_intent=last_intent,
+                        expires_at_turn=expires_at_turn,
+                    )
+
         if service_id:
             slots = {"question_type": safe_context.get("question_type")}
             variant_matches = safe_context.get("variant_matches")
@@ -753,67 +782,81 @@ class ChatService:
 
     async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> None:
         delivery_service = getattr(self.request.app.state, "delivery_service", None)
-        if delivery_service is None:
-            return
+        if delivery_service is not None:
+            try:
+                await delivery_service.enqueue_event(
+                    event_type="operator_requested",
+                    company_id=company_id,
+                    session_id=session_id,
+                    payload={
+                        "last_message": message,
+                        "operator_url": self._operator_url(),
+                    },
+                )
+            except Exception as error:
+                logger.warning(
+                    "operator delivery enqueue failed company_id=%s session_id=%s error=%s",
+                    company_id,
+                    session_id,
+                    type(error).__name__,
+                )
 
-        try:
-            await delivery_service.enqueue_event(
-                event_type="operator_requested",
-                company_id=company_id,
-                session_id=session_id,
-                payload={
-                    "last_message": message,
-                    "operator_url": self._operator_url(),
-                },
-            )
-        except Exception as error:
-            logger.warning(
-                "operator delivery enqueue failed company_id=%s session_id=%s error=%s",
-                company_id,
-                session_id,
-                type(error).__name__,
-            )
-
-        await self._ensure_telegram_topic(session_id=session_id, last_message=message, reason="⚡️ Запросил оператора")
-
-    _TELEGRAM_ROLE_LABELS = {"user": "👤 Клиент", "assistant": "🤖 Бот", "operator": "🧑‍💼 Оператор"}
-
-    def _format_telegram_transcript(self, session) -> str:
-        if session is None or not session.messages:
-            return ""
-        lines = [
-            f"{self._TELEGRAM_ROLE_LABELS.get(entry['role'], entry['role'])}: {entry['text']}"
-            for entry in recent_messages_for(session, limit=15)
-            if entry.get("text")
-        ]
-        return "\n".join(lines)
-
-    async def _ensure_telegram_topic(self, *, session_id: str, last_message: str, reason: str) -> None:
         bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
         if bridge is None or not bridge.enabled:
             return
         try:
             session = await self.request.app.state.session_store.get(session_id)
             if session is not None and session.telegram_topic_id is not None:
-                return  # тема уже есть — не дублируем карточку/транскрипт
-            contact_name = str((session.contact_draft or {}).get("name") or "").strip() if session else ""
-            topic_name = contact_name or f"Сессия {session_id[:8]}"
-            card_text = (
-                f"{reason} — *{_escape_markdown(topic_name)}*\n\n"
-                f"💬 \"{_escape_markdown(last_message)}\"\n\n"
-                "Нажмите «Взять в работу», чтобы вести диалог прямо в этой теме."
-            )
-            transcript = self._format_telegram_transcript(session)
-            await bridge.ensure_topic_for_session(
+                return  # тема уже есть (например, повторный запрос) — не дублируем карточку
+            client_label = client_label_for_session(session) if session is not None else session_id[:8]
+            await bridge.post_operator_queue_card(
                 session_id=session_id,
-                topic_name=topic_name,
-                card_text=card_text,
-                transcript=transcript,
+                reason="⚡️ Запросил оператора",
+                last_message=message,
+                client_label=client_label,
             )
         except Exception as error:
             logger.warning(
-                "telegram_bridge topic creation failed session_id=%s error=%s",
+                "telegram_bridge queue card failed session_id=%s error=%s",
                 session_id,
+                type(error).__name__,
+            )
+
+    async def _notify_telegram_for_lead(self, lead, *, reason: str) -> None:
+        """Лид с needs_operator=True реально ждёт живого человека — карточка в General
+        с клеймом (как operator_requested). Обычный лид/запись — контакт уже зафиксирован,
+        бот уже дал полный ответ, никто прямо сейчас не ждёт у монитора — простая карточка
+        в тему "Клиенты", без клейма и без своей темы."""
+
+        bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
+        if bridge is None or not bridge.enabled:
+            return
+        try:
+            if lead.needs_operator:
+                session = await self.request.app.state.session_store.get(lead.session_id)
+                if session is not None and session.telegram_topic_id is not None:
+                    return
+                # contact_draft уже очищен к этому моменту (_clear_contact_state отрабатывает
+                # до вызова этого метода) — берём имя/телефон с самого lead, не с сессии.
+                client_label = lead.name or lead.phone or f"Сессия {lead.session_id[:8]}"
+                await bridge.post_operator_queue_card(
+                    session_id=lead.session_id,
+                    reason=reason,
+                    last_message=lead.summary,
+                    client_label=client_label,
+                )
+            else:
+                card_text = (
+                    f"{reason}\n\n"
+                    f"Имя: {_escape_markdown(lead.name or 'не указано')}\n"
+                    f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n\n"
+                    f"{_escape_markdown(lead.summary)}"
+                )
+                await bridge.post_client_lead_card(card_text)
+        except Exception as error:
+            logger.warning(
+                "telegram_bridge lead notify failed session_id=%s error=%s",
+                lead.session_id,
                 type(error).__name__,
             )
 
@@ -846,10 +889,38 @@ class ChatService:
         session_store = self.request.app.state.session_store
         session = await session_store.get_or_create(session_id, company_id)
         async with session_store.lock_for(session.session_id):
-            return await self._handle_message_locked(
+            response = await self._handle_message_locked(
                 company_id=company_id,
                 session_id=session.session_id,
                 message=message,
+            )
+        await self._track_answer_safe(company_id, session.session_id, message, response)
+        return response
+
+    async def _track_answer_safe(
+        self,
+        company_id: str,
+        session_id: str,
+        message: str,
+        response: ChatMessageResponse | JSONResponse,
+    ) -> None:
+        if not isinstance(response, ChatMessageResponse):
+            return
+        analytics_service = self.request.app.state.analytics_service
+        session_store = self.request.app.state.session_store
+        session = await session_store.get(session_id)
+        try:
+            await analytics_service.track_answer(
+                company_id=company_id,
+                session_id=session_id,
+                message=message,
+                answer=response.answer,
+                action=response.action.value,
+                policy_reason=session.last_intent if session else None,
+            )
+        except Exception as error:
+            logger.warning(
+                "analytics track_answer failed session_id=%s error=%s", session_id, type(error).__name__
             )
 
     async def _handle_message_locked(
@@ -951,7 +1022,8 @@ class ChatService:
                 knowledge_base.company.city,
                 knowledge_base.domain_profile,
             )
-            waiting_policy_result = request.app.state.policy_analyzer(
+            waiting_policy_result = await asyncio.to_thread(
+                request.app.state.policy_analyzer,
                 message,
                 session,
                 knowledge_base,
@@ -991,11 +1063,7 @@ class ChatService:
                 await self._finalize_lead_summary(session, lead)
                 await lead_service.save(lead)
                 await session_store.set_lead_requested(session.session_id, True)
-                await self._ensure_telegram_topic(
-                    session_id=session.session_id,
-                    last_message=lead.summary,
-                    reason="🔔 Новый лид",
-                )
+                await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
                 answer = self._phrase(
                     "lead_success",
                     "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
@@ -1038,7 +1106,8 @@ class ChatService:
             classification = maybe_contextual_classification(message, session)
             if classification is None:
                 classification = await resolve_classification(message, request, knowledge_base, session)
-            policy_result = request.app.state.policy_analyzer(
+            policy_result = await asyncio.to_thread(
+                request.app.state.policy_analyzer,
                 message,
                 session,
                 knowledge_base,
@@ -1054,6 +1123,7 @@ class ChatService:
         prior_last_intent = session.last_intent
         prior_contact_draft = dict(session.contact_draft)
         await self._remember_policy_context(session_store, session, policy_result)
+        policy_result.safe_context["undisclosed_equipment_terms"] = undisclosed_equipment_terms(knowledge_base)
 
         lead_created = False
         answer = ""
@@ -1121,9 +1191,8 @@ class ChatService:
                 lead_created = True
                 await session_store.set_lead_requested(session.session_id, True)
                 await self._clear_contact_state(session_store, session.session_id)
-                await self._ensure_telegram_topic(
-                    session_id=session.session_id,
-                    last_message=lead.summary,
+                await self._notify_telegram_for_lead(
+                    lead,
                     reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
                 )
                 if is_booking_request:
@@ -1154,6 +1223,7 @@ class ChatService:
                     session=session,
                     knowledge_base=knowledge_base,
                     referral_service=policy_result.safe_context.get("referral_service"),
+                    urgent=policy_result.safe_context.get("escalation_urgency") != "calm",
                 )
             else:
                 await session_store.set_operator_requested(session.session_id, True)

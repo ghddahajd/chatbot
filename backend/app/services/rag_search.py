@@ -92,6 +92,28 @@ def tokenize(value: str) -> list[str]:
     ]
 
 
+def rag_corpus_status(path: Path | None = None) -> dict[str, Any]:
+    """Статус RAG-корпуса для громкой проверки при старте/health-чека.
+
+    Отсутствие корпуса раньше деградировало молча — retrieve_article_context ловил
+    FileNotFoundError и просто отдавал пустой список, смоук-тест это не ловит (цены и
+    услуги отвечают нормально, статьи тихо пропадают). Явный статус — чтобы это было видно
+    сразу при деплое, а не через жалобу клиента."""
+
+    chunks_path = path or default_rag_chunks_path()
+    if not chunks_path.exists():
+        return {"path": str(chunks_path), "ok": False, "chunk_count": 0, "error": "file_not_found"}
+    try:
+        # Тем же кэшем, что и search_rag_chunks — вызов при старте (см. lifespan в main.py)
+        # заодно прогревает кэш до первого реального запроса пользователя.
+        chunks, _frequencies = _load_corpus_cached(chunks_path)
+    except Exception as error:
+        return {"path": str(chunks_path), "ok": False, "chunk_count": 0, "error": type(error).__name__}
+    if not chunks:
+        return {"path": str(chunks_path), "ok": False, "chunk_count": 0, "error": "empty_corpus"}
+    return {"path": str(chunks_path), "ok": True, "chunk_count": len(chunks), "error": None}
+
+
 def load_chunks(path: Path | None = None) -> list[dict[str, Any]]:
     chunks_path = path or default_rag_chunks_path()
     chunks: list[dict[str, Any]] = []
@@ -111,6 +133,33 @@ def _document_frequencies(chunks: list[dict[str, Any]]) -> Counter[str]:
         text = f"{chunk.get('title') or ''} {chunk.get('text') or ''}"
         frequencies.update(set(tokenize(text)))
     return frequencies
+
+
+# Корпус (перечитать файл + пересчитать IDF по всем чанкам) стоил ~200мс и раньше делался
+# ЗАНОВО на каждый вызов search_rag_chunks — а вызовов может быть до 6 на одно сообщение
+# (разные ветки analyze_message независимо дёргают RAG). Корпус реально меняется только на
+# деплое/перегенерации, не на каждый чих — кэшируем по пути + mtime файла (не просто по
+# пути, чтобы живая перегенерация корпуса без рестарта процесса тоже подхватывалась).
+_CORPUS_CACHE: dict[str, tuple[float, list[dict[str, Any]], Counter[str]]] = {}
+
+
+def _load_corpus_cached(chunks_path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
+    key = str(chunks_path)
+    mtime = chunks_path.stat().st_mtime  # тот же FileNotFoundError, что раньше бросал load_chunks
+    cached = _CORPUS_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1], cached[2]
+
+    chunks = load_chunks(chunks_path)
+    frequencies = _document_frequencies(chunks)
+    _CORPUS_CACHE[key] = (mtime, chunks, frequencies)
+    return chunks, frequencies
+
+
+def clear_corpus_cache() -> None:
+    """Для тестов и живой перегенерации корпуса без ожидания смены mtime."""
+
+    _CORPUS_CACHE.clear()
 
 
 def _word_window(text: str, center: int, size: int) -> str:
@@ -189,6 +238,23 @@ def _score_chunk(
     normalized_title = normalize_text(title)
     chunk_tokens = Counter(tokenize(text))
 
+    # Один редкий, но нерелевантный токен не должен в одиночку перетягивать порог уверенности —
+    # нашли живьём: "у меня прыщи не проходят полгода" совпало со статьёй про второй подбородок
+    # только по слову "полгода" (там "результат виден через полгода", про совсем другое); у
+    # редкого слова высокий IDF, и одного совпадения хватило пройти MIN_ARTICLE_SCORE, хотя
+    # "прыщи"/"проходят" — то есть весь смысл вопроса — в статье не встречаются вообще. Тот же
+    # класс бага, что раньше чинили для местоимений в STOP_WORDS, но общим правилом, не списком
+    # конкретных слов: для запроса из 2+ РАЗНЫХ слов требуем минимум 2 совпадения. Исключение —
+    # единственное совпадение попало в ЗАГОЛОВОК статьи (сильный сигнал предметности, например
+    # "как проходит кольпоскопия" про статью "Кольпоскопия" — "проходит" в тексте может не быть
+    # вообще, но название статьи прямо отвечает на вопрос). Запросы с одним содержательным словом
+    # (остальное — стоп-слова) не трогаем — требовать от них 2 совпадения нечем.
+    distinct_query_tokens = set(query_tokens)
+    if len(distinct_query_tokens) >= 2:
+        matched_tokens = {token for token in distinct_query_tokens if chunk_tokens[token] > 0}
+        if len(matched_tokens) < 2 and not any(token in normalized_title for token in matched_tokens):
+            return 0.0
+
     score = 0.0
     for token in query_tokens:
         tf = chunk_tokens[token]
@@ -209,9 +275,8 @@ def _score_chunk(
 
 def search_rag_chunks(query: str, top_k: int = 5, path: Path | None = None) -> dict[str, Any]:
     chunks_path = path or default_rag_chunks_path()
-    chunks = load_chunks(chunks_path)
+    chunks, document_frequencies = _load_corpus_cached(chunks_path)
     query_tokens = tokenize(query)
-    document_frequencies = _document_frequencies(chunks)
 
     matches: list[dict[str, Any]] = []
     for chunk in chunks:

@@ -9,3 +9,7 @@ python-multipart==0.0.20
 rapidfuzz==3.13.0
 rich==15.0.0
 questionary==2.1.1
+# офлайн NER для русского (извлечение имени человека в extractors.py) — pymorphy2 (зависимость
+# natasha) требует pkg_resources, который setuptools>=81 больше не поставляет.
+setuptools<81
+natasha==1.6.0

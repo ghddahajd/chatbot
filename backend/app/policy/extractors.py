@@ -21,6 +21,307 @@ try:
 except ImportError:  # pragma: no cover - local dev can run before deps are installed.
     Levenshtein = None
 
+# Natasha (github.com/natasha) — офлайн NER для русского, настоящее распознавание сущностей
+# вместо угадывания по регуляркам.
+#
+# Имена людей (PER): "меня зовут Мария Петровна" -> имя+отчество без ручных костылей на
+# заглавную букву, "моя фамилия Петина" -> "Петина", не слово "фамилия"; и главное —
+# "дура тупая" НЕ считает именем (regex не отличит оскорбление от имени, NER — отличает).
+# Единственный найденный пробел — голое "Иван +7999..." без рамки-глагола natasha не ловит,
+# поэтому ниже он остаётся как regex-фолбэк, не убран целиком.
+#
+# Города (LOC): раньше KNOWN_CITY_FORMS требовал вручную перечислять КАЖДОЕ падежное
+# склонение города ("москва"/"москве"/"москвы") — для большинства городов в списке была только
+# именительная форма, "живу в Екатеринбурге" не ловилось вообще. NER находит LOC-сущность в
+# любом падеже, а отдельный морфологический тэггер лемматизирует до именительного падежа
+# ("Нижнем Новгороде" -> "нижний новгород") — ловит ЛЮБОЙ город, не только перечисленные вручную.
+#
+# Модели грузятся один раз лениво (~0.3с на NER, +43МБ на морфологию поверх — та же embedding
+# переиспользуется) — не на каждый вызов и не если функция вообще не понадобится в этом
+# процессе. Если natasha не установлена или не грузится — тихо остаёмся на regex, не роняем
+# сервис. NER работает на СЫРОМ (не normalize_text) тексте — регистр важен для распознавания,
+# как и для имён.
+_natasha_segmenter: Any = None
+_natasha_embedding: Any = None
+_natasha_ner_tagger: Any = None
+_natasha_morph_tagger: Any = None
+_natasha_morph_vocab: Any = None
+_natasha_ner_load_failed = False
+_natasha_morph_load_failed = False
+_pymorphy_analyzer: Any = None
+_pymorphy_load_failed = False
+
+
+def _load_pymorphy() -> bool:
+    """pymorphy2.MorphAnalyzer() напрямую (не через natasha) — нужен для СКЛОНЕНИЯ
+    (nominative -> любой другой падеж), а не только для лемматизации (любой падеж ->
+    nominative), которую даёт NewsMorphTagger. На Python 3.12 pymorphy2.MorphAnalyzer() падает
+    с AttributeError('inspect' has no attribute 'getargspec'), ЕСЛИ natasha не была
+    импортирована раньше (natasha тянет свой шим для этого); поэтому сначала грузим
+    natasha-морфологию, потом уже pymorphy2 напрямую."""
+
+    global _pymorphy_analyzer, _pymorphy_load_failed
+    if _pymorphy_analyzer is not None:
+        return True
+    if _pymorphy_load_failed:
+        return False
+    if not _load_natasha_morph():
+        return False
+    try:
+        import pymorphy2
+
+        _pymorphy_analyzer = pymorphy2.MorphAnalyzer()
+        return True
+    except Exception:
+        _pymorphy_load_failed = True
+        return False
+
+
+def _load_natasha_ner() -> bool:
+    global _natasha_segmenter, _natasha_embedding, _natasha_ner_tagger, _natasha_ner_load_failed
+    if _natasha_ner_tagger is not None:
+        return True
+    if _natasha_ner_load_failed:
+        return False
+    try:
+        from natasha import NewsEmbedding, NewsNERTagger, Segmenter
+
+        _natasha_segmenter = Segmenter()
+        _natasha_embedding = NewsEmbedding()
+        _natasha_ner_tagger = NewsNERTagger(_natasha_embedding)
+        return True
+    except Exception:
+        _natasha_ner_load_failed = True
+        return False
+
+
+def _load_natasha_morph() -> bool:
+    global _natasha_morph_tagger, _natasha_morph_vocab, _natasha_morph_load_failed
+    if _natasha_morph_tagger is not None:
+        return True
+    if _natasha_morph_load_failed:
+        return False
+    if not _load_natasha_ner():  # переиспользуем ту же embedding/segmenter, не грузим заново
+        return False
+    try:
+        from natasha import MorphVocab, NewsMorphTagger
+
+        _natasha_morph_vocab = MorphVocab()
+        _natasha_morph_tagger = NewsMorphTagger(_natasha_embedding)
+        return True
+    except Exception:
+        _natasha_morph_load_failed = True
+        return False
+
+
+def _run_ner_for_person(text: str) -> Optional[str]:
+    if not text.strip() or not _load_natasha_ner():
+        return None
+    from natasha import PER, Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_ner(_natasha_ner_tagger)
+    for span in doc.spans:
+        if span.type != PER:
+            continue
+        candidate = span.text.strip()
+        if candidate:
+            return candidate.title()
+    return None
+
+
+def _extract_name_via_ner(message: str) -> Optional[str]:
+    return _run_ner_for_person(message)
+
+
+# NER тегирует LOC любую географическую сущность — город, район, станцию метро, улицу —
+# одинаково, без различия уровня. Живой баг (найден внешним аудитом, подтверждён): "я с
+# Таганки"/"живу на Соколе" (районы Москвы) ловились как "не тот город" для московской
+# клиники. Предлог перед сущностью — надёжный грамматический сигнал уровня в русском: "в"/"из"
+# обычно вводят город ("живу В Москве", "я ИЗ Казани"), "на"/"с" — район/станцию/ориентир
+# ("живу НА Соколе", "я С Таганки") тем же прилагательным падежом. Не идеально (есть города
+# "на" в естественной речи не встречающиеся так), но проверено на всех живых кейсах аудита —
+# отсекает все 5 ложных срабатываний по районам, не трогает ни один настоящий город.
+_CITY_LEVEL_PREPOSITIONS = {"в", "из"}
+
+
+def _run_ner_for_city_raw(text: str) -> Optional[str]:
+    """Находит LOC-сущность НА УРОВНЕ ГОРОДА (см. _CITY_LEVEL_PREPOSITIONS) в СЫРОМ тексте,
+    возвращает лемму в именительном падеже без какой-либо фильтрации по совпадению с городом
+    клиники — используется и когда нужно найти "не тот город" (find_unsupported_city), и когда
+    нужно подтвердить "да, тот самый" (mentions_company_city)."""
+
+    if not text.strip() or not _load_natasha_morph():
+        return None
+    from natasha import LOC, Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    doc.tag_ner(_natasha_ner_tagger)
+    for span in doc.spans:
+        if span.type != LOC:
+            continue
+        preceding_tokens = [token for token in doc.tokens if token.stop <= span.start]
+        preceding_word = preceding_tokens[-1].text.lower() if preceding_tokens else ""
+        if preceding_word not in _CITY_LEVEL_PREPOSITIONS:
+            continue
+        span_tokens = [token for token in doc.tokens if token.start >= span.start and token.stop <= span.stop]
+        for token in span_tokens:
+            token.lemmatize(_natasha_morph_vocab)
+        lemma = " ".join(token.lemma for token in span_tokens if token.lemma).strip()
+        if lemma:
+            return lemma
+    return None
+
+
+def _run_ner_for_city(text: str, *, skip_normalized: str) -> Optional[str]:
+    """Как _run_ner_for_city_raw, но пропускает совпадение с городом клиники — не ложно
+    предупреждать про "не тот город", когда LOC-сущность — это как раз родной город клиники."""
+
+    lemma = _run_ner_for_city_raw(text)
+    if lemma and lemma != skip_normalized:
+        return lemma
+    return None
+
+
+def extract_person_lemma_via_ner(text: str) -> Optional[str]:
+    """Находит PER-сущность в СЫРОМ тексте (регистр важен для распознавания) и возвращает её
+    лемму (именительный падеж, нижний регистр) — для сравнения с базой (например, врачей), не
+    для показа пользователю. Используется вместе с lemmatize_known_name() ниже — ОБЕ стороны
+    сравнения должны идти через одну и ту же лемматизацию, иначе не совпадут: pymorphy2 не
+    всегда согласован сам с собой между падежами одной и той же фамилии (проверено живьём:
+    "Джалилов" (именительный) -> лемма "джалил", но "Джалилову" (дательный) -> лемма
+    "джалилов" — РАЗНЫЕ строки при одинаковом человеке). Сравнивать леммы нужно по префиксу
+    токена (см. _doctor_matches), не на точное равенство."""
+
+    if not text.strip() or not _load_natasha_morph():
+        return None
+    from natasha import PER, Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    doc.tag_ner(_natasha_ner_tagger)
+    for span in doc.spans:
+        if span.type != PER:
+            continue
+        span_tokens = [token for token in doc.tokens if token.start >= span.start and token.stop <= span.stop]
+        for token in span_tokens:
+            token.lemmatize(_natasha_morph_vocab)
+        lemma = " ".join(token.lemma for token in span_tokens if token.lemma).strip()
+        if lemma:
+            return lemma
+    return None
+
+
+def lemmatize_known_name(name: str) -> Optional[str]:
+    """Лемматизирует УЖЕ ИЗВЕСТНОЕ имя (например, врача из базы клиента) — не ищет
+    PER-сущность, сразу лемматизирует все токены (имя гарантированно уже нужного типа)."""
+
+    if not name.strip() or not _load_natasha_morph():
+        return None
+    from natasha import Doc
+
+    doc = Doc(name)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    for token in doc.tokens:
+        token.lemmatize(_natasha_morph_vocab)
+    lemma = " ".join(token.lemma for token in doc.tokens if token.lemma).strip()
+    return lemma or None
+
+
+def _recapitalize_like(original: str, transformed: str) -> str:
+    orig_parts = re.split(r"([\s-]+)", original)
+    new_parts = re.split(r"([\s-]+)", transformed)
+    if len(orig_parts) != len(new_parts):
+        return transformed
+    result = []
+    for orig_part, new_part in zip(orig_parts, new_parts):
+        if orig_part[:1].isupper():
+            result.append(new_part[:1].upper() + new_part[1:])
+        else:
+            result.append(new_part)
+    return "".join(result)
+
+
+def inflect_city_prepositional(city: str) -> str:
+    """Склоняет ЛЮБОЙ город в предложный падеж ("Москва" -> "Москве", "Ярославль" ->
+    "Ярославле") вместо словаря на 2 города с фолбэком на именительный для всех остальных —
+    живой баг: "Очный приём только в Ярославль"/"в Казань" (грамматически неверно) для любого
+    клиента вне Москвы/Питера.
+
+    Дефисные составные ("Санкт-Петербург", "Ростов-на-Дону") склоняются pymorphy2 как ОДИН
+    токен — у него для таких есть готовые словарные статьи, посчитано и проверено вручную,
+    что per-token разбор дефиса ломает согласование. Пробельные составные ("Нижний Новгород")
+    требуют согласования ПО КАЖДОМУ слову отдельно (прилагательное 'нижний' само по себе не
+    просклоняется в 'нижнем' заодно с существительным) — склоняем каждый пробельный токен
+    независимо, что для дефисных токенов совпадает со случаем "один токен"."""
+
+    if not city.strip() or not _load_pymorphy():
+        return city
+
+    tokens = city.split(" ")
+    inflected_tokens = []
+    changed = False
+    for token in tokens:
+        if not token:
+            inflected_tokens.append(token)
+            continue
+        parsed = _pymorphy_analyzer.parse(token)[0]
+        inflected = parsed.inflect({"loct"})
+        if inflected and inflected.word:
+            inflected_tokens.append(inflected.word)
+            changed = True
+        else:
+            inflected_tokens.append(token)
+    if not changed:
+        return city
+    return _recapitalize_like(city, " ".join(inflected_tokens))
+
+
+_DAY_OR_TIME_LEMMAS = {
+    "после",
+    "утро",
+    "вечер",
+    "день",
+    "ночь",
+    "завтра",
+    "сегодня",
+    "послезавтра",
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+    "час",
+    "выходной",
+}
+
+
+def contains_day_or_time_lemma(normalized_message: str) -> bool:
+    """Лемматизирует все слова короткого сообщения и сравнивает с каноническим набором
+    (именительный падеж) вместо того, чтобы вручную перечислять каждую падежную форму — живой
+    баг: 'в среду'/'в пятницу'/'в субботу'/'на выходных' не совпадали с LEAD_FOLLOWUP_SHORT_KEYWORDS,
+    в котором были только 'среда'/'пятница'/'суббота'/'выходные'."""
+
+    if not normalized_message.strip() or not _load_natasha_morph():
+        return False
+    from natasha import Doc
+
+    doc = Doc(normalized_message)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    for token in doc.tokens:
+        token.lemmatize(_natasha_morph_vocab)
+        if token.lemma in _DAY_OR_TIME_LEMMAS:
+            return True
+    return False
+
 
 def _distance_at_most_one(left: str, right: str) -> bool:
     if Levenshtein is not None:
@@ -75,6 +376,18 @@ def _contains_token_sequence(tokens: list[str], keyword_tokens: list[str]) -> bo
         )
         for start in range(len(tokens) - span + 1)
     )
+
+
+# Местоимения-анафоры ("а сколько ЭТО стоит?") ломают consecutive-token матчинг фраз вроде
+# "сколько стоит" — слово вклинивается между частями фразы. Тот же класс проблемы, что уже
+# чинили для "чем X отличается от Y" (см. _looks_like_comparison_question в intent.py) —
+# только здесь дешевле убрать местоимение перед проверкой, чем городить отдельный parser.
+ANAPHORIC_PRONOUNS = {"это", "он", "она", "оно", "её", "его", "их"}
+
+
+def strip_anaphoric_pronouns(normalized_text: str) -> str:
+    tokens = [token for token in normalized_text.split() if token not in ANAPHORIC_PRONOUNS]
+    return " ".join(tokens)
 
 
 def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
@@ -177,12 +490,46 @@ def _known_service_stems(known_services: Iterable[Any] | None) -> set[str]:
     return stems
 
 
+# Позитивные маркеры — если сообщение грамматически указывает, ГДЕ имя, берём именно
+# оттуда, а не гадаем "первое слово не из стоп-листа". Устраняет целый класс багов
+# (не только конкретные слова "здравствуйте"/"это"/"меня", которые случайно не попали в
+# список), а не 9 частных случаев из него. Порядок — от однозначных к более слабым сигналам.
+# Второе слово опционально — для отчества/фамилии ("меня зовут Мария Петровна"). Само по себе
+# в паттерне не различить, имя это или продолжение фразы ("Мария очень приятно") — IGNORECASE
+# на весь паттерн не даёт положиться на регистр в самом regex. Решение — в коде ниже: второе
+# слово принимаем, только если оно написано с заглавной буквы в ОРИГИНАЛЕ сообщения.
+NAME_MARKER_PATTERNS = (
+    re.compile(r"\bменя\s+зовут\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bзовут\s+меня\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    # обратный порядок слов — "меня Тимур зовут" — не менее естественная разговорная форма
+    re.compile(r"\bменя\s+([а-яё]+)(?:\s+([а-яё]+))?\s+зовут\b", re.IGNORECASE),
+    re.compile(r"\bзовут\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bмо[её]\s+имя\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bимя\s*[-:]?\s*([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"\bэто\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+    re.compile(r"^\s*я\s+([а-яё]+)(?:\s+([а-яё]+))?", re.IGNORECASE),
+)
+
+
 def extract_name(
     message: str,
     phone: Optional[str],
     *,
     known_services: Iterable[Any] | None = None,
 ) -> Optional[str]:
+    service_stems = _known_service_stems(known_services)
+
+    ner_candidate = _extract_name_via_ner(message)
+    if ner_candidate is not None:
+        # На всякий случай — та же защита, что и у regex-пути: не спутать имя услуги с именем
+        # человека (по каждому слову отдельно — "Мария Петровна" может быть двумя токенами).
+        # NER под это в принципе не должен попадать (это не имя собственное), но дёшево
+        # подстраховаться раз уж проверка уже есть.
+        words = normalize_text(ner_candidate).split()
+        is_service_name = any(len(word) >= 3 and _stem(word) in service_stems for word in words)
+        if not is_service_name:
+            return ner_candidate
+
     source = message
     if phone is not None:
         match = PHONE_PATTERN.search(message)
@@ -207,7 +554,9 @@ def extract_name(
 
     stop_words = {
         "хочу",
+        "можно",
         "записаться",
+        "записать",
         "запиши",
         "запишите",
         "заявку",
@@ -218,31 +567,123 @@ def extract_name(
         "оставляю",
         "на",
         "по",
+        # приветствия/филлеры — раньше отсутствовали, из-за этого "Здравствуйте"/"Добрый"/
+        # "Меня"/"Это" извлекались как имя вместо реального слова после них.
+        "здравствуйте",
+        "здравствуй",
+        "привет",
+        "приветствую",
+        "добрый",
+        "доброе",
+        "день",
+        "вечер",
+        "утро",
+        "это",
+        "меня",
+        "мое",
+        "моё",
+        "мой",
+        "моя",
+        "имя",
+        "зовут",
+        "я",
+        "мне",
+        "пожалуйста",
+        "спасибо",
+        # "моя фамилия Петина" — без стоп-слова fallback хватал само слово "фамилия" раньше
+        # реального значения после него (тот же класс бага, что и с "имя вообще").
+        "фамилия",
+        "фамилию",
+        "фамилии",
     }
-    service_stems = _known_service_stems(known_services)
-    for word in cleaned.split():
-        normalized_word = normalize_text(word)
+
+    def _is_usable_second_word(raw_word: str) -> bool:
+        # Заглавная буква в ОРИГИНАЛЕ — сигнал "это ещё одно имя собственное" (отчество/
+        # фамилия), а не случайное слово продолжения фразы ("Мария очень приятно" — "очень"
+        # с маленькой). Не железобетонно, но дешёво и без риска для обычного случая.
+        if not raw_word or not raw_word[0].isupper():
+            return False
+        normalized = normalize_text(raw_word)
+        if len(normalized) < 2 or normalized in stop_words:
+            return False
+        if len(normalized) >= 3 and _stem(normalized) in service_stems:
+            return False
+        return True
+
+    for pattern in NAME_MARKER_PATTERNS:
+        match = pattern.search(cleaned)
+        if match is None:
+            continue
+        normalized_word = normalize_text(match.group(1))
         if len(normalized_word) < 2 or normalized_word in stop_words:
             continue
-        if re.search(r"[A-Za-zА-Яа-яЁё]", normalized_word):
-            if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
-                return None
-            return normalized_word.title()
+        if len(normalized_word) >= 3 and _stem(normalized_word) in service_stems:
+            continue
+        full_name = normalized_word.title()
+        second_word = match.group(2) if pattern.groups >= 2 else None
+        if second_word and _is_usable_second_word(second_word):
+            full_name = f"{full_name} {normalize_text(second_word).title()}"
+        return full_name
+
+    # Без явного маркера ("меня зовут"/"я"/"это" и т.д.) верим только КОРОТКОМУ ответу — это
+    # форма "бот спросил как зовут, человек ответил голым словом", не полноценная фраза. Считаем
+    # длину БЕЗ стоп-слов — "привет, я Виктория" по сути короткий ответ (одно значимое слово),
+    # хоть и состоит из 3 токенов, приветствие/местоимение не в счёт.
+    #
+    # NER выше уже посмотрел на СЫРОЕ сообщение и не нашёл имя — часто из-за регистра (Наташа
+    # плохо ловит имена с маленькой буквы: "меня зовут мария" не находит вообще). Пробуем ЕЩЁ
+    # РАЗ — не на всём сообщении, а на изолированной короткой фразе-кандидате, поднятой в
+    # регистр. Вне контекста остального предложения NER даёт куда более надёжный результат:
+    # проверено живьём — "леха"/"мария" находит даже с маленькой буквы после изоляции+регистра,
+    # а "дура"/"дура тупая" всё равно корректно отвергает ДАЖЕ с большой буквы. Это не то же
+    # самое, что просто "верить заглавной букве" (старый компромисс) — NER продолжает отличать
+    # реальное имя от случайного слова семантически, не по одному только регистру. Если и это
+    # ничего не даёт — сдаёмся, не угадываем вслепую первым словом (как было раньше).
+    meaningful_words = [word for word in cleaned.split() if normalize_text(word) not in stop_words]
+    if meaningful_words and len(meaningful_words) <= 2:
+        isolated_candidate = " ".join(word.title() for word in meaningful_words)
+        retry_candidate = _run_ner_for_person(isolated_candidate)
+        if retry_candidate is not None:
+            words = normalize_text(retry_candidate).split()
+            if not any(len(word) >= 3 and _stem(word) in service_stems for word in words):
+                return retry_candidate
     return None
 
 
-def find_unsupported_city(normalized_message: str, company_city: str) -> Optional[str]:
+def find_unsupported_city(
+    normalized_message: str,
+    company_city: str,
+    *,
+    message: str = "",
+) -> Optional[str]:
     normalized_company_city = normalize_text(company_city)
     if f"не из {normalized_company_city}" in normalized_message:
         return f"not_{company_city}"
 
+    # NER на СЫРОМ сообщении (регистр важен) — ловит любой город в любом падеже, не только
+    # перечисленные вручную в KNOWN_CITY_FORMS. message — опциональный параметр (не все вызовы
+    # его передают), поэтому это дополнение, не замена словарного пути ниже.
+    if message:
+        ner_city = _run_ner_for_city(message, skip_normalized=normalized_company_city)
+        if ner_city:
+            return " ".join(word.capitalize() for word in ner_city.split())
+
     for city_form, city_name in KNOWN_CITY_FORMS.items():
-        if city_form in normalized_message and normalize_text(city_name) != normalized_company_city:
+        if normalize_text(city_name) == normalized_company_city:
+            continue
+        # Целыми токенами, не подстрокой — иначе форма города может оказаться спрятана
+        # внутри неродственного слова (например "казани" внутри "противопоказания").
+        matches = (
+            contains_keyword(normalized_message, {city_form})
+            if " " in city_form
+            else contains_exact_token(normalized_message, {city_form})
+        )
+        if matches:
             return city_name
     return None
 
 
-def mentions_company_city(normalized_message: str, company_city: str) -> bool:
+def mentions_company_city(normalized_message: str, company_city: str, *, message: str = "") -> bool:
     normalized_company_city = normalize_text(company_city)
     company_city_forms = {
         city_form
@@ -259,16 +700,27 @@ def mentions_company_city(normalized_message: str, company_city: str) -> bool:
             return False
         if city_form in normalized_message:
             return True
+
+    # KNOWN_CITY_FORMS вручную заполнен формами только для нескольких городов (Москва, Казань,
+    # Питер) — для остальных (реальный живой случай: клиника в Ярославле) "я из Ярославля" не
+    # находило ничего вообще, is_location_mismatch затем ложно решал, что клиент не из своего
+    # же города. NER + лемматизация ловит любой город, не только вписанные вручную.
+    if message:
+        company_lemma = lemmatize_known_name(company_city) or normalized_company_city
+        message_lemma = _run_ner_for_city_raw(message)
+        if message_lemma and message_lemma == company_lemma:
+            return True
+
     return False
 
 
 def is_location_mismatch(message: str, normalized_message: str, company_city: str) -> bool:
     normalized_company_city = normalize_text(company_city)
-    if mentions_company_city(normalized_message, company_city):
+    if mentions_company_city(normalized_message, company_city, message=message):
         return False
     if contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
         return True
-    if find_unsupported_city(normalized_message, company_city):
+    if find_unsupported_city(normalized_message, company_city, message=message):
         return True
 
     for pattern in LOCATION_PATTERNS:

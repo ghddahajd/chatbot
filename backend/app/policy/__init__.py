@@ -27,6 +27,7 @@ from .constants import (
     GENERIC_PRICE_MESSAGES,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
+    BENIGN_MEDICAL_KEYWORDS,
     MEDICAL_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
@@ -39,13 +40,16 @@ from .constants import (
     WEBSITE_KEYWORDS,
 )
 from .extractors import (
+    contains_day_or_time_lemma,
     contains_keyword,
     extract_name,
+    extract_person_lemma_via_ner,
     extract_phone,
     find_unsupported_city,
     fuzzy_contains,
     is_location_mismatch,
     last_service_from_history,
+    lemmatize_known_name,
 )
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
@@ -262,6 +266,11 @@ def _article_guidance_result_from_entry(
     result = PolicyResult(
         action=PolicyAction.ANSWER,
         reason=PolicyReason.OK,
+        # Однозначная услуга — запоминаем как контекст (как similar_services_result), чтобы
+        # follow-up («а сколько это стоит?») резолвился. Несколько кандидатов — намеренно НЕ
+        # угадываем один: session context вместо этого хранит весь список кандидатов, см.
+        # _context_frame_from_policy_result → "cosmetic_candidates".
+        service_id=services[0].id if len(services) == 1 else None,
         confidence=0.8,
         safe_context={
             "force_direct_answer": True,
@@ -409,6 +418,25 @@ def _clinic_doctors(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
     return doctors
 
 
+_DOCTOR_SPECIALTY_QUESTION_TEMPLATES = ("как зовут {specialty}", "кто {specialty}", "кто у вас {specialty}")
+
+
+def _doctor_specialty_info_keywords(doctors: list[dict[str, str]]) -> set[str]:
+    """Строит фразы вида 'кто гинеколог'/'как зовут дерматолог' из specialty САМОГО тенанта,
+    а не из захардкоженного списка 5 специальностей — раньше это был декартово произведение
+    (специальность × формулировка), вписанное вручную и не покрывавшее ничьи специальности,
+    кроме тех, что кто-то успел добавить (живой пробел: 'невролог'/'трихолог' у ROSH не
+    ловились вообще, хотя есть в данных клиники)."""
+
+    specialties = {normalize_text(doctor.get("specialty", "")) for doctor in doctors}
+    specialties.discard("")
+    return {
+        template.format(specialty=specialty)
+        for specialty in specialties
+        for template in _DOCTOR_SPECIALTY_QUESTION_TEMPLATES
+    }
+
+
 def _clinic_equipment(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     raw_equipment = _clinic_info(knowledge_base).get("equipment")
     if not isinstance(raw_equipment, list):
@@ -434,6 +462,38 @@ def _clinic_equipment(knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
             }
         )
     return equipment
+
+
+def undisclosed_equipment_terms(knowledge_base: KnowledgeBase) -> list[str]:
+    """Бренд-специфичные термины оборудования, которые LLM не должен подтверждать в ответе —
+    последняя линия защиты валидатора, независимая от захардкоженного общего списка в
+    validator.py. Только записи с реальным equipment_name (не null) — для записей, где
+    equipment_name не задан, question_aliases это синонимы НАЗВАНИЯ УСЛУГИ ("лазерная
+    эпиляция"/"эпиляция"), а не бренда, их блокировать нельзя.
+
+    Даже когда equipment_name задан, question_aliases для этой же записи могут СМЕШИВАТЬ
+    бренд-токены ("морфеус", "инмод") с синонимами самой услуги ("рф лифтинг", "игольчатый
+    rf") — на реальных данных ROSH это подтвердилось: те же 3 фразы дословно совпадают с
+    services.json.synonyms связанной услуги. Такие фразы нужны в обычных ответах постоянно —
+    блокировать их нельзя. Оставляем только алиасы, которых нет среди имени/синонимов услуги."""
+
+    terms: list[str] = []
+    for equipment in _clinic_equipment(knowledge_base):
+        if equipment.get("disclose") is True:
+            continue
+        equipment_name = equipment.get("equipment_name")
+        if not equipment_name:
+            continue
+        terms.append(str(equipment_name))
+
+        service = knowledge_base.find_service_by_id(str(equipment.get("service_id") or ""))
+        service_terms = {str(service.name).strip().lower()} | {
+            str(synonym).strip().lower() for synonym in (service.synonyms if service else [])
+        }
+        for alias in equipment.get("question_aliases") or []:
+            if str(alias).strip().lower() not in service_terms:
+                terms.append(str(alias))
+    return terms
 
 
 def _should_suppress_service_variant_examples(
@@ -665,6 +725,14 @@ def _medical_referral_result(
         _phrase(knowledge_base, "medical_referral", seed=_phrase_seed(session, "medical_referral"))
         or knowledge_base.company.safety_disclaimer
     )
+    # "а больно?"/"это нормально?" — бытовые вопросы, попавшие в MEDICAL_KEYWORDS вместе с
+    # реально острыми сигналами (кровотечение, аллергия). Soft-offer текст (regulated_soft_offer)
+    # для ВСЕХ них одинаково заканчивался "если срочно — звоните... в скорую (103)" — пугает на
+    # безобидном вопросе. is_benign_only=True только если В СООБЩЕНИИ НЕТ других медицинских
+    # слов (безопасный дефолт на смешанных фразах вроде "болит и кровит").
+    is_benign_only = contains_keyword(normalized_message, BENIGN_MEDICAL_KEYWORDS) and not contains_keyword(
+        normalized_message, MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS
+    )
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
@@ -676,6 +744,7 @@ def _medical_referral_result(
             "handoff_message": message_to_user,
             "restricted_category": restricted_category,
             "referral_service": consultation_service.model_dump() if consultation_service else None,
+            "escalation_urgency": "calm" if is_benign_only else "urgent",
         },
         quick_actions=_medical_referral_quick_actions(consultation_service),
     )
@@ -813,6 +882,26 @@ def _equipment_result(
 
 def _doctor_matches(message: str, doctor: dict[str, str]) -> bool:
     normalized_message = normalize_text(message)
+
+    # NER сначала: находит упоминание человека в СЫРОМ сообщении (регистр важен), а не гоняет
+    # префиксное сравнение по КАЖДОМУ слову сообщения вслепую — тот же класс риска ложного
+    # совпадения, что уже давал баг на услугах ("биорезонансная" ⊃ "биоревитализация" по
+    # префиксу). Сравниваем леммы по префиксу токена, не на точное равенство — pymorphy2 не
+    # всегда согласован сам с собой между падежами одной фамилии.
+    message_lemma = extract_person_lemma_via_ner(message)
+    if message_lemma:
+        doctor_lemma = lemmatize_known_name(doctor.get("name", "")) or ""
+        message_lemma_tokens = [token for token in message_lemma.split() if len(token) >= 3]
+        doctor_lemma_tokens = [token for token in doctor_lemma.split() if len(token) >= 3]
+        if any(
+            _token_prefix_match(doctor_token, msg_token)
+            for doctor_token in doctor_lemma_tokens
+            for msg_token in message_lemma_tokens
+        ):
+            return True
+
+    # Фолбэк — как раньше: NER не нашёл сущность (natasha не загрузилась, опечатка сломала
+    # распознавание и т.д.), не теряем совпадение вслепую.
     message_tokens = [token for token in normalized_message.split() if len(token) >= 3]
     name_tokens = [token for token in normalize_text(doctor.get("name", "")).split() if len(token) >= 3]
     if any(
@@ -970,6 +1059,7 @@ def _clinic_info_result(
     doctor_info_requested = (
         context_topic == "doctors"
         or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS)
+        or contains_keyword(normalized_message, _doctor_specialty_info_keywords(doctors))
         or (doctor_name_matched and not booking_requested)
     )
     if doctor_info_requested:
@@ -1104,7 +1194,9 @@ def _lead_followup_result(normalized_message: str, knowledge_base: KnowledgeBase
     tokens = normalized_message.split()
     if not tokens or len(tokens) > 3:
         return None
-    if not contains_keyword(normalized_message, LEAD_FOLLOWUP_SHORT_KEYWORDS):
+    if not contains_keyword(normalized_message, LEAD_FOLLOWUP_SHORT_KEYWORDS) and not contains_day_or_time_lemma(
+        normalized_message
+    ):
         return None
     return PolicyResult(
         action=PolicyAction.CLARIFY,
@@ -1676,7 +1768,7 @@ def analyze_message(
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):
         medical_requested = False
-    unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city)
+    unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city, message=message)
     city_in_text = city_prepositional(knowledge_base.company.city)
     sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
 
@@ -2061,6 +2153,48 @@ def analyze_message(
         )
 
     if intent == "cosmetic_concern":
+        # Follow-up ("а сколько это стоит?") на СПИСОК из нескольких кандидатов, который мы
+        # только что явно предложили (см. chat_utils._contextual_frame_classification,
+        # frame_type="cosmetic_candidates") — переспрашиваем среди тех же вариантов, а не
+        # угадываем один и не проваливаемся в общий "не нашёл подтверждения".
+        context_candidate_ids = classification.get("context_candidate_service_ids")
+        if isinstance(context_candidate_ids, list) and context_candidate_ids:
+            candidate_services = [
+                found
+                for service_id in context_candidate_ids
+                if (found := knowledge_base.find_service_by_id(str(service_id))) is not None
+            ]
+            if candidate_services:
+                service_names = ", ".join(service.name for service in candidate_services)
+                return PolicyResult(
+                    action=PolicyAction.CLARIFY,
+                    reason=PolicyReason.OK,
+                    confidence=classifier_confidence or 0.88,
+                    safe_context={
+                        "message_to_user": (
+                            f"Уточните, пожалуйста, какая процедура интересует: {service_names}? "
+                            "Так подскажу точнее."
+                        ),
+                    },
+                    quick_actions=[
+                        {"label": service.name, "type": "message", "value": service.name}
+                        for service in candidate_services
+                    ]
+                    + ["Позвать менеджера"],
+                )
+
+        # Куратированная статья (человек уже проверил формулировку и подобрал услуги) —
+        # более конкретный и информативный ответ, чем общий шаблон ниже. Пробуем её первой;
+        # шаблон "обычно подходят: X, Y" — фолбэк для симптомов без готовой статьи.
+        article_matches = _retrieve_article_context_safe(message)
+        guidance_result = _cosmetic_article_guidance_result(
+            knowledge_base,
+            article_matches,
+            normalized_message,
+        )
+        if guidance_result is not None:
+            return guidance_result
+
         suggested_services = cosmetic_concern_services(message, knowledge_base)
         if suggested_services:
             service_names = ", ".join(service.name for service in suggested_services)
@@ -2083,14 +2217,6 @@ def analyze_message(
                 ]
                 + ["Позвать менеджера"],
             )
-        article_matches = _retrieve_article_context_safe(message)
-        guidance_result = _cosmetic_article_guidance_result(
-            knowledge_base,
-            article_matches,
-            normalized_message,
-        )
-        if guidance_result is not None:
-            return guidance_result
 
     efficacy_claim_result = _efficacy_claim_result(normalized_message, knowledge_base, service)
     if efficacy_claim_result is not None:

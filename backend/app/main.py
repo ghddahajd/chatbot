@@ -19,6 +19,7 @@ from .leads import LeadService
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
 from .rate_limit import RateLimiter
+from .services.rag_search import rag_corpus_status
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .sessions import SessionStore
 from .telegram_bridge import TelegramBridgeService
@@ -61,6 +62,23 @@ async def lifespan(app: FastAPI):
     )
     app.state.knowledge_base_resolver.build_domain_index()
     app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
+    app.state.rag_corpus_status = rag_corpus_status()
+    if app.state.rag_corpus_status["ok"]:
+        logger.info(
+            "rag corpus loaded path=%s chunks=%d",
+            app.state.rag_corpus_status["path"],
+            app.state.rag_corpus_status["chunk_count"],
+        )
+    else:
+        # Не падаем — бот всё ещё отвечает по услугам/ценам без статей, это деградация,
+        # не полная неработоспособность. Но раньше это узнавали только от клиента, теперь
+        # видно в логе при старте и в /health.
+        logger.warning(
+            "rag corpus MISSING or EMPTY path=%s error=%s — faq answers will degrade to "
+            "generic clarify, article guidance disabled",
+            app.state.rag_corpus_status["path"],
+            app.state.rag_corpus_status["error"],
+        )
     app.state.session_store = SessionStore()
     snapshot_file = Path(settings.session_snapshot_file) if settings.session_snapshot_file else None
     if snapshot_file is not None:
@@ -70,6 +88,7 @@ async def lifespan(app: FastAPI):
         knowledge_base_resolver=app.state.knowledge_base_resolver,
         telegram_bot_token=settings.telegram_bot_token,
         telegram_chat_id=settings.telegram_chat_id,
+        telegram_dm_enabled=settings.telegram_dm_enabled,
     )
     app.state.lead_service = LeadService(leads_file=settings.leads_file, delivery_service=app.state.delivery_service)
     app.state.analytics_service = AnalyticsService(
@@ -91,6 +110,7 @@ async def lifespan(app: FastAPI):
         group_chat_id=settings.telegram_operators_group_id,
         session_store=app.state.session_store,
         ws_manager=app.state.ws_manager,
+        clients_topic_id=settings.telegram_clients_topic_id,
     )
 
     retry_task = None
@@ -155,11 +175,13 @@ app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), na
 
 
 @app.get("/health")
-async def healthcheck() -> dict[str, str]:
+async def healthcheck() -> dict[str, object]:
+    corpus_status = getattr(app.state, "rag_corpus_status", None) or rag_corpus_status()
     return {
         "status": "ok",
         "current_provider": settings.llm_provider,
         "current_model": settings.llm_model,
+        "rag_corpus": corpus_status,
     }
 
 

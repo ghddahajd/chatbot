@@ -198,7 +198,9 @@ class PolicyResult(BaseModel):
 class ChatMessageRequest(BaseModel):
     session_id: Optional[str] = None
     company_id: str
-    message: str
+    # без ограничения принимался текст любой длины — попадал в историю сессии, в промпт LLM
+    # и в логи целиком. 4000 символов — с запасом под реальные вопросы, но не безлимит.
+    message: str = Field(max_length=4000)
 
 
 class QuickAction(BaseModel):

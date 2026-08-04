@@ -9,7 +9,7 @@ import anyio
 from app import telegram_bridge as telegram_bridge_module
 from app.models import MessageRole
 from app.sessions import SessionStore
-from app.telegram_bridge import TelegramBridgeService
+from app.telegram_bridge import TelegramBridgeService, client_label_for_session, operator_label
 
 
 class FakeResponse:
@@ -59,12 +59,19 @@ def _reset_fake_client(monkeypatch) -> None:
     monkeypatch.setattr(telegram_bridge_module.httpx, "AsyncClient", FakeAsyncClient)
 
 
-def _service(store: SessionStore, ws_manager: FakeWsManager, *, group_chat_id: str = "-100123") -> TelegramBridgeService:
+def _service(
+    store: SessionStore,
+    ws_manager: FakeWsManager,
+    *,
+    group_chat_id: str = "-100123",
+    clients_topic_id: str = "",
+) -> TelegramBridgeService:
     return TelegramBridgeService(
         bot_token="token",
         group_chat_id=group_chat_id,
         session_store=store,
         ws_manager=ws_manager,
+        clients_topic_id=clients_topic_id,
     )
 
 
@@ -78,87 +85,179 @@ def test_disabled_without_group_id(monkeypatch) -> None:
     assert FakeAsyncClient.calls == []
 
 
-def test_ensure_topic_for_session_creates_topic_with_claim_button(monkeypatch) -> None:
+def test_post_operator_queue_card_sends_claim_button_to_general(monkeypatch) -> None:
+    """General — очередь входящих, ждущих оператора. Карточка идёт БЕЗ message_thread_id
+    (General — не отдельная тема), тема сессии тут ещё не создаётся."""
+
     _reset_fake_client(monkeypatch)
     store = SessionStore()
     ws_manager = FakeWsManager()
 
-    async def run() -> int | None:
-        session = await store.get_or_create(None, "rosh_demo")
-        FakeAsyncClient.responses["createForumTopic"] = {
-            "ok": True,
-            "result": {"message_thread_id": 42},
-        }
+    async def run() -> None:
         service = _service(store, ws_manager)
-        topic_id = await service.ensure_topic_for_session(
-            session_id=session.session_id,
-            topic_name="Иван",
-            card_text="карточка",
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
         )
-        refreshed = await store.get(session.session_id)
-        assert refreshed.telegram_topic_id == 42
-        return topic_id
 
-    topic_id = anyio.run(run)
+    anyio.run(run)
 
-    assert topic_id == 42
     send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
     assert len(send_calls) == 1
+    assert "message_thread_id" not in send_calls[0]["json"]
     keyboard = send_calls[0]["json"]["reply_markup"]["inline_keyboard"][0][0]
     assert keyboard["text"] == "Взять в работу"
-    assert keyboard["callback_data"].startswith("claim:")
+    assert keyboard["callback_data"] == "claim:sess-1"
+    assert "Иван" in send_calls[0]["json"]["text"]
+    create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
+    assert create_calls == []
 
 
-def test_ensure_topic_for_session_sends_transcript_before_claim_card(monkeypatch) -> None:
+def test_post_client_lead_card_sends_to_clients_topic_without_button(monkeypatch) -> None:
+    """Клиенты — простой лог лидов/записей без прямой необходимости в операторе. Без кнопки,
+    без своей темы — контакт уже зафиксирован, никто не ждёт прямо сейчас."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager, clients_topic_id="99")
+        await service.post_client_lead_card("🔔 Новый лид\n\nИмя: Мария\nТелефон: +7916...")
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == 1
+    assert send_calls[0]["json"]["message_thread_id"] == 99
+    assert "reply_markup" not in send_calls[0]["json"]
+
+
+def test_post_client_lead_card_noop_without_clients_topic_configured(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager, clients_topic_id="")
+        await service.post_client_lead_card("🔔 Новый лид")
+
+    anyio.run(run)
+
+    assert FakeAsyncClient.calls == []
+
+
+def test_claim_creates_topic_named_after_client_and_operator_with_transcript(monkeypatch) -> None:
+    """Тема создаётся ТОЛЬКО в момент клейма (не раньше — иначе плодим темы на заявки,
+    которые никто не забрал), и сразу называется и клиентом, и оператором — не нужно
+    отдельно переименовывать после."""
+
     _reset_fake_client(monkeypatch)
     store = SessionStore()
     ws_manager = FakeWsManager()
 
     async def run() -> None:
         session = await store.get_or_create(None, "rosh_demo")
-        FakeAsyncClient.responses["createForumTopic"] = {
-            "ok": True,
-            "result": {"message_thread_id": 42},
-        }
+        await store.update_contact_draft(session.session_id, name="Мария Петровна")
+        await store.append_message(session.session_id, MessageRole.USER, "хочу оставить телефон")
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
         service = _service(store, ws_manager)
-        await service.ensure_topic_for_session(
-            session_id=session.session_id,
-            topic_name="Иван",
-            card_text="карточка",
-            transcript="👤 Клиент: привет\n🤖 Бот: чем помочь?",
+
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
         )
 
     anyio.run(run)
 
+    create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
+    assert len(create_calls) == 1
+    assert create_calls[0]["json"]["name"] == "Мария Петровна · masha"
+
     send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
-    assert len(send_calls) == 2
-    # транскрипт уходит первым, без parse_mode (это данные пользователя, не наш markdown)
-    assert send_calls[0]["json"]["text"] == "👤 Клиент: привет\n🤖 Бот: чем помочь?"
-    assert "parse_mode" not in send_calls[0]["json"]
-    # карточка с кнопкой — вторым сообщением
-    assert send_calls[1]["json"]["text"] == "карточка"
-    assert send_calls[1]["json"]["parse_mode"] == "Markdown"
+    assert any("хочу оставить телефон" in call["json"]["text"] for call in send_calls)
+    assert any("Взято в работу" in call["json"]["text"] for call in send_calls)
 
 
-def test_ensure_topic_for_session_is_idempotent(monkeypatch) -> None:
+def test_claim_falls_back_to_session_id_when_no_contact_known(monkeypatch) -> None:
     _reset_fake_client(monkeypatch)
     store = SessionStore()
     ws_manager = FakeWsManager()
 
-    async def run() -> int | None:
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager)
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
+    assert create_calls[0]["json"]["name"] == f"Сессия {session_id[:8]} · masha"
+
+
+def test_claim_reuses_existing_topic_without_recreating(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
         session = await store.get_or_create(None, "rosh_demo")
         await store.set_telegram_bridge(session.session_id, topic_id=7)
         service = _service(store, ws_manager)
-        return await service.ensure_topic_for_session(
-            session_id=session.session_id,
-            topic_name="Иван",
-            card_text="карточка",
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
         )
 
-    topic_id = anyio.run(run)
+    anyio.run(run)
 
-    assert topic_id == 7
-    assert FakeAsyncClient.calls == []
+    assert [c for c in FakeAsyncClient.calls if c["method"] == "createForumTopic"] == []
+
+
+def test_claim_adds_jump_to_topic_link_on_general_card(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        session = await store.get_or_create(None, "rosh_demo")
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager, group_chat_id="-1001234567890")
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+
+    anyio.run(run)
+
+    edit_calls = [c for c in FakeAsyncClient.calls if c["method"] == "editMessageReplyMarkup"]
+    assert len(edit_calls) == 1
+    buttons = edit_calls[0]["json"]["reply_markup"]["inline_keyboard"]
+    assert buttons[0][0]["text"] == "Взято: masha"
+    assert buttons[1][0]["url"] == "https://t.me/c/1234567890/42"
 
 
 def test_forward_client_message_sends_to_existing_topic(monkeypatch) -> None:
@@ -307,3 +406,62 @@ def test_handle_message_ignores_unknown_topic(monkeypatch) -> None:
     anyio.run(run)
 
     assert ws_manager.sent == []
+
+
+def test_operator_label_prefers_short_first_name_over_long_username() -> None:
+    """Живой баг: тема называлась 'Сессия 80b3b84d · sKiTTlesSkiiiiiirRrtEssskeeeetit' —
+    ник Telegram может быть произвольно длинной строкой, из-за неё название обрезалось в
+    сайдбаре и терялось целиком. first_name почти всегда короткое настоящее имя."""
+
+    label = operator_label({"username": "sKiTTlesSkiiiiiirRrtEssskeeeetit", "first_name": "Алексей"})
+
+    assert label == "Алексей"
+
+
+def test_operator_label_falls_back_to_username_when_no_first_name() -> None:
+    assert operator_label({"username": "masha"}) == "masha"
+
+
+def test_operator_label_caps_length_even_for_short_field_names() -> None:
+    label = operator_label({"first_name": "оченьдлинноеимяоператорачтобытосамое"})
+
+    assert len(label) <= 18
+
+
+def test_client_label_for_session_caps_long_names(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.update_contact_draft(session.session_id, name="Оченьдлинноеимяклиентадлятестаточно")
+        refreshed = await store.get(session.session_id)
+        return client_label_for_session(refreshed)
+
+    label = anyio.run(run)
+
+    assert len(label) <= 18
+
+
+def test_claim_topic_name_stays_compact_with_long_username(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        session = await store.get_or_create(None, "rosh_demo")
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager)
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "sKiTTlesSkiiiiiirRrtEssskeeeetit"},
+                "message": {"message_id": 100},
+            }
+        )
+
+    anyio.run(run)
+
+    create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
+    assert len(create_calls[0]["json"]["name"]) <= 45

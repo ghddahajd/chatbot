@@ -71,6 +71,40 @@ def _add_article_excerpt_for_chat_test(test_client, managed_env, excerpt: str) -
     test_client.app.state.knowledge_base_resolver._cache.clear()
 
 
+def test_cosmetic_multi_candidate_followup_reoffers_same_services(test_client, managed_env) -> None:
+    """B4-раздел аудита: 'хочу убрать морщины вокруг глаз' резолвится в НЕСКОЛЬКО кандидатов
+    (Ботулинотерапия/Биоревитализация/Филлеры) — угадывать один нельзя, но follow-up 'а
+    сколько это стоит?' раньше проваливался в общий 'не нашёл подтверждения', потому что
+    (а) ни один service_id не был запомнён как контекст и (б) даже с контекстом анафора
+    'это' ломала consecutive-token матчинг фразы 'сколько стоит'. Оба фиксятся здесь."""
+
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    test_client.app.state.llm_client = _ArticleGuidanceLLMClient("Рекомендую вам Филлеры, это вам подходит.")
+
+    first_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="здравствуйте, хочу убрать морщины вокруг глаз",
+    )
+    assert first_payload["action"] == "answer"
+    first_labels = _quick_action_labels(first_payload)
+    assert {"Ботулинотерапия", "Биоревитализация", "Филлеры"} <= set(first_labels)
+
+    followup_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=first_payload["session_id"],
+        message="а сколько это стоит?",
+    )
+
+    assert followup_payload["action"] == "clarify"
+    assert "не нашёл подтверждения" not in followup_payload["answer"]
+    for service_name in ("Ботулинотерапия", "Биоревитализация", "Филлеры"):
+        assert service_name in followup_payload["answer"]
+    followup_labels = _quick_action_labels(followup_payload)
+    assert {"Ботулинотерапия", "Биоревитализация", "Филлеры"} <= set(followup_labels)
+
+
 def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",
@@ -345,6 +379,38 @@ def test_chat_rate_limit_blocks_single_ip_but_not_other_ips(managed_env, monkeyp
     get_settings.cache_clear()
 
 
+def test_chat_rate_limit_survives_client_rotating_x_forwarded_for(managed_env, monkeypatch) -> None:
+    """Раньше client_ip брал ПЕРВОЕ (клиентское) значение X-Forwarded-For — атакующий менял
+    заголовок на каждый запрос и получал новый rate-limit "ключ" каждый раз, лимит не работал
+    вообще. С учётом доверенного прокси (Render = 1 hop) нужно брать значение С КОНЦА — то,
+    что дописал НАШ прокси, а не то, что вписал клиент."""
+
+    monkeypatch.setenv("CHAT_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("TRUSTED_PROXY_COUNT", "1")
+
+    from app.config import get_settings
+    from app.main import app
+
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        statuses = []
+        for i in range(5):
+            # Каждый запрос выглядит как будто пришёл с нашего прокси (последнее значение —
+            # то, что дописал доверенный hop) от одного и того же реального клиента, но с
+            # РАЗНЫМ поддельным клиентским префиксом — именно так атака и выглядела в аудите.
+            headers = {"X-Forwarded-For": f"1.2.3.{i}, 203.0.113.10"}
+            response = client.post(
+                "/api/chat/message",
+                json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+                headers=headers,
+            )
+            statuses.append(response.status_code)
+
+    assert statuses == [200, 200, 429, 429, 429]
+    get_settings.cache_clear()
+
+
 def test_message_count_limit_closes_session_for_real_reset_button(test_client) -> None:
     from app.models import SessionStatus
     from app.routes.chat_utils import MAX_SESSION_MESSAGES
@@ -471,6 +537,48 @@ def test_regulated_question_soft_offers_without_operator_event(test_client, monk
         "Подключить менеджера",
     ]
     assert events == []
+
+
+def test_benign_pain_question_soft_offer_has_no_emergency_number(test_client) -> None:
+    """B4-раздел аудита: 'а больно?' — обычный бытовой вопрос перед процедурой, не экстренная
+    ситуация. Раньше вёл в тот же soft-offer текст, что и реально острые сигналы, с
+    'если срочно — звоните... в скорую (103)' в любом случае. Пугает и выглядит сломанным."""
+
+    payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "а больно?"},
+    ).json()
+
+    assert payload["action"] == "clarify"
+    assert "103" not in payload["answer"]
+    assert "скорую" not in payload["answer"]
+
+
+def test_cosmetic_multi_candidate_booking_followup_reoffers_same_services(test_client, managed_env) -> None:
+    """Тот же аудитный диалог, шаг 'а когда можно записаться?' — раньше показывал ПОЛНЫЙ
+    каталог услуг ("Внутривенный лазер Шатл Комби" в списке для записи на морщины вокруг
+    глаз — прямая цитата из аудита), а не те 3 варианта, что только что предложили."""
+
+    _copy_rosh_import_demo_for_chat_test(test_client, managed_env)
+    test_client.app.state.llm_client = _ArticleGuidanceLLMClient("Рекомендую вам Филлеры, это вам подходит.")
+
+    first_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        message="здравствуйте, хочу убрать морщины вокруг глаз",
+    )
+
+    followup_payload = _post_chat(
+        test_client,
+        company_id="rosh_import_demo",
+        session_id=first_payload["session_id"],
+        message="а когда можно записаться?",
+    )
+
+    assert followup_payload["action"] == "clarify"
+    followup_labels = _quick_action_labels(followup_payload)
+    assert {"Ботулинотерапия", "Биоревитализация", "Филлеры"} <= set(followup_labels)
+    assert "Внутривенный лазер Шатл Комби" not in followup_labels
 
 
 def test_engagement_offer_appears_on_5_8_13_substantive_messages(test_client) -> None:
@@ -1338,3 +1446,150 @@ def test_new_question_breaks_out_of_pending_booking_contact(test_client) -> None
     assert second_response.status_code == 200
     assert "Какие" not in second_payload["answer"]
     assert "напишите, пожалуйста, телефон — передам заявку" not in second_payload["answer"]
+
+
+def test_every_answer_is_logged_to_analytics_not_just_exceptions(test_client, managed_env) -> None:
+    """Раньше analytics.jsonl писал только исключения (unknown_service/operator/regulated) —
+    разбор "бот ответил ерунду" был невозможен для обычного, успешного ответа. Каждое
+    сообщение должно логироваться с текстом ответа, не только проблемные."""
+
+    response = _post_chat(test_client, message="привет")
+    assert response["action"] != ""  # обычный small_talk, не исключение
+
+    analytics_path = managed_env["temp_dir"] / "analytics.jsonl"
+    events = [json.loads(line) for line in analytics_path.read_text(encoding="utf-8").splitlines()]
+    answered = [event for event in events if event["event_type"] == "message_answered"]
+
+    assert len(answered) == 1
+    assert answered[0]["message"] == "привет"
+    assert answered[0]["metadata"]["answer"] == response["answer"]
+    assert answered[0]["metadata"]["action"] == response["action"]
+
+
+def test_analytics_logs_answer_even_for_unknown_service_exception_path(test_client, managed_env) -> None:
+    """message_answered должен писаться ВСЕГДА, включая уже-логируемые исключения — не
+    заменяет track_policy_result, а дополняет его текстом реального ответа."""
+
+    response = _post_chat(test_client, message="делаете ли вы татуаж бровей")
+
+    analytics_path = managed_env["temp_dir"] / "analytics.jsonl"
+    events = [json.loads(line) for line in analytics_path.read_text(encoding="utf-8").splitlines()]
+    event_types = {event["event_type"] for event in events}
+
+    assert "message_answered" in event_types
+    answered = next(event for event in events if event["event_type"] == "message_answered")
+    assert answered["metadata"]["answer"] == response["answer"]
+
+
+def test_message_over_max_length_is_rejected(test_client) -> None:
+    """Раньше сообщение любой длины принималось целиком — попадало в историю сессии, в промпт
+    LLM и в логи. 4000 символов — с запасом под реальные вопросы, но не безлимит."""
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "а" * 4001},
+    )
+
+    assert response.status_code == 422
+
+
+def test_message_at_max_length_is_accepted(test_client) -> None:
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет " * 500},
+    )
+
+    assert response.status_code == 200
+
+
+class _FakeTelegramBridge:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.queue_cards: list[dict] = []
+        self.client_cards: list[str] = []
+
+    async def post_operator_queue_card(self, *, session_id, reason, last_message, client_label):
+        self.queue_cards.append(
+            {
+                "session_id": session_id,
+                "reason": reason,
+                "last_message": last_message,
+                "client_label": client_label,
+            }
+        )
+
+    async def post_client_lead_card(self, card_text):
+        self.client_cards.append(card_text)
+
+
+def test_plain_lead_without_operator_need_posts_to_clients_topic(test_client) -> None:
+    """Лид без needs_operator (контакт зафиксирован, бот уже ответил) — карточка в тему
+    "Клиенты", НЕ очередь General с клеймом: никто не ждёт живого человека прямо сейчас."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "Хочу оставить телефон"},
+    ).json()
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +79991234567",
+        },
+    )
+
+    assert len(fake_bridge.client_cards) == 1
+    assert fake_bridge.queue_cards == []
+    assert "Иван" in fake_bridge.client_cards[0]
+
+
+def test_regulated_lead_with_operator_need_posts_to_general_queue(test_client) -> None:
+    """Лид с needs_operator=True (регулируемый флоу) — карточка в General с клеймом, как
+    прямой operator_requested: тут реально нужен живой человек, не просто лог контакта."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "у меня воспаление что делать"},
+    ).json()
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+
+    assert fake_bridge.client_cards == []
+    assert len(fake_bridge.queue_cards) == 1
+    assert fake_bridge.queue_cards[0]["client_label"] == "Иван"
+
+
+def test_direct_operator_request_posts_to_general_queue(test_client) -> None:
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Да, оператора",
+        },
+    )
+
+    assert len(fake_bridge.queue_cards) == 1
+    assert fake_bridge.queue_cards[0]["reason"] == "⚡️ Запросил оператора"
+    assert fake_bridge.client_cards == []

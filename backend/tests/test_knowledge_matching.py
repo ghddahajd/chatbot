@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 from app.knowledge import KnowledgeBaseResolver, _token_prefix_match
-from app.models import PolicyAction
+from app.models import Message, MessageRole, PolicyAction
 from app.policy import analyze_message
 from app.policy.intent import classify_and_extract
 
@@ -166,7 +166,42 @@ def test_cosmetic_concern_can_use_approved_article_service_mapping(
     assert result.quick_actions[0]["label"] == "Лазерная Терапия Skin Tyte"
 
 
-def test_unknown_service_can_use_article_trigger_phrase(
+def test_unknown_service_asks_followup_on_first_message(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (research.md #4, третий аудит): реальная классификация для симптомных
+    сообщений вроде "выпадают волосы"/"тёмные круги" — unknown_service, не medical_advice.
+    §3.2 скрипта — сначала уточняющий вопрос на первой реплике, не сразу услуга."""
+
+    import app.policy as policy_module
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    target_dir = managed_env["clients_dir"] / "rosh_import_demo"
+    shutil.copytree(source_dir, target_dir)
+    _set_article_map_excerpt(
+        managed_env["clients_dir"],
+        "https://www.medcenterrosh.ru/problems/temnye-veki-i-krugi-pod-glazami",
+        None,
+    )
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+    monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "темные круги под глазами, что посоветуете?",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert "Мезотерапия" not in result.safe_context["message_to_user"]
+
+
+def test_unknown_service_uses_article_trigger_phrase_on_later_message(
     monkeypatch,
     policy_session,
     resolver,
@@ -187,6 +222,7 @@ def test_unknown_service_can_use_article_trigger_phrase(
     knowledge_base = resolver.get("rosh_import_demo", fallback=False)
     monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
     monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    policy_session.messages.append(Message(role=MessageRole.ASSISTANT, text="Добрый день! Чем могу помочь?"))
 
     result = analyze_message(
         "темные круги под глазами, что посоветуете?",
@@ -251,16 +287,46 @@ def test_faq_question_without_approved_mapping_keeps_old_behavior(
     assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
 
 
-def test_regulated_without_hard_signal_can_use_article_trigger_phrase(
+def test_regulated_without_hard_signal_asks_followup_on_first_message(
     monkeypatch,
     policy_session,
     resolver,
     managed_env,
 ) -> None:
+    """§3.2 скрипта (research.md #4, третий аудит): на первой реплике с описанием СИМПТОМА
+    (не названием услуги) бот сначала задаёт короткий уточняющий вопрос, не сразу предлагает
+    услугу — canonical-пример из скрипта, ровно как в §3.2."""
+
     import app.policy as policy_module
 
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
     monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+
+    result = analyze_message(
+        "выпадают волосы, что можно сделать?",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.95},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert "Мезотерапия" not in result.safe_context["message_to_user"]
+
+
+def test_regulated_without_hard_signal_uses_article_trigger_phrase_on_later_message(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Тот же симптом, но НЕ на первой реплике сессии (бот уже раз ответил) — уточнять
+    заново не нужно, curated-подсказка должна дойти до пользователя как раньше."""
+
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    policy_session.messages.append(Message(role=MessageRole.ASSISTANT, text="Добрый день! Чем могу помочь?"))
 
     result = analyze_message(
         "выпадают волосы, что можно сделать?",
@@ -274,6 +340,45 @@ def test_regulated_without_hard_signal_can_use_article_trigger_phrase(
     assert result.safe_context["question_type"] == "cosmetic_article_guidance"
     assert result.safe_context["article_service_mapping"]["matched_phrase"] == "выпадают волосы"
     assert "Мезотерапия" in answer
+
+
+def test_curated_match_is_explicit_service_mention_helper(resolver, managed_env) -> None:
+    """§3.3 скрипта: если совпавшая trigger_phrase — само название/синоним услуги (человек
+    назвал услугу, не просто симптом), это НЕ должно гейтиться уточняющим вопросом даже на
+    первой реплике. В реальных данных ROSH trigger_phrases всегда сформулированы как симптомы
+    (так и задуман механизм), поэтому проверяем хелпер напрямую на синтетическом случае."""
+
+    from app.models import PolicyResult, PolicyAction, PolicyReason
+    from app.policy import _curated_match_is_explicit_service_mention
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    service = knowledge_base.services[0]
+
+    explicit_result = PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.OK,
+        confidence=0.8,
+        safe_context={
+            "article_service_mapping": {
+                "matched_phrase": service.name.lower(),
+                "service_ids": [service.id],
+            }
+        },
+    )
+    assert _curated_match_is_explicit_service_mention(explicit_result, knowledge_base) is True
+
+    symptom_result = PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.OK,
+        confidence=0.8,
+        safe_context={
+            "article_service_mapping": {
+                "matched_phrase": "выпадают волосы",
+                "service_ids": [service.id],
+            }
+        },
+    )
+    assert _curated_match_is_explicit_service_mention(symptom_result, knowledge_base) is False
 
 
 def test_regulated_with_hard_signal_does_not_use_article_trigger_phrase(

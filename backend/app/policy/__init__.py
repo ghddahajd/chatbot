@@ -358,6 +358,81 @@ def _has_strong_article_overlap(normalized_message: str, guidance_result: Policy
     return False
 
 
+def _is_first_substantive_message(session: Session) -> bool:
+    """До этого сообщения бот в сессии ещё ничего не отвечал — это буквально первая реплика
+    диалога. Нужно для §3.2 скрипта: на симптом с первого сообщения — сначала уточняющий
+    вопрос, не сразу услуга."""
+
+    for item in session.messages:
+        if str(item.role) in {"MessageRole.ASSISTANT", "assistant"}:
+            return False
+    return True
+
+
+def _curated_match_is_explicit_service_mention(
+    guidance_result: PolicyResult, knowledge_base: KnowledgeBase
+) -> bool:
+    """Отличает §3.3 скрипта (человек сам назвал услугу/метод — отвечаем прямо, уточняющий
+    вопрос уже ПОСЛЕ факта) от §3.2 (человек описал симптом — сначала уточняющий вопрос,
+    потом предложение). Сигнал: совпавшая trigger_phrase — это само название услуги/синоним,
+    а не смысловое описание проблемы ("выпадают волосы" ни у одной услуги не встречается как
+    синоним, "родинки радиоволновым методом" вполне может быть)."""
+
+    mapping = guidance_result.safe_context.get("article_service_mapping")
+    if not isinstance(mapping, dict):
+        return True
+    matched_phrase = normalize_text(str(mapping.get("matched_phrase") or ""))
+    if not matched_phrase:
+        # score-based (не curated) матч — эта проверка специально про curated trigger_phrase
+        # (§3.2 воронка), не про score-based совпадения в принципе. У score-based совпадений
+        # часто прямой вопрос про конкретную косметическую проблему ("второй подбородок можно
+        # убрать?"), не размытый симптом — гейтить их тем же правилом было бы перебором,
+        # ломает уже рабочий, проверенный сценарий.
+        return True
+    for service_id in mapping.get("service_ids") or []:
+        service = knowledge_base.find_service_by_id(service_id)
+        if service is None:
+            continue
+        for term in (service.name, *service.synonyms):
+            if matched_phrase == normalize_text(term):
+                return True
+    return False
+
+
+def _symptom_followup_result(
+    guidance_result: PolicyResult, knowledge_base: KnowledgeBase, session: Session
+) -> PolicyResult:
+    """Уточняющий вопрос вместо немедленного предложения услуги (§3.2 скрипта). service_id
+    (когда услуга одна) прокидывается в safe_context под отдельным маркером —
+    _context_frame_from_policy_result в chat_service.py читает его и заводит ОТДЕЛЬНЫЙ,
+    изолированный ContextFrame ('symptom_followup', живёт РОВНО 1 шаг), чтобы неопределённый
+    ответ на следующем сообщении ("где-то полгода") не проваливался в дефолтный "не нашёл", а
+    другие типы фреймов/веток при этом не трогаются и не расширяются."""
+
+    mapping = guidance_result.safe_context.get("article_service_mapping")
+    service_ids = mapping.get("service_ids") if isinstance(mapping, dict) else None
+    pending_service_id = (
+        service_ids[0] if isinstance(service_ids, list) and len(service_ids) == 1 else None
+    )
+    safe_context: dict[str, object] = {
+        "force_direct_answer": True,
+        "message_to_user": _phrase(
+            knowledge_base,
+            "symptom_followup_question",
+            seed=_phrase_seed(session, "symptom_followup_question"),
+        ),
+    }
+    if pending_service_id:
+        safe_context["symptom_followup_service_id"] = pending_service_id
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.OK,
+        confidence=0.82,
+        safe_context=safe_context,
+        quick_actions=["Позвать менеджера"],
+    )
+
+
 def _service_variant_examples(service, limit: int = 5) -> list[str]:
     variants = getattr(service, "variants", [])
     if not isinstance(variants, list):
@@ -1809,6 +1884,14 @@ def analyze_message(
             if guidance_result is not None and _has_strong_article_overlap(
                 normalized_message, guidance_result
             ):
+                # Живой баг (research.md #4, третий аудит): каноничный пример §3.2 скрипта
+                # ("выпадают волосы, не знаю к кому обращаться") сразу получал предложение
+                # услуги — скрипт ожидает сначала короткий уточняющий вопрос, когда человек
+                # описал СИМПТОМ (не назвал услугу) на первой реплике диалога.
+                if _is_first_substantive_message(session) and not _curated_match_is_explicit_service_mention(
+                    guidance_result, knowledge_base
+                ):
+                    return _symptom_followup_result(guidance_result, knowledge_base, session)
                 return guidance_result
         return _medical_referral_result(
             normalized_message,
@@ -2306,6 +2389,13 @@ def analyze_message(
         if guidance_result is not None and _has_strong_article_overlap(
             normalized_message, guidance_result
         ):
+            # Живой баг (research.md #4): реальная классификация для "выпадают волосы, не
+            # знаю к кому обращаться" — unknown_service, не medical_advice. Тот же гейт §3.2,
+            # что и в ветке medical_requested — иначе фикс не трогает фактический живой путь.
+            if _is_first_substantive_message(session) and not _curated_match_is_explicit_service_mention(
+                guidance_result, knowledge_base
+            ):
+                return _symptom_followup_result(guidance_result, knowledge_base, session)
             return guidance_result
 
         if contains_keyword(normalized_message, BODY_TOPIC_SIGNAL_KEYWORDS):

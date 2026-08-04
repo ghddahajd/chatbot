@@ -310,6 +310,19 @@ def _contextual_frame_classification(
     if local_intent in {"medical_advice", "regulated_advice", "operator_request", "location_mismatch"}:
         return None
 
+    if frame.frame_type == "symptom_followup" and frame.entity_id:
+        # Узкий, изолированный фрейм (живёт 1 шаг) под §3.2-гейт: локальный классификатор сам
+        # не понял неопределённый ответ на уточняющий вопрос ("где-то полгода" -> unknown_service/
+        # off_topic/faq_question) — подталкиваем к услуге, про которую только что спрашивали,
+        # вместо дефолтного "не нашёл". Если классификатор уверенно понял что-то ДРУГОЕ (другая
+        # услуга, запись, цена) — не трогаем, работает как обычно.
+        local_service_id = str(local_result.get("service_id") or "").strip()
+        if local_intent in {"unknown_service", "off_topic", "faq_question"} or (
+            local_intent == "service_mention" and not local_service_id
+        ):
+            return {"intent": "service_mention", "service_id": frame.entity_id, "confidence": 0.85}
+        return None
+
     normalized_message = normalize_text(message)
     if frame.frame_type == "clinic_info" and frame.slots.get("topic") == "doctors":
         if contains_keyword(normalized_message, DOCTOR_FOLLOWUP_KEYWORDS):

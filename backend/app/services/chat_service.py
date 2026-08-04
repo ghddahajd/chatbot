@@ -723,6 +723,21 @@ class ChatService:
         service_name = str(service.get("name") or "").strip() if service else None
         expires_at_turn = session.message_count + 5
 
+        symptom_followup_service_id = str(safe_context.get("symptom_followup_service_id") or "").strip()
+        if symptom_followup_service_id:
+            # Живёт РОВНО 1 шаг (не +5, как остальные фреймы ниже) — узкий, изолированный
+            # фрейм специально под §3.2-гейт (policy/__init__.py::_symptom_followup_result):
+            # неопределённый ответ на уточняющий вопрос ("где-то полгода") не должен
+            # проваливаться в дефолтный "не нашёл". Не расширяет и не трогает
+            # service_interest/fact_question ниже — своя ветка в _contextual_frame_classification.
+            return ContextFrame(
+                frame_type="symptom_followup",
+                entity_type="service",
+                entity_id=symptom_followup_service_id,
+                last_intent=last_intent,
+                expires_at_turn=session.message_count + 1,
+            )
+
         fact_guard = safe_context.get("fact_guard") if isinstance(safe_context.get("fact_guard"), dict) else None
         if fact_guard is not None:
             return ContextFrame(

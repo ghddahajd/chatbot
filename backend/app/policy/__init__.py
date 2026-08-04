@@ -41,6 +41,7 @@ from .constants import (
     WEBSITE_KEYWORDS,
 )
 from .extractors import (
+    _keyword_token_matches,
     contains_day_or_time_lemma,
     contains_keyword,
     extract_name,
@@ -1599,6 +1600,34 @@ def _has_hard_restricted_signal(normalized_message: str) -> bool:
     return contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS)
 
 
+_NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}
+
+
+def _has_bare_negative_signal(normalized_message: str) -> bool:
+    """Живой баг: 'ты реальный или нет' матчило NEGATIVE_MESSAGES буквально по слову 'нет' и
+    отвечало 'Ок, ничего не оформляем' — хотя это риторический оборот ('или нет'/'либо нет',
+    как 'так или нет?'/'будет или нет'), не отказ от чего-либо. contains_keyword не различает
+    позицию совпадения — проверяем отдельно, что ни одно совпадение NEGATIVE_MESSAGES не идёт
+    сразу после 'или'/'либо'."""
+
+    if not contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+        return False
+    tokens = normalized_message.split()
+    for phrase in NEGATIVE_MESSAGES:
+        phrase_tokens = phrase.split()
+        span = len(phrase_tokens)
+        for start in range(len(tokens) - span + 1):
+            if not all(
+                _keyword_token_matches(tokens[start + offset], phrase_tokens[offset])
+                for offset in range(span)
+            ):
+                continue
+            if start > 0 and tokens[start - 1] in _NEGATIVE_RHETORICAL_PREFIXES:
+                continue
+            return True
+    return False
+
+
 def _looks_like_safe_known_service_request(intent: str, normalized_message: str, service) -> bool:
     if service is None or intent not in SAFE_SERVICE_REQUEST_INTENTS:
         return False
@@ -1931,8 +1960,8 @@ def analyze_message(
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
-    if session.pending_action == PendingAction.COLLECT_CONTACT.value and contains_keyword(
-        normalized_message, NEGATIVE_MESSAGES
+    if session.pending_action == PendingAction.COLLECT_CONTACT.value and _has_bare_negative_signal(
+        normalized_message
     ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -1946,8 +1975,8 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
-    if session.pending_action == PendingAction.BOOKING_CONTACT.value and contains_keyword(
-        normalized_message, NEGATIVE_MESSAGES
+    if session.pending_action == PendingAction.BOOKING_CONTACT.value and _has_bare_negative_signal(
+        normalized_message
     ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -1961,7 +1990,7 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
-    if contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+    if _has_bare_negative_signal(normalized_message):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,

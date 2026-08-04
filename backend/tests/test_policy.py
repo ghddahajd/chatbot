@@ -1467,6 +1467,41 @@ def test_contact_prompt_can_be_cancelled(policy_session, knowledge_base) -> None
     assert result.safe_context["contact_request_cancelled"] is True
 
 
+def test_bot_identity_question_recognizes_realnyy_not_just_bot_word(
+    policy_session, knowledge_base
+) -> None:
+    """Живой баг: "ты реальный или нет" не матчилось BOT_IDENTITY_SIGNAL_KEYWORDS (знало
+    только "бот"/"робот") и падало в general_cancelled из-за слова "нет" на конце."""
+
+    result = _analyze("ты реальный или нет", policy_session, knowledge_base)
+
+    assert result.safe_context.get("general_cancelled") is not True
+    message = str(result.safe_context.get("message_to_user") or "")
+    assert "ничего не оформляем" not in message.lower()
+
+
+def test_general_cancelled_does_not_trigger_on_rhetorical_ili_net(
+    policy_session, knowledge_base
+) -> None:
+    """Живой баг: catch-all на NEGATIVE_MESSAGES матчил слово "нет" ГДЕ УГОДНО в сообщении,
+    включая риторический оборот "или нет"/"так или нет" — это не отказ ни от чего."""
+
+    for message in ["так или нет?", "будет или нет", "надо или нет, определитесь"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.safe_context.get("general_cancelled") is not True, message
+
+
+def test_general_cancelled_still_triggers_on_real_negative_reply(
+    policy_session, knowledge_base
+) -> None:
+    """Регрессия не должна съесть настоящий случай — просто "нет"/"не надо"/"отмена" как
+    самостоятельный ответ должен продолжать работать как раньше."""
+
+    for message in ["нет", "не надо", "отмена", "нет, лучше в пятницу"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.safe_context.get("general_cancelled") is True, message
+
+
 def test_faq_question_uses_article_context(
     policy_session,
     knowledge_base,

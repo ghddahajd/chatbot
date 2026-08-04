@@ -37,7 +37,13 @@ class FakeAsyncClient:
     async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
         method = url.rsplit("/", 1)[-1]
         FakeAsyncClient.calls.append({"method": method, "json": json})
-        payload = FakeAsyncClient.responses.get(method, {"ok": True, "result": {}})
+        configured = FakeAsyncClient.responses.get(method, {"ok": True, "result": {}})
+        # список — последовательные ответы на повторные вызовы (для тестов ретрая),
+        # словарь — как раньше, один и тот же ответ на каждый вызов.
+        if isinstance(configured, list):
+            payload = configured.pop(0) if len(configured) > 1 else configured[0]
+        else:
+            payload = configured
         return FakeResponse(payload)
 
 
@@ -113,6 +119,115 @@ def test_post_operator_queue_card_sends_claim_button_to_general(monkeypatch) -> 
     assert "Иван" in send_calls[0]["json"]["text"]
     create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
     assert create_calls == []
+
+
+def test_call_retries_on_429_and_respects_retry_after(monkeypatch) -> None:
+    """Живой баг, найден нагрузочным тестом: несколько параллельных карточек в одну и ту же
+    группу операторов — Telegram лимитирует ~1 сообщение/сек в чат, отвечает 429, раньше это
+    молча логировалось и карточка терялась без следа (18 из 57 при 10 параллельных запросах).
+    Теперь должны уважать retry_after и повторить, а не потерять."""
+
+    _reset_fake_client(monkeypatch)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(telegram_bridge_module.asyncio, "sleep", fake_sleep)
+    FakeAsyncClient.responses["sendMessage"] = [
+        {"ok": False, "error_code": 429, "description": "Too Many Requests: retry after 2", "parameters": {"retry_after": 2}},
+        {"ok": True, "result": {"message_id": 1}},
+    ]
+
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == 2
+    assert sleep_calls == [2]
+
+
+def test_call_gives_up_after_max_retries_on_persistent_429(monkeypatch) -> None:
+    """Не должен ретраить бесконечно — если Telegram стабильно возвращает 429, в какой-то
+    момент сдаётся и просто логирует, как раньше делал сразу."""
+
+    _reset_fake_client(monkeypatch)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(telegram_bridge_module.asyncio, "sleep", fake_sleep)
+    FakeAsyncClient.responses["sendMessage"] = {
+        "ok": False,
+        "error_code": 429,
+        "description": "Too Many Requests: retry after 1",
+        "parameters": {"retry_after": 1},
+    }
+
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == telegram_bridge_module._MAX_RATE_LIMIT_RETRIES + 1
+    assert len(sleep_calls) == telegram_bridge_module._MAX_RATE_LIMIT_RETRIES
+
+
+def test_call_does_not_retry_on_non_rate_limit_error(monkeypatch) -> None:
+    """Ошибка не про лимит (например, невалидный chat_id) — ретраить бессмысленно, повторный
+    вызов даст тот же результат. Должен остаться прежним поведением: один вызов, лог, отдать
+    ответ как есть."""
+
+    _reset_fake_client(monkeypatch)
+
+    async def fake_sleep(seconds: float) -> None:
+        raise AssertionError("не должен спать/ретраить на не-429 ошибке")
+
+    monkeypatch.setattr(telegram_bridge_module.asyncio, "sleep", fake_sleep)
+    FakeAsyncClient.responses["sendMessage"] = {
+        "ok": False,
+        "error_code": 400,
+        "description": "Bad Request: chat not found",
+    }
+
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == 1
 
 
 def test_post_client_lead_card_sends_to_clients_topic_without_button(monkeypatch) -> None:

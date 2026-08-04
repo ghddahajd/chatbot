@@ -32,6 +32,18 @@ logger = logging.getLogger(__name__)
 CLAIM_CALLBACK_PREFIX = "claim:"
 GET_UPDATES_TIMEOUT_SECONDS = 30
 HTTP_TIMEOUT_SECONDS = 40.0
+_MAX_RATE_LIMIT_RETRIES = 3
+
+
+def _telegram_retry_after(data: dict[str, Any]) -> float | None:
+    if data.get("error_code") != 429:
+        return None
+    parameters = data.get("parameters")
+    if isinstance(parameters, dict):
+        retry_after = parameters.get("retry_after")
+        if isinstance(retry_after, (int, float)):
+            return float(retry_after)
+    return None
 CLOSE_SESSION_COMMANDS = {"/done", "/close", "/end", "/завершить", "/закрыть"}
 _TELEGRAM_ROLE_LABELS = {"user": "👤 Клиент", "assistant": "🤖 Бот", "operator": "🧑‍💼 Оператор"}
 # Название темы должно оставаться осмысленным и в свёрнутом виде сайдбара (Telegram обрезает
@@ -108,16 +120,37 @@ class TelegramBridgeService:
         return bool(self.bot_token and self.group_chat_id)
 
     async def _call(self, method: str, **params: Any) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.post(f"{self._api_base}/{method}", json=params)
-            data = response.json()
-            if not data.get("ok"):
+        """Telegram лимитирует примерно 1 сообщение/сек в один и тот же чат — все карточки
+        очереди операторов идут в одну группу, так что под конкурентной нагрузкой 429 ("Too
+        Many Requests") — ожидаемый случай, не редкость. Раньше он тихо логировался и
+        карточка терялась без следа (живой баг, найден нагрузочным тестом: 18 из 57 карточек
+        не доходили при 10 параллельных запросах). Теперь уважаем retry_after, который сам
+        Telegram присылает в ответе, и повторяем — вместо того чтобы просто потерять."""
+
+        data: dict[str, Any] = {}
+        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                response = await client.post(f"{self._api_base}/{method}", json=params)
+                data = response.json()
+            if data.get("ok"):
+                return data
+            retry_after = _telegram_retry_after(data)
+            if retry_after is None or attempt >= _MAX_RATE_LIMIT_RETRIES:
                 logger.warning(
                     "telegram_bridge api_error method=%s description=%s",
                     method,
                     data.get("description"),
                 )
-            return data
+                return data
+            logger.warning(
+                "telegram_bridge rate_limited method=%s retry_after=%ss attempt=%s/%s",
+                method,
+                retry_after,
+                attempt + 1,
+                _MAX_RATE_LIMIT_RETRIES,
+            )
+            await asyncio.sleep(retry_after)
+        return data
 
     async def post_operator_queue_card(
         self,

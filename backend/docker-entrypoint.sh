@@ -18,12 +18,21 @@ if [ -n "$CLIENT_DATA_DEPLOY_KEY" ]; then
   GIT_SSH_COMMAND="ssh -i $KEY_FILE -o StrictHostKeyChecking=no -o IdentitiesOnly=yes" \
     git clone --depth 1 "${CLIENT_DATA_REPO_URL:-git@github.com:ghddahajd/rosh-client-data.git}" "$CLONE_DIR"
 
+  # clients/<id> -> /app/data/clients/<id> (то, что раньше подставлял volume-mount)
   mkdir -p /app/data/clients
-  for dir in "$CLONE_DIR"/*/; do
-    name="$(basename "$dir")"
-    rm -rf "/app/data/clients/$name"
-    cp -r "$dir" "/app/data/clients/$name"
-  done
+  if [ -d "$CLONE_DIR/clients" ]; then
+    for dir in "$CLONE_DIR"/clients/*/; do
+      name="$(basename "$dir")"
+      rm -rf "/app/data/clients/$name"
+      cp -r "$dir" "/app/data/clients/$name"
+    done
+  fi
+
+  # rag_corpus/* -> /client-input/* (то, что раньше подставлял volume-mount ./client-input)
+  if [ -d "$CLONE_DIR/rag_corpus" ]; then
+    mkdir -p /client-input
+    cp -r "$CLONE_DIR"/rag_corpus/. /client-input/
+  fi
 
   rm -rf "$KEY_FILE" "$CLONE_DIR"
   echo "docker-entrypoint: client data ready."

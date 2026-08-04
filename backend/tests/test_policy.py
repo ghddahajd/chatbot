@@ -114,6 +114,40 @@ def test_benign_pain_question_marked_calm_not_urgent(policy_session, knowledge_b
         assert result.safe_context.get("escalation_urgency") == "calm"
 
 
+def test_routine_danger_question_gets_calm_tone_not_urgent(
+    policy_session, resolver, managed_env
+) -> None:
+    """Живой баг (research.md #3, третий аудит): 'Опасно ли делать пилинг летом?' (рутинный
+    вопрос про известную услугу) эскалировало с тем же 'urgent' тоном ('если срочно — скорая
+    103'), что и реально острые сигналы. 'опасно' добавлено в BENIGN_MEDICAL_KEYWORDS — тон
+    смягчился. Эскалация как таковая осталась (см. _looks_like_safe_known_service_request:
+    там отдельная, более строгая проверка через объединение с MEDICAL_KEYWORDS, её не
+    трогали — риск случайно ослабить гейт из фикса #1 не оправдан для смены одного тона)."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("Опасно ли делать пилинг летом?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.safe_context.get("escalation_urgency") == "calm"
+
+
+def test_danger_word_combined_with_real_symptom_stays_urgent(
+    policy_session, resolver, managed_env
+) -> None:
+    """Безопасный дефолт: 'опасно' в BENIGN_MEDICAL_KEYWORDS — если в сообщении ЕСТЬ другое
+    по-настоящему тревожное слово (аллергия), тон не должен занижаться до calm."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze(
+        "опасно ли колоть ботокс, если у меня аллергия?", policy_session, knowledge_base
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.safe_context.get("escalation_urgency") == "urgent"
+
+
 def test_real_urgent_symptom_stays_urgent_even_with_pain_word(policy_session, knowledge_base) -> None:
     """Безопасный дефолт: если в сообщении ЕСТЬ другое медицинское слово помимо
     больно/болит/нормально — не занижаем срочность, даже если оно тоже присутствует."""

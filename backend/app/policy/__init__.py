@@ -736,6 +736,7 @@ OBJECTION_PHRASE_KEYS = {
     "hesitation": "objection_hesitation",
     "competitor": "objection_competitor",
     "guarantee": "objection_guarantee",
+    "pain_fear": "objection_pain_fear",
 }
 OBJECTION_BACKOFF_ATTEMPTS = 2
 OBJECTION_QUICK_ACTIONS = ["Позвать менеджера", "Посмотреть услуги"]
@@ -1843,6 +1844,16 @@ def analyze_message(
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
     if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):
+        medical_requested = False
+    if (
+        medical_requested
+        and intent == "objection"
+        and str(classification.get("context_topic") or "") == "pain_fear"
+    ):
+        # is_restricted_question() пересчитывает медицинский сигнал из СЫРОГО сообщения
+        # независимо от переданной классификации ("больно" в MEDICAL_KEYWORDS) — без этого
+        # исключения §4.5-объекшен (research.md #5) всё равно проваливался бы в эскалацию
+        # здесь, даже когда chat_utils уже провалидировал, что другого мед-сигнала нет.
         medical_requested = False
     unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city, message=message)
     city_in_text = city_prepositional(knowledge_base.company.city)

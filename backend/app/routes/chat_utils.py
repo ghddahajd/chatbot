@@ -17,6 +17,7 @@ from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import (
     AFFIRMATIVE_MESSAGES,
+    BENIGN_MEDICAL_KEYWORDS,
     BOOKING_KEYWORDS,
     BOT_IDENTITY_SIGNAL_KEYWORDS,
     CLARIFY_SHORT_MESSAGES,
@@ -27,6 +28,9 @@ from ..policy.constants import (
     GUARANTEE_REQUEST_KEYWORDS,
     HESITATION_EXACT_MESSAGES,
     HESITATION_KEYWORDS,
+    MEDICAL_KEYWORDS,
+    PAIN_FEAR_ANTICIPATION_KEYWORDS,
+    PAIN_OR_SIDE_EFFECT_KEYWORDS,
     PRICE_KEYWORDS,
     PRICE_OBJECTION_KEYWORDS,
     PRICE_OBJECTION_TOKENS,
@@ -480,6 +484,27 @@ def _bot_identity_classification(message: str) -> dict[str, object] | None:
     }
 
 
+def _pain_fear_objection_classification(message: str) -> dict[str, object] | None:
+    """§4.5 скрипта: "боюсь, что будет больно/появятся побочные эффекты" — объекшен
+    (тревога о ПРЕДСТОЯЩЕЙ процедуре), не медицинская эскалация. Раньше "больно" в
+    MEDICAL_KEYWORDS перехватывало это на уровне local_result ДО того, как объекшены вообще
+    проверялись (см. resolve_classification: строка с medical_advice/regulated_advice
+    возвращает раньше _objection_classification). Требуем ОБА признака — глагол-опасение и
+    слово о боли/побочках, — и явно исключаем случай, где есть ДРУГОЙ медицинский сигнал
+    (например "боюсь, у меня кровит" — это не объекшен, реальный тревожный симптом остаётся
+    приоритетным, безопасный дефолт как в BENIGN_MEDICAL_KEYWORDS)."""
+
+    normalized_message = normalize_text(message)
+    if not contains_keyword(normalized_message, PAIN_FEAR_ANTICIPATION_KEYWORDS):
+        return None
+    if not contains_keyword(normalized_message, PAIN_OR_SIDE_EFFECT_KEYWORDS):
+        return None
+    other_medical_signal = MEDICAL_KEYWORDS - PAIN_OR_SIDE_EFFECT_KEYWORDS - BENIGN_MEDICAL_KEYWORDS
+    if contains_keyword(normalized_message, other_medical_signal):
+        return None
+    return {"intent": "objection", "service_id": None, "confidence": 0.88, "context_topic": "pain_fear"}
+
+
 def _objection_classification(message: str) -> dict[str, object] | None:
     """Возражения по цене ("дорого"/"я подумаю"/"у конкурентов дешевле"/"гарантируете?") —
     детерминированный ответ по той же причине, что и bot_identity: локальная модель ненадёжно
@@ -549,6 +574,9 @@ async def resolve_classification(
     local_intent = str(local_result.get("intent") or "")
     local_confidence = float(local_result.get("confidence") or 0.0)
     if local_intent in {"medical_advice", "regulated_advice"}:
+        pain_fear_result = _pain_fear_objection_classification(message)
+        if pain_fear_result is not None:
+            return pain_fear_result
         return local_result
     if extract_phone(message):
         return local_result

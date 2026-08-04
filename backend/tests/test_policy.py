@@ -2019,6 +2019,22 @@ def test_objection_guarantee_does_not_promise_result(policy_session, knowledge_b
     assert "100%" not in message
 
 
+def test_objection_pain_fear_gives_reassurance_not_escalation(policy_session, knowledge_base) -> None:
+    """Живой баг (research.md #5, третий аудит): §4.5 скрипта — "боюсь, что будет больно"
+    должно получать успокаивающий ответ скрипта, не медицинскую эскалацию."""
+
+    result = analyze_message(
+        "Переживаю, что будет больно и появятся побочные эффекты",
+        policy_session,
+        knowledge_base,
+        _objection_classification("pain_fear"),
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OBJECTION_HANDLED
+    assert "обезболивание" in str(result.safe_context.get("message_to_user")).lower()
+
+
 def test_objection_backs_off_after_two_soft_attempts(policy_session, knowledge_base) -> None:
     policy_session.objection_response_count = 0
     first = analyze_message(

@@ -42,11 +42,13 @@ UNSUPPORTED_EQUIPMENT_PATTERNS = (
 )
 UNSUPPORTED_EFFICACY_CLAIM_PATTERNS = (
     re.compile(
-        r"(?:помогает\s+от|лечит|лечить|разрушает\s+бактерии|"
+        r"(?:помогает\s+от|поможет\s+от|лечит|лечить|вылечит|излечит|избавит\s+от|"
+        r"разрушает\s+бактерии|"
         # было только "при"/"от" — аудит поймал живую фразу "эффективна ДЛЯ пациентов любого
         # возраста", которая проходила мимо. Плюс два необещанных типа обещания результата,
         # не содержащих слова "эффективн-" вообще: "показывает стабильные результаты",
-        # "даёт стойкий результат".
+        # "даёт стойкий результат". research.md #6 (третий аудит): "помогает от" было только
+        # в настоящем времени — "поможет от"/"вылечит"/"избавит от" (будущее) проходили мимо.
         r"эффектив(?:ен|на)\s+(?:при|от|для)|"
         r"стабильн\w*\s+результат|стойк\w*\s+результат)",
         re.IGNORECASE,
@@ -244,8 +246,14 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         undisclosed_pattern = _undisclosed_equipment_pattern(context)
         if undisclosed_pattern and undisclosed_pattern.search(answer):
             return False
-        if any(pattern.search(answer) for pattern in UNSUPPORTED_EFFICACY_CLAIM_PATTERNS):
-            return False
+
+    # research.md #6 (третий аудит): раньше проверка на гарантийные фразы (323-ФЗ/ст.24 ФЗ "О
+    # рекламе") стояла ТОЛЬКО внутри блока faq_question — ответы про цену/длительность/
+    # объяснение услуги (price/duration/explanation) шли через тот же validate_response(), но
+    # эта защита на них не срабатывала вообще. Вынесено из-под question_type == "faq_question"
+    # — применяется к любому типу ответа безусловно.
+    if any(pattern.search(answer) for pattern in UNSUPPORTED_EFFICACY_CLAIM_PATTERNS):
+        return False
 
     return True
 

@@ -200,6 +200,34 @@ def test_efficacy_claim_pattern_catches_audit_reported_phrasings() -> None:
         assert not validate_response(answer, context), answer
 
 
+def test_efficacy_claim_pattern_catches_future_tense_phrasings() -> None:
+    """research.md #6 (третий аудит): паттерн ловил "помогает от" (настоящее время), но не
+    "поможет от"/"вылечит"/"избавит от" (будущее) — тот же класс необещанного результата,
+    просто другая форма глагола."""
+
+    context = {
+        "question_type": "faq_question",
+        "article_context": [{"title": "Процедура", "snippet": "Нейтральное описание без обещаний."}],
+    }
+
+    for answer in (
+        "Процедура точно поможет от акне.",
+        "Курс полностью вылечит акне за месяц.",
+        "Уже после первого сеанса избавит от морщин.",
+    ):
+        assert not validate_response(answer, context), answer
+
+
+def test_efficacy_claim_check_applies_to_price_duration_and_explanation_too() -> None:
+    """Живой структурный баг (research.md #6, третий аудит): проверка на гарантийные фразы
+    стояла только внутри question_type == "faq_question" — ответы про цену/длительность/
+    объяснение услуги шли через тот же validate_response(), но защита не срабатывала."""
+
+    answer = "Процедура точно поможет от акне и даёт стойкий результат."
+    for question_type in ("price", "duration", "explanation", "faq_question"):
+        assert not validate_response(answer, {"question_type": question_type}), question_type
+
+
 def test_faq_validator_blocks_client_specific_undisclosed_equipment_name() -> None:
     """B6: захардкоженный UNSUPPORTED_EQUIPMENT_PATTERNS не знает реальные бренды конкретного
     клиента (например ROSH-овский InMode Morpheus8) — per-клиентский список из

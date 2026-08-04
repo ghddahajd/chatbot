@@ -9,6 +9,7 @@ from app.routes.chat_utils import (
     _contextual_frame_classification,
     _doctor_info_classification,
     _objection_classification,
+    _pain_fear_objection_classification,
     classify_consultation_risk,
     should_ignore_model_location_mismatch,
     should_ignore_model_regulated_advice,
@@ -330,3 +331,27 @@ def test_objection_classification_matches_guarantee_request() -> None:
 
 def test_objection_classification_ignores_unrelated_message() -> None:
     assert _objection_classification("хочу записаться на консультацию") is None
+
+
+def test_pain_fear_classification_matches_script_example() -> None:
+    """Живой баг (research.md #5, третий аудит): §4.5 скрипта — "боюсь боли/побочек" должно
+    уходить в объекшен, не в медицинскую эскалацию через MEDICAL_KEYWORDS ("больно")."""
+
+    result = _pain_fear_objection_classification("Переживаю, что будет больно и появятся побочные эффекты")
+    assert result is not None
+    assert result["context_topic"] == "pain_fear"
+    assert result["intent"] == "objection"
+
+
+def test_pain_fear_classification_requires_both_anticipation_and_pain_word() -> None:
+    assert _pain_fear_objection_classification("боюсь опоздать на консультацию") is None
+    assert _pain_fear_objection_classification("мне очень больно после процедуры") is None
+
+
+def test_pain_fear_classification_does_not_override_real_symptom() -> None:
+    """Безопасный дефолт: если помимо тревоги о боли есть ДРУГОЙ, не связанный с болью
+    медицинский сигнал (кровит/аллергия) — это не объекшен, реальный симптом остаётся
+    приоритетным."""
+
+    assert _pain_fear_objection_classification("боюсь, у меня очень болит и кровит") is None
+    assert _pain_fear_objection_classification("переживаю, у меня аллергия началась") is None

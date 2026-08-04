@@ -56,6 +56,7 @@ class PolicyReason(str, Enum):
     OFF_TOPIC_BODY_REDIRECT = "off_topic_body_redirect"
     OBJECTION_HANDLED = "objection_handled"
     OBJECTION_BACKOFF = "objection_backoff"
+    COMPLAINT = "complaint"
 
 
 class PendingAction(str, Enum):

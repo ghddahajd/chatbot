@@ -12,6 +12,7 @@ from ..services.rag_search import retrieve_article_context
 from .constants import (
     BODY_TOPIC_SIGNAL_KEYWORDS,
     BOOKING_KEYWORDS,
+    COMPLAINT_ESCALATION_KEYWORDS,
     AMBULANCE_ACTION_KEYWORDS,
     AMBULANCE_SUBJECT_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
@@ -1899,6 +1900,24 @@ def analyze_message(
             session,
             service,
             restricted_category,
+        )
+
+    if contains_keyword(normalized_message, COMPLAINT_ESCALATION_KEYWORDS):
+        # Живой баг (research.md #2, третий аудит): §5 скрипта требует немедленной передачи
+        # оператору на жалобу/возврат денег/юридику/угрозу отзывом — раньше эти сообщения
+        # перехватывались booking_request/price_question/off_topic ниже и не эскалировали
+        # вообще. Приоритет — сразу после медицинской безопасности, до остальной классификации.
+        return PolicyResult(
+            action=PolicyAction.TRANSFER_OPERATOR,
+            reason=PolicyReason.COMPLAINT,
+            service_id=service.id if service else None,
+            confidence=0.92,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": _phrase(knowledge_base, "complaint_escalation"),
+                "handoff_message": _phrase(knowledge_base, "complaint_escalation"),
+            },
+            quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
     if session.pending_action == PendingAction.COLLECT_CONTACT.value and contains_keyword(

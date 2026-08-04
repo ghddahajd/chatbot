@@ -94,6 +94,45 @@ def test_classify_and_extract_still_flags_off_topic_and_unknown_service_when_not
     assert unknown_result["intent"] == "unknown_service"
 
 
+def test_complaint_refund_legal_threat_escalate_immediately(policy_session, knowledge_base) -> None:
+    """Живой баг (research.md #2, третий аудит): §5 скрипта требует немедленной передачи
+    оператору на жалобу/возврат денег/юридику/угрозу отзывом. Раньше все три перехватывались
+    booking_request/price_question/off_topic и не эскалировали вообще."""
+
+    messages = [
+        "врач мне нахамил на приёме, хочу вернуть деньги",
+        "третий раз пишу... Ужасное обслуживание, оставлю плохой отзыв",
+        "в договоре написана другая цена, разберитесь",
+    ]
+    for message in messages:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.TRANSFER_OPERATOR, message
+        assert result.reason == PolicyReason.COMPLAINT, message
+
+
+def test_complaint_keywords_do_not_false_trigger_on_benign_policy_questions(
+    policy_session, knowledge_base
+) -> None:
+    """Живой ложняк, найден вручную при проверке #2: первая версия списка ловила бары
+    'вернуть деньги'/'в договоре'/'напишу отзыв' — это матчилось и на обычные вопросы про
+    политику возврата/договор/положительный отзыв, не только на реальную жалобу. Список
+    сузили до явной рамки требования/претензии — эти сообщения не должны эскалировать через
+    COMPLAINT (могут уйти в другую, обычную ветку, но не через жалобу)."""
+
+    messages = [
+        "а если не понравится, можно вернуть деньги?",
+        "а в договоре указывается гарантия?",
+        "хочу оставить отзыв о процедуре, все понравилось",
+        "напишу отзыв после консультации, хорошо получилось",
+        "я уже писал вам вчера про цену на чистку лица",
+        "подскажите про возврат денег если передумаю",
+        "какая у вас политика возврата денег",
+    ]
+    for message in messages:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.reason != PolicyReason.COMPLAINT, message
+
+
 def test_medical_question_blocked(policy_session, knowledge_base) -> None:
     result = _analyze("что попить от прыщей?", policy_session, knowledge_base)
 

@@ -1672,6 +1672,33 @@ def test_medical_symptom_beats_fact_guard(
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_medical_symptom_is_not_bypassed_by_weak_rag_article_match(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (research.md #1, третий аудит): в отличие от unknown_service/off_topic/
+    list_services, ветка medical_requested возвращала RAG-подсказку без проверки
+    _has_strong_article_overlap. 'лицо распухло, тяжело дышать' (похоже на аллергическую
+    реакцию) случайно зацепилось за статью про восстановление волос через общее слово
+    'процедуры' (score-based match, без curated trigger_phrase) — бот отвечал про
+    мезотерапию волос вместо эскалации на потенциально острый сигнал."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "После процедуры лицо всё красное и распухло, тяжело дышать",
+        policy_session,
+        knowledge_base,
+        {"intent": "medical_advice", "service_id": None, "confidence": 1.0},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
 def test_post_procedure_symptom_escalates_even_with_price_intent(
     policy_session,
     resolver,

@@ -1802,7 +1802,13 @@ def analyze_message(
                 article_matches,
                 normalized_message,
             )
-            if guidance_result is not None:
+            # Живой баг (research.md #1): в отличие от unknown_service/off_topic/list_services,
+            # эта ветка возвращала RAG-подсказку БЕЗ проверки _has_strong_article_overlap — одно
+            # случайное общее слово ("процедуры") со статьёй про восстановление волос перекрывало
+            # эскалацию на сообщении "лицо распухло, тяжело дышать". Тот же гейт, что и везде.
+            if guidance_result is not None and _has_strong_article_overlap(
+                normalized_message, guidance_result
+            ):
                 return guidance_result
         return _medical_referral_result(
             normalized_message,

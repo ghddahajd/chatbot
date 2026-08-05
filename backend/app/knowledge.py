@@ -353,6 +353,22 @@ def _tokens(value: str) -> list[str]:
     return [token for token in normalize_text(value).split() if token]
 
 
+# Живой баг (аудит §2026-08-06): "скока стоит бутокс от морщин на лбу" предлагал совсем
+# нерелевантные "Биорезонансная терапия на аппарате BICOM" / "Диагностика на аппарате BICOM
+# BODY CHECK" — токен "на" совпадал с "на" в названии услуги, и find_similar_services считала
+# это пересечением, искусственно поднимая score до 0.62 (см. ниже), хотя совпадение чисто по
+# предлогу ничего не говорит о смысловой близости. Общие предлоги/союзы исключаем из пересечения
+# токенов — только у find_similar_services, где это ловит именно "смутно похожие" услуги.
+_STOPWORD_TOKENS = {
+    "на", "от", "в", "и", "к", "с", "до", "по", "за", "из", "у", "о", "со", "во",
+    "не", "а", "но", "или", "для", "как", "что", "это", "то", "же", "ли", "бы",
+}
+
+
+def _significant_tokens(tokens: set[str]) -> set[str]:
+    return {token for token in tokens if token not in _STOPWORD_TOKENS}
+
+
 def hostname_from_origin(value: str | None) -> str | None:
     """достаёт hostname из origin/referer/domain строки."""
 
@@ -522,7 +538,7 @@ class KnowledgeBase:
 
     def find_similar_services(self, query: str, threshold: float = 0.6) -> list[Service]:
         normalized_query = normalize_text(query)
-        query_tokens = set(_tokens(query))
+        query_tokens = _significant_tokens(set(_tokens(query)))
         if not normalized_query:
             return []
 
@@ -532,7 +548,7 @@ class KnowledgeBase:
             best_score = 0.0
             for variant in variants:
                 normalized_variant = normalize_text(variant)
-                variant_tokens = set(_tokens(variant))
+                variant_tokens = _significant_tokens(set(_tokens(variant)))
                 if not normalized_variant:
                     continue
 

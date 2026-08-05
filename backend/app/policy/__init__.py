@@ -44,6 +44,7 @@ from .extractors import (
     _keyword_token_matches,
     contains_day_or_time_lemma,
     contains_keyword,
+    contains_keyword_lemma,
     extract_name,
     extract_person_lemma_via_ner,
     extract_phone,
@@ -52,6 +53,7 @@ from .extractors import (
     is_location_mismatch,
     last_service_from_history,
     lemmatize_known_name,
+    lemmatize_tokens,
 )
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
@@ -1596,8 +1598,37 @@ SAFE_SERVICE_REQUEST_INTENTS = {
 }
 
 
+_hard_restricted_single_word_lemmas: set[str] | None = None
+
+
+def _hard_restricted_lemma_set() -> set[str]:
+    # Считаем один раз за процесс (не на каждое сообщение) — леммы самих ключевых слов не
+    # меняются. Только однословные ключи: многословные фразы уже матчатся по последовательности
+    # токенов (_contains_token_sequence) — там инфлексии одного слова внутри фразы не так
+    # критичны, как для одиночного слова типа "опасно" против "опасен".
+    global _hard_restricted_single_word_lemmas
+    if _hard_restricted_single_word_lemmas is None:
+        single_words = {
+            keyword for keyword in (HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS) if " " not in keyword
+        }
+        lemmas: set[str] = set()
+        for word in single_words:
+            lemmas.update(lemmatize_tokens(word))
+        _hard_restricted_single_word_lemmas = lemmas
+    return _hard_restricted_single_word_lemmas
+
+
 def _has_hard_restricted_signal(normalized_message: str) -> bool:
-    return contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS)
+    # Живой баг (аудит §2026-08-06): "насколько опасен ботокс если делать часто, может
+    # накапливаться в организме" — "опасно" есть в MEDICAL_KEYWORDS, но не "опасен" (другая
+    # словоформа, не подстрока). Классификатор верно тегнул regulated_advice (0.95), но эта
+    # проверка возвращала False из-за пропущенной формы, что снимало medical_requested и
+    # отправляло вопрос в общую RAG-ветку мимо эскалации и бренд-гарда. Быстрая подстрочная
+    # проверка остаётся первой (бесплатно ловит буквальные совпадения); лемматизация — только
+    # запасной, более медленный проход, если она ничего не нашла.
+    if contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS):
+        return True
+    return contains_keyword_lemma(normalized_message, _hard_restricted_lemma_set())
 
 
 _NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}
@@ -1960,8 +1991,37 @@ def analyze_message(
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
-    if session.pending_action == PendingAction.COLLECT_CONTACT.value and _has_bare_negative_signal(
-        normalized_message
+    # Живой баг (аудит §2026-08-06): "хотя нет забудьте, а сколько стоит биоревитализация
+    # губ?" — классификация уже верно распознала price_question (0.86), но бывшая голая
+    # проверка на "нет" срабатывала первой и полностью проглатывала вопрос ("Ок, ничего не
+    # оформляем"), хотя отменять было нечего. Негативный сигнал считаем отменой только когда
+    # в СООБЩЕНИИ нет никакого другого содержательного сигнала — иначе это не отказ, а просто
+    # "нет" в начале фразы перед настоящим вопросом.
+    has_competing_substantive_signal = (
+        price_requested
+        or booking_requested
+        or duration_requested
+        or explanation_requested
+        or lead_requested
+        or service is not None
+        or (
+            classifier_confidence > 0
+            and intent
+            in {
+                "price_question",
+                "booking_request",
+                "faq_question",
+                "cosmetic_concern",
+                "lead_request",
+                "service_mention",
+            }
+        )
+    )
+
+    if (
+        session.pending_action == PendingAction.COLLECT_CONTACT.value
+        and _has_bare_negative_signal(normalized_message)
+        and not has_competing_substantive_signal
     ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -1975,8 +2035,10 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
-    if session.pending_action == PendingAction.BOOKING_CONTACT.value and _has_bare_negative_signal(
-        normalized_message
+    if (
+        session.pending_action == PendingAction.BOOKING_CONTACT.value
+        and _has_bare_negative_signal(normalized_message)
+        and not has_competing_substantive_signal
     ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -1990,7 +2052,7 @@ def analyze_message(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
-    if _has_bare_negative_signal(normalized_message):
+    if _has_bare_negative_signal(normalized_message) and not has_competing_substantive_signal:
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,
@@ -2340,7 +2402,9 @@ def analyze_message(
             article_matches,
             normalized_message,
         )
-        if guidance_result is not None:
+        if guidance_result is not None and _has_strong_article_overlap(
+            normalized_message, guidance_result
+        ):
             return guidance_result
 
         suggested_services = cosmetic_concern_services(message, knowledge_base)

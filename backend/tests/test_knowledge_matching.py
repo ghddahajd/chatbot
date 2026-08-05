@@ -92,6 +92,23 @@ def test_bioresonance_question_resolves_to_real_bicom_service_not_biorevit(
     }
 
 
+def test_typo_does_not_fuzzy_match_unrelated_bicom_service(resolver, managed_env) -> None:
+    """Живой баг (аудит §2026-08-06): "скока стоит бутокс от морщин на лбу" (опечатка в
+    "ботокс") предлагал совершенно нерелевантные "Биорезонансная терапия на аппарате BICOM" /
+    "Диагностика на аппарате BICOM BODY CHECK". Причина: find_similar_services считала общий
+    предлог "на" (есть и в сообщении, и в "на аппарате BICOM") как пересечение токенов и
+    искусственно поднимала score выше порога 0.6. Предлоги/союзы не должны сами по себе
+    считаться совпадением."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    similar = knowledge_base.find_similar_services("скока стоит бутокс от морщин на лбу")
+
+    matched_ids = {service.id for service in similar}
+    assert "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07" not in matched_ids
+    assert "diagnostika_na_apparate_bicom_body_check_9bf8a621" not in matched_ids
+
+
 def test_missing_article_service_map_is_empty(knowledge_base) -> None:
     assert knowledge_base.article_service_map == {}
 

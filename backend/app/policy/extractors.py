@@ -323,6 +323,37 @@ def contains_day_or_time_lemma(normalized_message: str) -> bool:
     return False
 
 
+def lemmatize_tokens(text: str) -> list[str]:
+    """Лемматизирует все слова текста (начальная форма каждого токена) — общий помощник
+    для того же приёма, что уже применён в contains_day_or_time_lemma: сравнивать по лемме
+    вместо ручного перечисления падежных/родовых форм слова в списке ключевых слов."""
+
+    if not text.strip() or not _load_natasha_morph():
+        return []
+    from natasha import Doc
+
+    doc = Doc(text)
+    doc.segment(_natasha_segmenter)
+    doc.tag_morph(_natasha_morph_tagger)
+    lemmas: list[str] = []
+    for token in doc.tokens:
+        token.lemmatize(_natasha_morph_vocab)
+        if token.lemma:
+            lemmas.append(token.lemma)
+    return lemmas
+
+
+def contains_keyword_lemma(normalized_message: str, canonical_lemmas: set[str]) -> bool:
+    """Живой баг (аудит §2026-08-06): 'опасно' в списке ключевых слов не матчило 'опасен'/
+    'опасна' ('опасно' не является подстрокой 'опасен') — contains_keyword сравнивает сырые
+    строки, а не словоформы. canonical_lemmas — множество лемм (начальных форм) ключевых слов,
+    посчитанное один раз через lemmatize_tokens; здесь просто сравниваем леммы сообщения с ним."""
+
+    if not canonical_lemmas:
+        return False
+    return any(lemma in canonical_lemmas for lemma in lemmatize_tokens(normalized_message))
+
+
 def _distance_at_most_one(left: str, right: str) -> bool:
     if Levenshtein is not None:
         return Levenshtein.distance(left, right) <= 1

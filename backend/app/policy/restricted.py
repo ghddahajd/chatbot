@@ -7,7 +7,7 @@ from typing import Any
 
 from ..knowledge import normalize_text
 from .constants import MEDICAL_KEYWORDS
-from .extractors import contains_keyword
+from .extractors import contains_keyword, contains_keyword_lemma, lemmatize_tokens
 
 MEDICAL_RESTRICTED_CATEGORIES = {
     "medical",
@@ -67,6 +67,26 @@ def has_medical_restricted_category(domain_profile: Any) -> bool:
     return _has_medical_restrictions(get_restricted_categories(domain_profile))
 
 
+_medical_single_word_lemmas: set[str] | None = None
+
+
+def _medical_lemma_set() -> set[str]:
+    # Живой баг (аудит §2026-08-06): интент-классификация не всегда тегнёт сообщение как
+    # medical_advice/regulated_advice (у локального фолбэк-классификатора это особенно легко
+    # промахнуться на многословных вопросах), и is_restricted_question — единственная
+    # оставшаяся страховка. Раньше она матчила MEDICAL_KEYWORDS буквальной подстрокой ("опасно"
+    # не матчило "опасен" — другая словоформа, не подстрока). Считаем леммы ключевых слов один
+    # раз за процесс, не на каждое сообщение.
+    global _medical_single_word_lemmas
+    if _medical_single_word_lemmas is None:
+        single_words = {keyword for keyword in MEDICAL_KEYWORDS if " " not in keyword}
+        lemmas: set[str] = set()
+        for word in single_words:
+            lemmas.update(lemmatize_tokens(word))
+        _medical_single_word_lemmas = lemmas
+    return _medical_single_word_lemmas
+
+
 def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str | None]:
     """
     возвращает (is_restricted, category).
@@ -81,7 +101,10 @@ def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str
         return False, None
 
     normalized_message = normalize_text(message)
-    if _has_medical_restrictions(categories) and contains_keyword(normalized_message, MEDICAL_KEYWORDS):
+    if _has_medical_restrictions(categories) and (
+        contains_keyword(normalized_message, MEDICAL_KEYWORDS)
+        or contains_keyword_lemma(normalized_message, _medical_lemma_set())
+    ):
         return True, "medical"
     if _normalized_categories(categories) & REMOTE_SAFETY_CATEGORIES:
         if contains_keyword(normalized_message, REMOTE_SAFETY_KEYWORDS):

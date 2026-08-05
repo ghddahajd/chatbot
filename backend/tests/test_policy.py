@@ -187,6 +187,22 @@ def test_danger_word_combined_with_real_symptom_stays_urgent(
     assert result.safe_context.get("escalation_urgency") == "urgent"
 
 
+def test_danger_word_inflection_still_escalates(policy_session, knowledge_base) -> None:
+    """Живой баг (аудит §2026-08-06): "насколько опасен ботокс если делать часто, может
+    накапливаться в организме?" не эскалировало — MEDICAL_KEYWORDS содержит "опасно", но не
+    "опасен" (другая словоформа, не подстрока), а локальный классификатор тегнул это как
+    unknown_service, не medical_advice/regulated_advice. is_restricted_question — единственная
+    оставшаяся страховка в этом случае, и раньше она тоже промахивалась по той же причине."""
+
+    result = _analyze(
+        "насколько опасен ботокс если делать часто, может он накапливаться в организме и быть вреден",
+        policy_session,
+        knowledge_base,
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+
+
 def test_real_urgent_symptom_stays_urgent_even_with_pain_word(policy_session, knowledge_base) -> None:
     """Безопасный дефолт: если в сообщении ЕСТЬ другое медицинское слово помимо
     больно/болит/нормально — не занижаем срочность, даже если оно тоже присутствует."""
@@ -223,7 +239,11 @@ def test_acne_without_hard_symptoms_is_cosmetic_concern(policy_session, resolver
         assert classification["intent"] == "cosmetic_concern"
         assert result.action != PolicyAction.TRANSFER_OPERATOR
         assert result.reason != PolicyReason.REGULATED_ADVICE
-        assert result.safe_context["question_type"] == "cosmetic_concern"
+        # "акне, что делать?" теперь резолвится через одобренную статью про механическую
+        # чистку лица (RAG score-based match на содержимое статьи, не на trigger_phrase) —
+        # добавлена во время ревью статей 2026-08-05, это не регресс, просто более
+        # конкретный ответ (см. память проекта).
+        assert result.safe_context["question_type"] in {"cosmetic_concern", "cosmetic_article_guidance"}
 
 
 def test_acne_with_hard_symptoms_stays_medical(policy_session, knowledge_base) -> None:
@@ -844,11 +864,16 @@ def test_unknown_doctor_specialty_uses_clinic_defer_not_offtopic(policy_session,
 
 
 def test_unknown_medical_product_is_clarify_not_offtopic(policy_session, resolver, managed_env) -> None:
+    """"PDRN из молок лосося" теперь резолвится через одобренную во время ревью статей
+    2026-08-05 статью "«Сперма лосося»: ПДРН в косметологии" (реальный контент, реальная
+    привязка к Биоревитализации) — не регресс, честный информативный ответ вместо общего
+    "не нашёл подтверждения". Важное свойство (не off_topic) сохраняется."""
+
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
     result = _analyze("PDRN из молок лосося", policy_session, knowledge_base)
 
-    assert result.action == PolicyAction.CLARIFY
+    assert result.action in {PolicyAction.CLARIFY, PolicyAction.ANSWER}
     assert result.reason != PolicyReason.OFF_TOPIC
 
 
@@ -1500,6 +1525,26 @@ def test_general_cancelled_still_triggers_on_real_negative_reply(
     for message in ["нет", "не надо", "отмена", "нет, лучше в пятницу"]:
         result = _analyze(message, policy_session, knowledge_base)
         assert result.safe_context.get("general_cancelled") is True, message
+
+
+def test_negative_word_does_not_swallow_real_question_in_same_message(
+    policy_session, knowledge_base
+) -> None:
+    """Живой баг (аудит §2026-08-06): "хотя нет забудьте, а сколько стоит биоревитализация
+    губ?" классификация верно распознавала как price_question (0.86), но голая проверка на
+    "нет" срабатывала первой и проглатывала вопрос целиком ("Ок, ничего не оформляем"), хотя
+    отменять было нечего. Негативное слово в начале фразы перед настоящим вопросом — это не
+    отказ."""
+
+    result = _analyze(
+        "хотя нет забудьте, у меня другой вопрос — а сколько стоит биоревитализация губ?",
+        policy_session,
+        knowledge_base,
+    )
+
+    assert result.safe_context.get("general_cancelled") is not True
+    message = str(result.safe_context.get("message_to_user") or "")
+    assert "ничего не оформляем" not in message.lower()
 
 
 def test_faq_question_uses_article_context(

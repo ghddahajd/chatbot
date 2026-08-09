@@ -2151,6 +2151,27 @@ def analyze_message(
         if objection_result is not None:
             return objection_result
 
+    if intent == "doctor_uncertain":
+        # §3.4 скрипта: "не понимаю, к кому мне лучше попасть" — пациент не просит список
+        # врачей (это отдельная doctor_info-ветка ниже), а не может сам выбрать специалиста.
+        # Реиспользуем ту же generic-находку "консультации", что и медицинский реферал — не
+        # называем конкретную специализацию (в данных клиники она заполнена только у
+        # гинеколога), честная общая формулировка для остальных докторов.
+        consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            service_id=consultation_service.id if consultation_service else None,
+            confidence=classifier_confidence or 0.88,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": _phrase(
+                    knowledge_base, "doctor_uncertain", seed=_phrase_seed(session, "doctor_uncertain")
+                ),
+            },
+            quick_actions=_medical_referral_quick_actions(consultation_service),
+        )
+
     clinic_info_result = _clinic_info_result(
         message,
         normalized_message,

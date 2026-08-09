@@ -867,4 +867,5 @@ ALLOWED_CLASSIFIER_INTENTS = {
     "unknown_service",
     "location_mismatch",
     "objection",
+    "doctor_uncertain",
 }

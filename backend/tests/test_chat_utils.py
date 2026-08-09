@@ -8,6 +8,7 @@ from app.routes.chat_utils import (
     CONSULTATION_RISK_SAFE,
     _contextual_frame_classification,
     _doctor_info_classification,
+    _doctor_uncertainty_classification,
     _objection_classification,
     _pain_fear_objection_classification,
     classify_consultation_risk,
@@ -142,6 +143,36 @@ def test_doctor_info_classification_matches_show_doctors_without_kto() -> None:
 
 def test_doctor_info_classification_still_requires_a_trigger_word() -> None:
     assert _doctor_info_classification("врач хороший") is None
+
+
+def test_doctor_uncertainty_classification_matches_script_phrasing() -> None:
+    """§3.4 скрипта: "не понимаю, к кому мне лучше попасть" — не запрос списка врачей."""
+
+    for message in [
+        "не знаю к какому врачу обратиться",
+        "не понимаю, к кому мне лучше попасть",
+        "к какому специалисту лучше обратиться?",
+        "не знаю какой врач мне нужен",
+    ]:
+        result = _doctor_uncertainty_classification(message)
+        assert result is not None, message
+        assert result["intent"] == "doctor_uncertain"
+
+
+def test_doctor_uncertainty_classification_does_not_collide_with_doctor_info() -> None:
+    """"не знаю какой врач мне нужен" раньше матчился doctor_info (голое "какой"+"врач") —
+    приоритет должен быть у более конкретной "не знаю"-ветки, не у списка врачей."""
+
+    message = "не знаю какой врач мне нужен"
+    assert _doctor_uncertainty_classification(message) is not None
+    assert _doctor_info_classification(message) is not None  # обе матчат — порядок решает resolve_classification
+
+
+def test_doctor_uncertainty_classification_ignores_unrelated_negatives() -> None:
+    """Голое "не знаю" без явной темы врача/специалиста не должно ловить эту ветку."""
+
+    for message in ["не знаю, поможет ли мне ботокс", "не знаю, сколько это будет стоить"]:
+        assert _doctor_uncertainty_classification(message) is None
 
 
 def test_context_frame_resolves_doctor_followup_even_if_local_unknown() -> None:

@@ -2043,6 +2043,24 @@ def _objection_classification(topic: str) -> dict[str, object]:
     return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": topic}
 
 
+def test_doctor_uncertain_offers_consultation_not_diagnosis(policy_session, knowledge_base) -> None:
+    """§3.4 скрипта: "не понимаю, к кому мне лучше попасть" — предлагаем первичную
+    консультацию, не называем конкретную специализацию (в данных клиники не у всех врачей
+    заполнена specialty) и не выбираем услугу за пациента."""
+
+    result = analyze_message(
+        "не понимаю, к кому мне лучше попасть",
+        policy_session,
+        knowledge_base,
+        {"intent": "doctor_uncertain", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    message = str(result.safe_context.get("message_to_user") or "").lower()
+    assert "консультац" in message
+    assert "дерматолог" not in message
+
+
 def test_objection_price_answers_with_value_argument_not_backoff(policy_session, knowledge_base) -> None:
     result = analyze_message(
         "Ого, а почему так дорого?",

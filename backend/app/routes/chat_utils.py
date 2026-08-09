@@ -289,6 +289,38 @@ DOCTOR_INFO_TRIGGER_KEYWORDS = {
     "список",
     "есть ли",
 }
+# §3.4 скрипта: "не понимаю, к кому мне лучше попасть" — пациент не просит список врачей
+# (это DOCTOR_INFO_TRIGGER_KEYWORDS), а не может сам решить, к какому специалисту обратиться.
+# Живой баг при разработке: жёсткие многословные фразы типа "к кому попасть" не матчили
+# реальную формулировку "к кому МНЕ ЛУЧШЕ попасть" — вставленные слова рвут точную
+# последовательность токенов. Матчим маркер неуверенности + паттерн выбора врача отдельными
+# короткими фразами (по 2 токена), не одной длинной фразой — вставки между ними не мешают.
+DOCTOR_UNCERTAINTY_MARKERS = {"не знаю", "не понимаю", "не пойму"}
+DOCTOR_ROUTING_PATTERNS = {
+    "к кому",
+    "к какому",
+    "какой врач",
+    "какого врача",
+    "какой специалист",
+    "какого специалиста",
+}
+
+
+def _doctor_uncertainty_classification(message: str) -> dict[str, object] | None:
+    normalized_message = normalize_text(message)
+    has_routing = contains_keyword(normalized_message, DOCTOR_ROUTING_PATTERNS)
+    if not has_routing:
+        return None
+    has_marker = contains_keyword(normalized_message, DOCTOR_UNCERTAINTY_MARKERS)
+    # без явного "не знаю"/"не понимаю" — только прямой вопрос-выбор со словом "лучше"
+    # ("к какому врачу лучше обратиться?"), не любое упоминание "к кому"/"какой врач".
+    if not has_marker and "лучше" not in normalized_message:
+        return None
+    return {
+        "intent": "doctor_uncertain",
+        "service_id": None,
+        "confidence": 0.9,
+    }
 
 
 def _active_frame(session: Session | None):
@@ -586,6 +618,9 @@ async def resolve_classification(
     objection_result = _objection_classification(message)
     if objection_result is not None:
         return objection_result
+    doctor_uncertainty_result = _doctor_uncertainty_classification(message)
+    if doctor_uncertainty_result is not None:
+        return doctor_uncertainty_result
     doctor_info_result = _doctor_info_classification(message)
     if doctor_info_result is not None:
         return doctor_info_result

@@ -58,6 +58,7 @@ ENGAGEMENT_DISMISS_MESSAGES = {
 }
 LEAD_CONTEXT_START_KEY = "lead_context_start_index"
 LEAD_SERVICE_ID_KEY = "lead_service_id"
+PREFERRED_TIME_KEY = "preferred_time"
 
 
 class ChatService:
@@ -286,12 +287,32 @@ class ChatService:
             return False
         return len(digits) >= 7 and digits[0] in {"7", "8", "9"}
 
-    def _pending_contact_answer(self, session, message: str, knowledge_base) -> str | None:
+    _TIME_PREFERENCE_MARKERS = {"утром": "утром", "утро": "утром", "вечером": "вечером", "вечер": "вечером"}
+
+    def _extract_time_preference(self, message: str) -> str | None:
+        # §2/§3.3 скрипта: assumptive close "утро или вечер?" — квик-экшены той же формы
+        # (booking_contact_prompt). Только короткий явный ответ на этот конкретный выбор,
+        # не любое упоминание "утром"/"вечером" внутри произвольного предложения — там это
+        # может значить что угодно другое (например "были у вас утром на чистке").
+        normalized = normalize_text(message)
+        tokens = normalized.split()
+        if len(tokens) > 3:
+            return None
+        for token in tokens:
+            if token in self._TIME_PREFERENCE_MARKERS:
+                return self._TIME_PREFERENCE_MARKERS[token]
+        return None
+
+    def _pending_contact_answer(
+        self, session, message: str, knowledge_base, *, time_preference: str | None = None
+    ) -> str | None:
         phone = extract_phone(message)
         if phone:
             return None
         if self._looks_like_partial_phone(message):
             return "Похоже, номер неполный. Проверьте, пожалуйста, и отправьте телефон ещё раз."
+        if time_preference:
+            return f"Хорошо, {time_preference}. Напишите, пожалуйста, имя и телефон — передам заявку менеджеру."
         name = extract_name(message, None, known_services=knowledge_base.services)
         if name:
             return f"{name}, напишите, пожалуйста, телефон — передам заявку менеджеру."
@@ -428,17 +449,39 @@ class ChatService:
             "reason": "unknown_service",
         }
 
+    def _notable_facts_block(self, session, lead_summary: str) -> str:
+        # Живой баг: локальная LLM-саммаризация нередко теряет предпочтение по времени и
+        # другие заметные моменты разговора (жалоба, деликатная тема, возражение) даже когда
+        # они явно есть в истории — не полагаемся на модель для деталей, которые должны дойти
+        # до оператора гарантированно. Отдельная секция, не вклеено в прозу пересказа — так
+        # оператор сразу видит, что это проверенный факт, а не интерпретация LLM.
+        summary_lower = lead_summary.lower()
+        facts: list[str] = []
+        preferred_time = str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip()
+        if preferred_time and preferred_time not in summary_lower:
+            facts.append(f"Предпочитает: {preferred_time}")
+        for flag in session.notable_flags:
+            if flag.lower() not in summary_lower:
+                facts.append(flag)
+        if not facts:
+            return ""
+        bullet_list = "\n".join(f"— {fact}" for fact in facts)
+        return f"\n\n📌 Из переписки:\n{bullet_list}"
+
     async def _finalize_lead_summary(self, session, lead) -> None:
         if lead.lead_trigger == "unknown_service" and lead.unresolved_query:
             lead.summary = (
                 f"Пользователь спрашивал неподтверждённую услугу: «{lead.unresolved_query}». "
                 "Оставил контакт."
             )
+            lead.summary += self._notable_facts_block(session, lead.summary)
             return
         llm_client = getattr(self.request.app.state, "llm_client", None)
         if llm_client is None:
+            lead.summary += self._notable_facts_block(session, lead.summary)
             return
         lead.summary = await summarize_session(llm_client, session=session, lead=lead)
+        lead.summary += self._notable_facts_block(session, lead.summary)
 
     async def _clear_contact_state(self, session_store, session_id: str) -> None:
         await session_store.set_pending_action(session_id, None)
@@ -582,10 +625,17 @@ class ChatService:
             return None
 
         if not phone:
-            answer = self._pending_contact_answer(session, message, knowledge_base)
+            time_preference = self._extract_time_preference(message)
+            answer = self._pending_contact_answer(
+                session, message, knowledge_base, time_preference=time_preference
+            )
             name = extract_name(message, None, known_services=knowledge_base.services)
             if name:
                 await session_store.update_contact_draft(session.session_id, name=name)
+            if time_preference:
+                await session_store.update_contact_draft(
+                    session.session_id, metadata={PREFERRED_TIME_KEY: time_preference}
+                )
             await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
             session = await session_store.get(session.session_id)
             return ChatMessageResponse(
@@ -674,6 +724,26 @@ class ChatService:
             quick_actions=[],
         )
 
+    _OBJECTION_FLAG_LABELS = {
+        "price": "Возражение: цена",
+        "competitor": "Возражение: дешевле в другой клинике",
+        "guarantee": "Возражение: просил гарантию результата",
+        "pain_fear": "Возражение: боится боли/побочных эффектов",
+    }
+
+    def _notable_flag_for_policy_result(self, policy_result) -> str | None:
+        # Копим то, что уже надёжно распознала policy по ходу разговора — не пересканируем
+        # сырой текст заново. Список узкий и намеренно: не любое возражение/тема, только то,
+        # что реально меняет, как оператору стоит заходить в разговор.
+        if policy_result.reason == PolicyReason.COMPLAINT:
+            return "Была жалоба/угроза негативным отзывом"
+        if policy_result.safe_context.get("sensitive_handling"):
+            return "Затрагивалась деликатная тема"
+        if policy_result.reason == PolicyReason.OBJECTION_HANDLED:
+            topic = str(policy_result.safe_context.get("objection_topic") or "")
+            return self._OBJECTION_FLAG_LABELS.get(topic)
+        return None
+
     async def _remember_policy_context(self, session_store, session, policy_result) -> None:
         last_intent = str(policy_result.reason.value if hasattr(policy_result.reason, "value") else policy_result.reason)
         active_frame = self._context_frame_from_policy_result(session, policy_result, last_intent)
@@ -692,6 +762,7 @@ class ChatService:
             clear_active_frame=active_frame is None and policy_result.action in {PolicyAction.OFF_TOPIC, PolicyAction.REJECT},
             substantive_message_count=substantive_message_count,
             objection_response_count=objection_response_count,
+            add_notable_flag=self._notable_flag_for_policy_result(policy_result),
         )
 
         if (

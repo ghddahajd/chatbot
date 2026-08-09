@@ -202,6 +202,7 @@ class SessionStore:
         substantive_message_count: Optional[int] = None,
         engagement_offer_count: Optional[int] = None,
         objection_response_count: Optional[int] = None,
+        add_notable_flag: Optional[str] = None,
     ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
@@ -221,6 +222,8 @@ class SessionStore:
                 session.engagement_offer_count = engagement_offer_count
             if objection_response_count is not None:
                 session.objection_response_count = objection_response_count
+            if add_notable_flag and add_notable_flag not in session.notable_flags:
+                session.notable_flags = [*session.notable_flags, add_notable_flag]
             session.updated_at = datetime.utcnow()
             return session
 

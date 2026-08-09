@@ -196,6 +196,77 @@ def test_booking_prompt_accepts_service_name_as_next_step(test_client) -> None:
     assert third_payload["lead_created"] is True
 
 
+def test_earlier_complaint_flag_survives_into_later_lead(test_client, managed_env) -> None:
+    """Жалоба, поданная в начале разговора, не должна потеряться, если человек потом
+    продолжил и оставил контакт по совсем другому поводу — оператор должен это увидеть."""
+
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "у меня жалоба на администратора"},
+    )
+    first_payload = first_response.json()
+    session_id = first_payload["session_id"]
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "запишите меня на чистку лица"},
+    )
+    second_payload = second_response.json()
+
+    third_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Иван +79991234567"},
+    )
+    third_payload = third_response.json()
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+    assert second_response.status_code == 200
+    assert third_response.status_code == 200
+    assert third_payload["lead_created"] is True
+    assert "жалоба" in lead["summary"].lower()
+
+
+def test_booking_time_preference_is_captured_and_surfaced_in_lead(test_client, managed_env) -> None:
+    """§2/§3.3 скрипта: assumptive close "утро или вечер?" — квик-экшены на booking_contact_prompt.
+    Клик по "Утром" должен подтверждаться отдельно и попасть в текст заявки менеджеру, не
+    потеряться молча в общем "напишите телефон"."""
+
+    first_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "запишите меня на чистку лица"},
+    )
+    first_payload = first_response.json()
+    assert "Утром" in first_payload["quick_actions"] or any(
+        isinstance(item, dict) and item.get("label") == "Утром" for item in first_payload["quick_actions"]
+    )
+
+    second_response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": first_payload["session_id"], "message": "Утром"},
+    )
+    second_payload = second_response.json()
+
+    assert second_response.status_code == 200
+    assert second_payload["action"] == "clarify"
+    assert "утром" in second_payload["answer"].lower()
+    assert "имя и телефон" in second_payload["answer"].lower()
+
+    third_response = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "Иван +79991234567",
+        },
+    )
+    third_payload = third_response.json()
+    lead = json.loads((managed_env["temp_dir"] / "leads.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+    assert third_response.status_code == 200
+    assert third_payload["lead_created"] is True
+    assert "утром" in lead["summary"].lower()
+
+
 def test_article_guidance_uses_llm_when_approved_excerpt_passes_validator(test_client, managed_env) -> None:
     _add_article_excerpt_for_chat_test(
         test_client,

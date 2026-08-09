@@ -91,6 +91,10 @@ class Session(BaseModel):
     substantive_message_count: int = 0
     engagement_offer_count: int = 0
     objection_response_count: int = 0
+    # Короткие гарантированные факты, накопленные по ходу разговора (жалоба/деликатная тема/
+    # возражение) — показываются оператору ОТДЕЛЬНО от LLM-суммаризатора лида, который на
+    # маленькой модели надёжно теряет/смазывает именно такие детали (см. чат от 2026-08-10).
+    notable_flags: list[str] = Field(default_factory=list)
     lead_requested: bool = False
     operator_requested: bool = False
     pending_action: Optional[str] = None

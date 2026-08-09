@@ -2123,7 +2123,7 @@ def analyze_message(
                 "booking_request": True,
                 "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
             },
-            quick_actions=["Оставить телефон", "Позвать менеджера"],
+            quick_actions=["Утром", "Вечером", "Оставить телефон", "Позвать менеджера"],
         )
 
     if intent == "location_mismatch" or is_location_mismatch(
@@ -2712,7 +2712,7 @@ def analyze_message(
                 "booking_request": True,
                 "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
             },
-            quick_actions=["Оставить телефон", "Позвать менеджера"],
+            quick_actions=["Утром", "Вечером", "Оставить телефон", "Позвать менеджера"],
         )
 
     if phone and session.pending_action == PendingAction.BOOKING_CONTACT.value:

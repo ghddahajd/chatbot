@@ -29,6 +29,7 @@ from ..routes.chat_utils import (
     MAX_MESSAGE_LENGTH,
     MAX_SESSION_MESSAGES,
     RATE_LIMIT_ANSWER,
+    _objection_classification,
     classify_consultation_risk,
     contextual_affirmative_response,
     format_quick_actions,
@@ -453,6 +454,13 @@ class ChatService:
 
         if "?" in message:
             return True
+        # Живой баг: "я подумаю"/"дорого"/"дешевле в другом месте" во время сбора контакта
+        # (pending_action) не содержат "?" и не матчят базовый локальный классификатор
+        # (confidence 0.0) — тонули в генерическом "напишите телефон" вместо ответа на
+        # возражение. _objection_classification — тот же детерминированный слой, что уже
+        # используется в policy для возражений вне этого состояния.
+        if _objection_classification(message) is not None:
+            return True
         classification = classify_and_extract(
             message,
             service_classifier_payload(self.request, knowledge_base),
@@ -558,7 +566,19 @@ class ChatService:
                 return booking_service_response
 
         if not phone and self._looks_like_new_question(message, knowledge_base):
-            await self._clear_contact_state(session_store, session.session_id)
+            # §3.5 скрипта: "подумаю" ИМЕННО на этапе записи должно дойти до policy с
+            # pending_action ещё нетронутым (см. _objection_result) — очистка контакта здесь
+            # стёрла бы BOOKING_CONTACT раньше, чем policy успеет его увидеть, и ответ
+            # откатится на общий "что смущает" вместо "придержу интерес без обязательств".
+            # Дальше, если пациент всё же даст телефон, запись всё равно оформится штатно.
+            objection = _objection_classification(message)
+            is_booking_hesitation = (
+                objection is not None
+                and objection.get("context_topic") == "hesitation"
+                and session.pending_action == PendingAction.BOOKING_CONTACT.value
+            )
+            if not is_booking_hesitation:
+                await self._clear_contact_state(session_store, session.session_id)
             return None
 
         if not phone:

@@ -2085,6 +2085,42 @@ def test_objection_hesitation_asks_one_clarifying_question(policy_session, knowl
     assert result.action == PolicyAction.ANSWER
     assert result.reason == PolicyReason.OBJECTION_HANDLED
     assert "?" in str(result.safe_context.get("message_to_user"))
+    assert "смущает" in str(result.safe_context.get("message_to_user")).lower()
+
+
+def test_booking_stage_hesitation_offers_to_hold_without_obligation(policy_session, knowledge_base) -> None:
+    """§3.5 скрипта: "подумаю" ИМЕННО на этапе записи (pending_action == BOOKING_CONTACT) —
+    не общий вопрос "что смущает" (тот звучит странно, когда телефон уже запрашивается), а
+    мягкое "зафиксирую интерес без обязательств"."""
+
+    policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
+
+    result = analyze_message(
+        "Хорошо, я подумаю и напишу.",
+        policy_session,
+        knowledge_base,
+        _objection_classification("hesitation"),
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.OBJECTION_HANDLED
+    message = str(result.safe_context.get("message_to_user") or "").lower()
+    assert "смущает" not in message
+    assert "обязательств" in message
+
+
+def test_booking_stage_hesitation_still_backs_off_after_two_attempts(policy_session, knowledge_base) -> None:
+    policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
+    policy_session.objection_response_count = 2
+
+    result = analyze_message(
+        "Хорошо, я подумаю и напишу.",
+        policy_session,
+        knowledge_base,
+        _objection_classification("hesitation"),
+    )
+
+    assert result.reason == PolicyReason.OBJECTION_BACKOFF
 
 
 def test_objection_competitor_does_not_criticize_competitor(policy_session, knowledge_base) -> None:

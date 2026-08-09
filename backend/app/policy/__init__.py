@@ -762,6 +762,16 @@ def _objection_result(
         return None
 
     response_count = int(session.objection_response_count or 0)
+    # §3.5 скрипта: "думаю"/"посоветуюсь" ИМЕННО на этапе записи (pending_action ==
+    # BOOKING_CONTACT) — не тот же вопрос "что смущает" (objection_hesitation), который
+    # звучит странно, когда контакт уже запрашивается, а мягкое "придержу интерес без
+    # обязательств". Тот же backoff после 2 попыток, что и у остальных возражений.
+    if objection_topic == "hesitation" and session.pending_action == PendingAction.BOOKING_CONTACT.value:
+        phrase_key = "booking_hesitation_hold"
+        quick_actions: list[object] = ["Оставить телефон", "Позвать менеджера"]
+    else:
+        quick_actions = OBJECTION_QUICK_ACTIONS
+
     if response_count >= OBJECTION_BACKOFF_ATTEMPTS:
         return PolicyResult(
             action=PolicyAction.ANSWER,
@@ -786,7 +796,7 @@ def _objection_result(
             "message_to_user": _phrase(knowledge_base, phrase_key, seed=_phrase_seed(session, phrase_key)),
             "objection_topic": objection_topic,
         },
-        quick_actions=OBJECTION_QUICK_ACTIONS,
+        quick_actions=quick_actions,
     )
 
 

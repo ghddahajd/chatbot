@@ -11,6 +11,11 @@ services:
       - .env
     environment:
       RAG_CHUNKS_FILE: /client-input/normalized/rosh_articles/crawl/chunks.corpus.jsonl
+      # /app/data — уже смонтирован из ./backend/data (см. volumes ниже), переживает
+      # рестарт контейнера. Задаём именно тут (не в .env), потому что "/app/..." — это
+      # путь ВНУТРИ контейнера и ломает native-запуски (скрипты/тесты вне docker), которые
+      # тоже читают .env.
+      SESSION_SNAPSHOT_FILE: /app/data/session_snapshot.json
     volumes:
       - ./backend/data:/app/data
       - ./backend/logs:/app/logs

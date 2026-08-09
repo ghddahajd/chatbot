@@ -130,7 +130,7 @@ def test_contact_prompt_stays_ai_active_and_can_be_cancelled(test_client) -> Non
     assert second_response.status_code == 200
     assert second_payload["action"] == "clarify"
     assert second_payload["status"] == "AI_ACTIVE"
-    assert "контакт не оставляем" in second_payload["answer"].lower()
+    assert "контакт пока не берём" in second_payload["answer"].lower()
 
 
 def test_booking_prompt_can_be_cancelled_with_common_typo(test_client) -> None:
@@ -156,7 +156,7 @@ def test_booking_prompt_can_be_cancelled_with_common_typo(test_client) -> None:
 
     assert second_response.status_code == 200
     assert second_payload["action"] == "clarify"
-    assert "заявку не оформляем" in second_payload["answer"].lower()
+    assert "заявку пока не передаю" in second_payload["answer"].lower()
     assert second_payload["lead_created"] is False
 
 
@@ -293,7 +293,7 @@ def test_cancel_after_price_booking_compound_does_not_become_unknown_service(tes
 
     assert second_response.status_code == 200
     assert second_payload["action"] == "clarify"
-    assert "ничего не оформляем" in second_payload["answer"].lower()
+    assert "ничего пока не делаем" in second_payload["answer"].lower()
     assert "такой услуги" not in second_payload["answer"].lower()
     assert second_payload["lead_created"] is False
 

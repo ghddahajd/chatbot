@@ -1502,7 +1502,7 @@ def test_bot_identity_question_recognizes_realnyy_not_just_bot_word(
 
     assert result.safe_context.get("general_cancelled") is not True
     message = str(result.safe_context.get("message_to_user") or "")
-    assert "ничего не оформляем" not in message.lower()
+    assert "ничего пока не делаем" not in message.lower()
 
 
 def test_general_cancelled_does_not_trigger_on_rhetorical_ili_net(
@@ -1532,9 +1532,9 @@ def test_negative_word_does_not_swallow_real_question_in_same_message(
 ) -> None:
     """Живой баг (аудит §2026-08-06): "хотя нет забудьте, а сколько стоит биоревитализация
     губ?" классификация верно распознавала как price_question (0.86), но голая проверка на
-    "нет" срабатывала первой и проглатывала вопрос целиком ("Ок, ничего не оформляем"), хотя
-    отменять было нечего. Негативное слово в начале фразы перед настоящим вопросом — это не
-    отказ."""
+    "нет" срабатывала первой и проглатывала вопрос целиком ("Хорошо, ничего пока не делаем"),
+    хотя отменять было нечего. Негативное слово в начале фразы перед настоящим вопросом — это
+    не отказ."""
 
     result = _analyze(
         "хотя нет забудьте, у меня другой вопрос — а сколько стоит биоревитализация губ?",
@@ -1544,7 +1544,7 @@ def test_negative_word_does_not_swallow_real_question_in_same_message(
 
     assert result.safe_context.get("general_cancelled") is not True
     message = str(result.safe_context.get("message_to_user") or "")
-    assert "ничего не оформляем" not in message.lower()
+    assert "ничего пока не делаем" not in message.lower()
 
 
 def test_faq_question_uses_article_context(

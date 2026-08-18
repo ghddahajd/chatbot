@@ -619,6 +619,38 @@
       }
       .reset-btn:hover { background: var(--border); }
 
+      /* ── Privacy consent banner ── */
+      .consent-banner {
+        display: none;
+        padding: 10px 12px;
+        border-top: 1px solid var(--border-soft);
+        background: var(--bg-warm);
+        flex-shrink: 0;
+      }
+      .consent-banner.visible { display: flex; flex-direction: column; gap: 8px; }
+      .consent-text {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+      }
+      .consent-link { color: var(--text); font-weight: 700; text-decoration: underline; }
+      .consent-accept {
+        align-self: flex-end;
+        height: 32px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: background .15s, transform .15s;
+      }
+      .consent-accept:hover { background: var(--accent-dark); transform: translateY(-1px); }
+
       /* ── Mobile ── */
       @media (max-width: 480px) {
         .shell { right: 12px; bottom: 12px; }
@@ -673,6 +705,12 @@
         <div class="messages"></div>
 
         <div class="voice-hint hidden"></div>
+        <div class="consent-banner">
+          <p class="consent-text">
+            Продолжая переписку, вы соглашаетесь с обработкой персональных данных<span class="consent-policy-wrap"> согласно <a class="consent-link" href="#" target="_blank" rel="noopener">политике конфиденциальности</a></span>.
+          </p>
+          <button class="consent-accept" type="button">Принять</button>
+        </div>
         <div class="composer">
           <div class="input-wrap">
             <input class="inp" type="text" placeholder="Напишите вопрос…" />
@@ -737,11 +775,35 @@
         composer: this.$(".composer"),
         closedNote: this.$(".closed-note"),
         reset: this.$(".reset-btn"),
+        consentBanner: this.$(".consent-banner"),
+        consentPolicyWrap: this.$(".consent-policy-wrap"),
+        consentLink: this.$(".consent-link"),
+        consentAccept: this.$(".consent-accept"),
       };
     }
 
     storageKey() {
       return "ai-widget-sid:" + this.state.companyId;
+    }
+
+    consentKey() {
+      return "ai-widget-consent:" + this.state.companyId;
+    }
+
+    setupConsent(privacyPolicyUrl) {
+      if (privacyPolicyUrl) {
+        this.el.consentLink.href = privacyPolicyUrl;
+      } else {
+        this.el.consentPolicyWrap.remove();
+      }
+      const accepted = window.localStorage.getItem(this.consentKey()) === "1";
+      if (!accepted) this.el.consentBanner.classList.add("visible");
+    }
+
+    acceptConsent() {
+      if (!this.el.consentBanner.classList.contains("visible")) return;
+      window.localStorage.setItem(this.consentKey(), "1");
+      this.el.consentBanner.classList.remove("visible");
     }
 
     connectedCallback() {
@@ -756,6 +818,7 @@
       this.el.close.addEventListener("click", () => this.toggle());
       this.el.send.addEventListener("click", () => this.submit());
       this.el.reset.addEventListener("click", () => this.startNew());
+      this.el.consentAccept.addEventListener("click", () => this.acceptConsent());
       this.el.inp.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
       });
@@ -797,6 +860,7 @@
         this.state.companyId = data.company_id || EMBED_COMPANY_ID;
         if (!this.state.companyId) throw new Error("company not resolved");
         this.applyConfig(data.widget_config || {});
+        this.setupConsent(typeof data.privacy_policy_url === "string" ? data.privacy_policy_url.trim() : "");
         this.state.greetingText = typeof data.greeting === "string" ? data.greeting.trim() : "";
         const voiceFeatureEnabled = Boolean(data.features && data.features.voice_input !== false);
         this.state.voiceEnabled = voiceFeatureEnabled && this.setupVoiceInput();
@@ -1091,6 +1155,7 @@
       if (!text || this.state.sending || !this.state.companyId) return;
       if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
 
+      this.acceptConsent();
       this.el.inp.value = "";
       this.addMsg("user", text);
 

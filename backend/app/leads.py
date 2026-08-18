@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from .models import Lead, Session
-from .utils.jsonl import append_jsonl
+from .utils.jsonl import append_jsonl, read_jsonl
 
 if TYPE_CHECKING:
     from .delivery import DeliveryService
@@ -144,3 +147,55 @@ def build_lead_from_contact(
         recent_messages=recent_messages or [],
         operator_url=operator_url,
     )
+
+
+def archive_old_leads(leads_file: Path, archive_file: Path, retention_days: int) -> int:
+    """переносит записи старше retention_days из leads_file в archive_file (не удаляет).
+
+    Возвращает количество перенесённых записей. Ничего не делает (не трогает диск), если
+    архивировать нечего — обычный случай при ежедневном запуске.
+    """
+
+    entries = read_jsonl(leads_file)
+    if not entries:
+        return 0
+
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    keep: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    for entry in entries:
+        try:
+            timestamp = datetime.fromisoformat(str(entry.get("timestamp")))
+        except (TypeError, ValueError):
+            keep.append(entry)
+            continue
+        (stale if timestamp < cutoff else keep).append(entry)
+
+    if not stale:
+        return 0
+
+    archive_file.parent.mkdir(parents=True, exist_ok=True)
+    with archive_file.open("a", encoding="utf-8") as handle:
+        for entry in stale:
+            handle.write(_dump_jsonl_line(entry))
+
+    # атомарная перезапись "горячего" файла — временный файл + rename, чтобы конкурентный
+    # append_jsonl() (новый лид пришёл ровно во время архивации) не попал под усечение.
+    tmp_path = leads_file.with_suffix(leads_file.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        for entry in keep:
+            handle.write(_dump_jsonl_line(entry))
+    os.replace(tmp_path, leads_file)
+
+    logger.info(
+        "leads archive: moved %d of %d entries older than %d days (leads_file=%s)",
+        len(stale),
+        len(entries),
+        retention_days,
+        leads_file,
+    )
+    return len(stale)
+
+
+def _dump_jsonl_line(entry: dict[str, Any]) -> str:
+    return json.dumps(entry, ensure_ascii=False) + "\n"

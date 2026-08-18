@@ -8,14 +8,14 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analytics import AnalyticsService
 from .config import get_settings
 from .delivery import DeliveryService
 from .knowledge import KnowledgeBaseResolver
-from .leads import LeadService
+from .leads import LeadService, archive_old_leads
 from .llm import build_llm_client, get_system_prompt
 from .policy import analyze_message
 from .rate_limit import RateLimiter
@@ -46,6 +46,23 @@ async def _run_session_eviction_loop(
             raise
         except Exception as error:
             logger.warning("session eviction loop error=%s", type(error).__name__)
+
+
+async def _run_leads_archive_loop(
+    leads_file: Path,
+    archive_file: Path,
+    *,
+    retention_days: int,
+    interval_seconds: int,
+) -> None:
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await asyncio.to_thread(archive_old_leads, leads_file, archive_file, retention_days)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning("leads archive loop error=%s", type(error).__name__)
 
 
 @asynccontextmanager
@@ -131,6 +148,16 @@ async def lifespan(app: FastAPI):
     telegram_bridge_task = None
     if settings.telegram_bridge_enabled:
         telegram_bridge_task = asyncio.create_task(app.state.telegram_bridge_service.run_polling_loop())
+    leads_archive_task = None
+    if settings.leads_archive_enabled:
+        leads_archive_task = asyncio.create_task(
+            _run_leads_archive_loop(
+                settings.leads_file,
+                settings.leads_archive_file,
+                retention_days=settings.leads_retention_days,
+                interval_seconds=settings.leads_archive_interval_seconds,
+            )
+        )
 
     try:
         yield
@@ -147,6 +174,10 @@ async def lifespan(app: FastAPI):
             retry_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await retry_task
+        if leads_archive_task is not None:
+            leads_archive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await leads_archive_task
         if snapshot_file is not None:
             await app.state.session_store.snapshot_to(snapshot_file, ttl_seconds=settings.session_ttl_seconds)
 
@@ -175,14 +206,59 @@ app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), na
 
 
 @app.get("/health")
-async def healthcheck() -> dict[str, object]:
-    corpus_status = getattr(app.state, "rag_corpus_status", None) or rag_corpus_status()
-    return {
-        "status": "ok",
-        "current_provider": settings.llm_provider,
-        "current_model": settings.llm_model,
-        "rag_corpus": corpus_status,
+async def healthcheck() -> JSONResponse:
+    """Проверяет уже загруженное состояние компонентов — без сети и без чтения тяжёлых
+    файлов повторно (внешний мониторинг типа Timeweb дёргает это раз в 1-5 минут).
+
+    HTTP-статус: 200 — всё ок; 207 — что-то деградировало, но бот отвечает (mock LLM,
+    пустой RAG, недоставленные события); 503 — критично, ни одного клиента не настроено.
+    """
+
+    checks: dict[str, dict[str, object]] = {}
+
+    resolver = getattr(app.state, "knowledge_base_resolver", None)
+    client_ids: list[str] = []
+    if resolver is not None and resolver.clients_data_dir.exists():
+        client_ids = sorted(item.name for item in resolver.clients_data_dir.iterdir() if item.is_dir())
+    checks["knowledge_base"] = {
+        "status": "ok" if client_ids else "error",
+        "clients_loaded": len(client_ids),
+        "detail": ", ".join(client_ids) if client_ids else "no client directories configured",
     }
+
+    corpus_status = getattr(app.state, "rag_corpus_status", None) or rag_corpus_status()
+    chunk_count = int(corpus_status.get("chunk_count") or 0)
+    if corpus_status.get("ok") and chunk_count > 0:
+        rag_status, rag_detail = "ok", f"{chunk_count} chunks loaded"
+    elif corpus_status.get("ok"):
+        rag_status, rag_detail = "degraded", "corpus loaded but empty"
+    else:
+        rag_status, rag_detail = "unavailable", str(corpus_status.get("error") or "not loaded")
+    checks["rag_index"] = {"status": rag_status, "chunks_loaded": chunk_count, "detail": rag_detail}
+
+    is_mock_llm = settings.llm_provider == "mock"
+    checks["llm_provider"] = {
+        "status": "degraded" if is_mock_llm else "ok",
+        "provider": settings.llm_provider,
+        "detail": "mock mode — no real LLM API configured" if is_mock_llm else settings.llm_model,
+    }
+
+    delivery_service = getattr(app.state, "delivery_service", None)
+    checks["delivery"] = (
+        delivery_service.outbox_health()
+        if delivery_service is not None
+        else {"status": "ok", "pending_events": 0, "dead_events": 0}
+    )
+
+    statuses = {str(check["status"]) for check in checks.values()}
+    if "error" in statuses:
+        overall, http_status = "error", 503
+    elif statuses - {"ok"}:
+        overall, http_status = "degraded", 207
+    else:
+        overall, http_status = "ok", 200
+
+    return JSONResponse(status_code=http_status, content={"status": overall, "checks": checks})
 
 
 @app.get("/demo/demo.html")

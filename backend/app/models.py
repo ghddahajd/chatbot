@@ -166,6 +166,7 @@ class CompanyConfig(BaseModel):
     address: Optional[str] = None
     website_url: Optional[str] = None
     telegram_url: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
     lead_webhook_url: Optional[str] = None
     allowed_domains: list[str] = Field(default_factory=list)
     allowed_topics: list[str] = Field(default_factory=list)
@@ -229,6 +230,7 @@ class WidgetBootstrapResponse(BaseModel):
     city: str
     website_url: Optional[str] = None
     telegram_url: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
     features: dict[str, bool] = Field(default_factory=dict)
     widget_config: dict[str, Any] = Field(default_factory=dict)
     greeting: str = ""

@@ -1,7 +1,10 @@
 """проверки детерминированной классификации лида (reason/lead_trigger/recent_messages)."""
 
-from app.leads import classify_lead_reason, lead_trigger_for, recent_messages_for
+from datetime import datetime, timedelta
+
+from app.leads import archive_old_leads, classify_lead_reason, lead_trigger_for, recent_messages_for
 from app.models import Message, MessageRole, Session
+from app.utils.jsonl import append_jsonl, read_jsonl
 
 
 def _session(*, last_intent: str | None = None, messages: list[str] | None = None) -> Session:
@@ -58,3 +61,61 @@ def test_recent_messages_for_limits_and_serializes() -> None:
     assert len(recent) == 5
     assert recent[-1] == {"role": "user", "text": "msg-11"}
     assert recent[0] == {"role": "user", "text": "msg-7"}
+
+
+def _lead_payload(*, name: str, timestamp: datetime) -> dict:
+    return {
+        "timestamp": timestamp.isoformat(),
+        "company_id": "rosh_demo",
+        "session_id": "s-" + name,
+        "name": name,
+        "phone": "+70000000000",
+        "summary": "test lead",
+    }
+
+
+def test_archive_old_leads_moves_only_entries_past_retention(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    archive_file = tmp_path / "leads_archive.jsonl"
+    now = datetime.utcnow()
+    append_jsonl(leads_file, _lead_payload(name="stale", timestamp=now - timedelta(days=120)))
+    append_jsonl(leads_file, _lead_payload(name="fresh", timestamp=now - timedelta(days=5)))
+
+    moved = archive_old_leads(leads_file, archive_file, retention_days=90)
+
+    assert moved == 1
+    assert [item["name"] for item in read_jsonl(leads_file)] == ["fresh"]
+    assert [item["name"] for item in read_jsonl(archive_file)] == ["stale"]
+
+
+def test_archive_old_leads_noop_when_nothing_is_stale(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    archive_file = tmp_path / "leads_archive.jsonl"
+    append_jsonl(leads_file, _lead_payload(name="fresh", timestamp=datetime.utcnow()))
+
+    moved = archive_old_leads(leads_file, archive_file, retention_days=90)
+
+    assert moved == 0
+    assert not archive_file.exists()
+    assert [item["name"] for item in read_jsonl(leads_file)] == ["fresh"]
+
+
+def test_archive_old_leads_missing_file_is_noop(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    archive_file = tmp_path / "leads_archive.jsonl"
+
+    moved = archive_old_leads(leads_file, archive_file, retention_days=90)
+
+    assert moved == 0
+    assert not archive_file.exists()
+
+
+def test_archive_old_leads_keeps_entries_with_unparseable_timestamp(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    archive_file = tmp_path / "leads_archive.jsonl"
+    append_jsonl(leads_file, {"timestamp": "not-a-date", "name": "broken"})
+
+    moved = archive_old_leads(leads_file, archive_file, retention_days=90)
+
+    assert moved == 0
+    assert [item["name"] for item in read_jsonl(leads_file)] == ["broken"]

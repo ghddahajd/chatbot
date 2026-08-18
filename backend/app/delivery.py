@@ -267,6 +267,18 @@ class DeliveryService:
             "dead": sum(1 for item in attempted if item.get("status") == "dead"),
         }
 
+    def outbox_health(self) -> dict[str, Any]:
+        """текущее состояние outbox для /health — без сети, только чтение файла на диске."""
+
+        records = self._latest_records().values()
+        pending = sum(1 for record in records if record.get("status") in {"pending", "failed"})
+        dead = sum(1 for record in records if record.get("status") == "dead")
+        return {
+            "status": "degraded" if dead > 0 else "ok",
+            "pending_events": pending,
+            "dead_events": dead,
+        }
+
     async def run_retry_loop(self, interval_seconds: int) -> None:
         """периодически повторяет due-доставки, пока задачу не отменят."""
 

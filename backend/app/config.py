@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     session_eviction_interval_seconds: int = 3600
     session_eviction_enabled: bool = True
     session_snapshot_file: str = ""
+    # 152-ФЗ: leads.jsonl копит имя/телефон/переписку без ограничения — раз в сутки уносим
+    # записи старше leads_retention_days в отдельный архивный файл (не удаляем, см. пожелание
+    # пользователя "лучше архивировать"), чтобы "горячий" файл не рос бесконечно.
+    leads_retention_days: int = 90
+    leads_archive_interval_seconds: int = 86400
+    leads_archive_enabled: bool = True
     chat_rate_limit_enabled: bool = True
     chat_rate_limit_per_minute: int = 30
     # Сколько доверенных обратных прокси стоит перед приложением (Render = минимум 1).
@@ -78,6 +84,7 @@ class Settings(BaseSettings):
     defaults_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "defaults")
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
+    leads_archive_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads_archive.jsonl")
     analytics_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "analytics.jsonl")
     delivery_outbox_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "delivery_outbox.jsonl")
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")

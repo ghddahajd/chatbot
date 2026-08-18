@@ -155,6 +155,14 @@ def contextual_affirmative_response(
     normalized_message = normalize_text(message)
     if normalized_message not in AFFIRMATIVE_MESSAGES:
         return None
+    # Живой баг (2026-08-10): эта функция перехватывает ЛЮБОЕ голое "давай"/"да" раньше, чем
+    # сообщение доходит до policy — включая случай, когда бот сам только что явно предложил
+    # "расскажу подробнее, что входит?" (objection_price). Пользователь подтверждает ИМЕННО
+    # это предложение, а получал общий "что уточнить: цену, детали или менеджера?", будто
+    # ничего не предлагалось. Если последний ответ бота был objection_handled — не перехватываем
+    # здесь, пропускаем дальше в analyze_message, где это уже обрабатывается прицельно.
+    if session.last_intent == PolicyReason.OBJECTION_HANDLED.value:
+        return None
 
     for history_message in reversed(session.messages[:-1]):
         if history_message.role != MessageRole.USER:

@@ -235,6 +235,7 @@ class ChatService:
         session,
         knowledge_base,
         referral_service: object = None,
+        extra_referral_service: object = None,
         urgent: bool = True,
     ) -> tuple[PolicyAction, str, list[dict[str, str]]]:
         await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
@@ -264,6 +265,12 @@ class ChatService:
         )
         quick_actions = self._regulated_soft_quick_actions()
         referral_action = self._referral_quick_action(referral_service)
+        # 2026-08-18: клиент подтвердил, что тема новообразований не настолько деликатная,
+        # чтобы прятать саму услугу удаления (см. _growth_removal_service_for_referral) —
+        # добавляем её ВТОРОЙ кнопкой рядом с основной консультацией, не вместо хэндофа.
+        extra_referral_action = self._referral_quick_action(extra_referral_service)
+        if extra_referral_action is not None and extra_referral_action != referral_action:
+            quick_actions = [extra_referral_action, *quick_actions]
         if referral_action is not None:
             quick_actions = [referral_action, *quick_actions]
         return PolicyAction.CLARIFY, answer, quick_actions
@@ -1329,6 +1336,7 @@ class ChatService:
                     session=session,
                     knowledge_base=knowledge_base,
                     referral_service=policy_result.safe_context.get("referral_service"),
+                    extra_referral_service=policy_result.safe_context.get("extra_referral_service"),
                     urgent=policy_result.safe_context.get("escalation_urgency") != "calm",
                 )
             else:

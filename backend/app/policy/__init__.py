@@ -10,6 +10,7 @@ from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phra
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import retrieve_article_context
 from .constants import (
+    AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
     BOOKING_KEYWORDS,
     COMPLAINT_ESCALATION_KEYWORDS,
@@ -26,6 +27,7 @@ from .constants import (
     EXPLANATION_KEYWORDS,
     GENERIC_DOCTOR_LIST_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
+    LAB_TEST_KEYWORDS,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
     BENIGN_MEDICAL_KEYWORDS,
@@ -297,6 +299,23 @@ def _article_guidance_result_from_entry(
     if article_guidance_candidate is not None:
         result.safe_context["article_guidance_candidate"] = article_guidance_candidate
     return result
+
+
+def _approved_article_for_service(knowledge_base: KnowledgeBase, service_id: str):
+    # Живой баг (2026-08-10): "Мезотерапия" упомянута в service_ids сразу нескольких статей —
+    # и как единственная тема ("Мезотерапия кожи головы"), и как один из 3 вариантов в статье
+    # про совсем другую жалобу ("Темные круги под глазами", service_ids: [Мезотерапия,
+    # Биоревитализация, Филлеры]). Первый найденный по порядку словаря — не обязательно
+    # релевантный; предпочитаем статью, где услуга — единственная/одна из немногих тем
+    # (меньше service_ids = статья реально ПРО эту услугу, а не мимоходом её упоминает).
+    approved_map = getattr(knowledge_base, "article_service_map", {}) or {}
+    candidates = [
+        entry for entry in approved_map.values() if service_id in getattr(entry, "service_ids", [])
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda entry: len(getattr(entry, "service_ids", []) or []))
+    return candidates[0]
 
 
 def _cosmetic_article_guidance_result(
@@ -718,7 +737,25 @@ def _consultation_service_for_referral(normalized_message: str, knowledge_base: 
     return candidates[0]
 
 
-def _medical_referral_quick_actions(consultation_service, *, offer_lead: bool = True) -> list[object]:
+def _growth_removal_service_for_referral(normalized_message: str, knowledge_base: KnowledgeBase):
+    # 2026-08-18: клиент подтвердил, что тема новообразований (родинки/папилломы/бородавки)
+    # не настолько деликатная, чтобы прятать саму услугу удаления — но передачу оператору
+    # на "родинк"/"новообраз" сохраняем как есть (см. MEDICAL_REFERRAL_KEYWORDS): в отличие
+    # от папиллом/бородавок (см. COSMETIC_CONCERN_SERVICE_MAP), тут может стоять вопрос
+    # онкологической настороженности, решать заочно не должен ни бот, ни прямая продажа услуги.
+    # Поэтому вместо ЗАМЕНЫ хэндофа — дополняем его видимой опцией услуги.
+    if not contains_keyword(normalized_message, {"родинк", "новообраз"}):
+        return None
+    for service in knowledge_base.services:
+        service_text = normalize_text(" ".join([service.name, service.category, *service.synonyms]))
+        if "новообраз" in service_text:
+            return service
+    return None
+
+
+def _medical_referral_quick_actions(
+    consultation_service, *, offer_lead: bool = True, extra_service=None
+) -> list[object]:
     actions: list[object] = []
     if consultation_service is not None:
         actions.append(
@@ -728,11 +765,44 @@ def _medical_referral_quick_actions(consultation_service, *, offer_lead: bool = 
                 "value": consultation_service.name,
             }
         )
+    if extra_service is not None and (
+        consultation_service is None or extra_service.id != consultation_service.id
+    ):
+        actions.append(
+            {
+                "label": extra_service.name,
+                "type": "message",
+                "value": extra_service.name,
+            }
+        )
     if offer_lead:
         actions.append("Оставить телефон")
     actions.append("Позвать менеджера")
     return actions
 
+
+def _lab_test_result(
+    knowledge_base: KnowledgeBase, session: Session, classifier_confidence: float
+) -> PolicyResult:
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=PolicyReason.OK,
+        confidence=classifier_confidence or 0.85,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": _phrase(
+                knowledge_base, "lab_tests_available", seed=_phrase_seed(session, "lab_tests_available")
+            ),
+        },
+        quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+    )
+
+
+# Denylist, не allowlist — см. комментарий у has_competing_substantive_signal. Только
+# заведомо несодержательные интенты: чистая болтовня, офтоп, и "классификатор сам не понял"
+# (clarify) — единственный случай, когда "нет" в сообщении разумно считать голым отказом
+# даже при confidence > 0.
+NEGATIVE_CATCHALL_EXCLUDED_INTENTS = {"small_talk", "off_topic", "clarify"}
 
 OBJECTION_PHRASE_KEYS = {
     "price": "objection_price",
@@ -808,8 +878,10 @@ def _medical_referral_result(
     restricted_category: str | None,
 ) -> PolicyResult:
     consultation_service = None
+    growth_removal_service = None
     if contains_keyword(normalized_message, MEDICAL_REFERRAL_KEYWORDS):
         consultation_service = _consultation_service_for_referral(normalized_message, knowledge_base)
+        growth_removal_service = _growth_removal_service_for_referral(normalized_message, knowledge_base)
 
     message_to_user = (
         _phrase(knowledge_base, "medical_referral", seed=_phrase_seed(session, "medical_referral"))
@@ -820,9 +892,7 @@ def _medical_referral_result(
     # для ВСЕХ них одинаково заканчивался "если срочно — звоните... в скорую (103)" — пугает на
     # безобидном вопросе. is_benign_only=True только если В СООБЩЕНИИ НЕТ других медицинских
     # слов (безопасный дефолт на смешанных фразах вроде "болит и кровит").
-    is_benign_only = contains_keyword(normalized_message, BENIGN_MEDICAL_KEYWORDS) and not contains_keyword(
-        normalized_message, MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS
-    )
+    is_benign_only = _is_benign_medical_signal(normalized_message)
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
@@ -834,9 +904,12 @@ def _medical_referral_result(
             "handoff_message": message_to_user,
             "restricted_category": restricted_category,
             "referral_service": consultation_service.model_dump() if consultation_service else None,
+            "extra_referral_service": growth_removal_service.model_dump() if growth_removal_service else None,
             "escalation_urgency": "calm" if is_benign_only else "urgent",
         },
-        quick_actions=_medical_referral_quick_actions(consultation_service),
+        quick_actions=_medical_referral_quick_actions(
+            consultation_service, extra_service=growth_removal_service
+        ),
     )
 
 
@@ -1641,6 +1714,38 @@ def _has_hard_restricted_signal(normalized_message: str) -> bool:
     return contains_keyword_lemma(normalized_message, _hard_restricted_lemma_set())
 
 
+def _single_word_lemma_set(keywords: set[str]) -> set[str]:
+    lemmas: set[str] = set()
+    for word in keywords:
+        if " " not in word:
+            lemmas.update(lemmatize_tokens(word))
+    return lemmas
+
+
+_benign_medical_lemmas: set[str] | None = None
+_non_benign_medical_lemmas: set[str] | None = None
+
+
+def _is_benign_medical_signal(normalized_message: str) -> bool:
+    # Живой баг (2026-08-10): "а они опасные?" (про пилинги, уже названные в разговоре)
+    # получало "urgent" тон со "скорая (103)" вместо спокойного — "опасные" не подстрока
+    # "опасно" в BENIGN_MEDICAL_KEYWORDS, ровно тот же класс бага, что чинили сегодня для
+    # эскалации/распознавания бота, просто фикс тогда не докатился до смягчения тона.
+    global _benign_medical_lemmas, _non_benign_medical_lemmas
+    if _benign_medical_lemmas is None:
+        _benign_medical_lemmas = _single_word_lemma_set(BENIGN_MEDICAL_KEYWORDS)
+    if _non_benign_medical_lemmas is None:
+        _non_benign_medical_lemmas = _single_word_lemma_set(MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS)
+
+    is_benign = contains_keyword(normalized_message, BENIGN_MEDICAL_KEYWORDS) or contains_keyword_lemma(
+        normalized_message, _benign_medical_lemmas
+    )
+    has_other_medical_signal = contains_keyword(
+        normalized_message, MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS
+    ) or contains_keyword_lemma(normalized_message, _non_benign_medical_lemmas)
+    return is_benign and not has_other_medical_signal
+
+
 _NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}
 
 
@@ -1901,6 +2006,18 @@ def analyze_message(
     ) or contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS) or intent == "operator_request"
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
+    # Живой баг (2026-08-10): objection_price спрашивает "расскажу подробнее, что входит?",
+    # пользователь отвечает голым "давай" — но это не содержит EXPLANATION_KEYWORDS, поэтому
+    # шло в общий clarify вместо ответа на же собственное предложение бота. Считаем "давай"/
+    # "да" подтверждением ИМЕННО этого предложения, только если последний ответ бота сам был
+    # objection_handled (не в любой другой ситуации) и сообщение — ТОЛЬКО подтверждение, без
+    # ничего сверху (иначе "давай запишемся" потеряло бы свой явный смысл).
+    if (
+        not explanation_requested
+        and session.last_intent == PolicyReason.OBJECTION_HANDLED.value
+        and normalized_message.strip() in AFFIRMATIVE_MESSAGES
+    ):
+        explanation_requested = True
     price_requested = (
         intent == "price_question"
         or fuzzy_contains(normalized_message, PRICE_KEYWORDS)
@@ -2007,6 +2124,15 @@ def analyze_message(
     # оформляем"), хотя отменять было нечего. Негативный сигнал считаем отменой только когда
     # в СООБЩЕНИИ нет никакого другого содержательного сигнала — иначе это не отказ, а просто
     # "нет" в начале фразы перед настоящим вопросом.
+    #
+    # Живой баг #2 (2026-08-10): изначально тут был allowlist конкретных интентов — "отмена,
+    # покажи услуги" (list_services) и "отмена, не знаю к какому врачу" (doctor_uncertain,
+    # добавленный в этой же сессии чуть раньше) молча гасились, потому что их забыли вписать
+    # в список. Allowlist обязательно отстаёт от новых интентов — заменили на denylist
+    # заведомо несодержательных интентов: если классификатор реально что-то понял (confidence
+    # > 0) и это не пустая болтовня/офтоп/сам-непонятно-что — значит есть что перекрывать
+    # отменой. Новые интенты (как doctor_uncertain сегодня) закрываются автоматически, без
+    # необходимости вспоминать про этот список.
     has_competing_substantive_signal = (
         price_requested
         or booking_requested
@@ -2014,18 +2140,7 @@ def analyze_message(
         or explanation_requested
         or lead_requested
         or service is not None
-        or (
-            classifier_confidence > 0
-            and intent
-            in {
-                "price_question",
-                "booking_request",
-                "faq_question",
-                "cosmetic_concern",
-                "lead_request",
-                "service_mention",
-            }
-        )
+        or (classifier_confidence > 0 and intent not in NEGATIVE_CATCHALL_EXCLUDED_INTENTS)
     )
 
     if (
@@ -2232,6 +2347,9 @@ def analyze_message(
         )
 
     if intent == "off_topic":
+        if contains_keyword(normalized_message, LAB_TEST_KEYWORDS):
+            return _lab_test_result(knowledge_base, session, classifier_confidence)
+
         if contains_keyword(normalized_message, BODY_TOPIC_SIGNAL_KEYWORDS):
             article_matches = _retrieve_article_context_safe(message)
             guidance_result = _cosmetic_article_guidance_result(
@@ -2292,7 +2410,11 @@ def analyze_message(
     if fact_guard_known_values_result is not None:
         return fact_guard_known_values_result
 
-    if intent == "clarify":
+    # explanation_requested может быть True из-за "давай"/"да" после objection_handled (см.
+    # выше) даже когда сырая классификация сообщения — "clarify" (у "давай" самого по себе
+    # нет содержания вне контекста). Без этой оговорки generic-clarify перехватывал бы раньше,
+    # чем код вообще доходил до explanation_requested-ветки ниже.
+    if intent == "clarify" and not explanation_requested:
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,
@@ -2477,6 +2599,9 @@ def analyze_message(
             return variant_result
 
     if intent == "faq_question" and not price_requested and not duration_requested:
+        if contains_keyword(normalized_message, LAB_TEST_KEYWORDS):
+            return _lab_test_result(knowledge_base, session, classifier_confidence)
+
         article_query = f"{service.name} {message}" if service is not None else message
         article_matches = _retrieve_article_context_safe(article_query)
 
@@ -2529,6 +2654,9 @@ def analyze_message(
                     service_unresolved=True,
                 ),
             )
+
+        if contains_keyword(normalized_message, LAB_TEST_KEYWORDS):
+            return _lab_test_result(knowledge_base, session, classifier_confidence)
 
         similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.78)
         if similar_result is not None:
@@ -2793,6 +2921,21 @@ def analyze_message(
                 },
                 quick_actions=["Посмотреть услуги", "Позвать менеджера"],
             )
+
+        # Живой баг (2026-08-10): "а что это"/"расскажи подробнее" для услуги, сгруппированной
+        # из прайса, отвечали только по её short_description — а он для таких услуг часто
+        # автосгенерированная заглушка вида "Направление «Мезотерапия». В прайсе 15 вариантов."
+        # без единого слова о том, что это вообще такое. При этом для этой же услуги может уже
+        # существовать куратированная статья с реальным описанием (её же использует соседняя
+        # ветка faq_question/cosmetic_concern) — просто эта ветка про неё не знала. Предпочитаем
+        # статью, если она для услуги есть; не гейтим _has_strong_article_overlap, т.к. это не
+        # score-based совпадение по тексту, а прямая связь service_id → статья, уже подтверждённая
+        # куратором на этапе одобрения.
+        article_entry = _approved_article_for_service(knowledge_base, service.id)
+        if article_entry is not None:
+            article_result = _article_guidance_result_from_entry(knowledge_base, article_entry)
+            if article_result is not None:
+                return article_result
 
         context = knowledge_base.get_service_context(service)
         return PolicyResult(

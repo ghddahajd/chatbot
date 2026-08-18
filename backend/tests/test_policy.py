@@ -187,6 +187,22 @@ def test_danger_word_combined_with_real_symptom_stays_urgent(
     assert result.safe_context.get("escalation_urgency") == "urgent"
 
 
+def test_danger_word_inflection_still_gets_calm_tone(
+    policy_session, resolver, managed_env
+) -> None:
+    """Живой баг (2026-08-10): "а они опасные?" (про уже названные пилинги) получало
+    "urgent" тон со "скорая (103)" — "опасные" не подстрока "опасно" в BENIGN_MEDICAL_KEYWORDS.
+    Тот же класс словоформ-бага, что уже чинили лемматизацией для эскалации/bot-identity,
+    просто не докатили тогда до смягчения тона конкретно здесь."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("а они опасные?", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.safe_context.get("escalation_urgency") == "calm"
+
+
 def test_danger_word_inflection_still_escalates(policy_session, knowledge_base) -> None:
     """Живой баг (аудит §2026-08-06): "насколько опасен ботокс если делать часто, может
     накапливаться в организме?" не эскалировало — MEDICAL_KEYWORDS содержит "опасно", но не
@@ -1172,7 +1188,35 @@ def test_single_similar_service_binds_context_for_followup(
     policy_session.last_service_id = result.service_id
     followup = _analyze("расскажи подробнее про эту услугу", policy_session, knowledge_base)
     assert followup.action == PolicyAction.ANSWER
-    assert followup.reason == PolicyReason.SERVICE_EXPLANATION
+    # "Шатл Комби" has a curated article mapped to it (2026-08-10 fix: explanation_requested
+    # now prefers a service's approved article over its often-placeholder short_description,
+    # see _approved_article_for_service) — reason is OK (article-guidance path), not
+    # SERVICE_EXPLANATION anymore. Both are legitimate non-generic answers; this asserts the
+    # service context still resolves correctly, not which specific path answered it.
+    assert followup.reason in {PolicyReason.SERVICE_EXPLANATION, PolicyReason.OK}
+    assert followup.service_id == result.service_id
+
+
+def test_explanation_prefers_curated_article_over_placeholder_description(
+    policy_session, resolver, managed_env
+) -> None:
+    """Живой баг (2026-08-10, воспроизведён 1:1 из живого диалога пользователя): у услуг,
+    сгруппированных из прайса (напр. "Мезотерапия"), short_description — автосгенерированная
+    заглушка вида "Направление «Мезотерапия». В прайсе 15 вариантов." — на "а что это"/
+    "расскажи подробнее" бот пересказывал именно эту заглушку (по сути список цен), хотя для
+    той же услуги уже есть куратированная статья с реальным описанием, которую использует
+    faq_question-ветка одним сообщением раньше в том же диалоге. Explanation-ветка теперь
+    сначала проверяет approved-статью для service_id, прежде чем падать на short_description."""
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    policy_session.last_service_id = "mezoterapiya_a62ea8d4"
+    result = _analyze("а что это", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    message = str(result.safe_context.get("message_to_user") or "").lower()
+    assert "в прайсе 15 вариантов" not in message
 
 
 def test_bot_identity_intent_answers_directly_without_operator_redirect(
@@ -1545,6 +1589,30 @@ def test_negative_word_does_not_swallow_real_question_in_same_message(
     assert result.safe_context.get("general_cancelled") is not True
     message = str(result.safe_context.get("message_to_user") or "")
     assert "ничего пока не делаем" not in message.lower()
+
+
+def test_negative_catchall_denylist_covers_intents_not_on_old_allowlist(
+    policy_session, knowledge_base
+) -> None:
+    """Живой баг (2026-08-10): "отмена, покажи услуги" и "нет, не знаю к какому врачу"
+    гасились general_cancelled — их интенты (list_services, doctor_uncertain) просто забыли
+    вписать в старый allowlist из шести конкретных интентов. Заменили на denylist трёх
+    заведомо несодержательных интентов (small_talk/off_topic/clarify) — любой другой интент
+    с confidence > 0, включая ещё не существующие сегодня, покрывается автоматически."""
+
+    result = _analyze("отмена, покажи услуги", policy_session, knowledge_base)
+    assert result.safe_context.get("general_cancelled") is not True
+
+    # doctor_uncertain существует только в resolve_classification() (полный пайплайн,
+    # chat_utils.py), не в локальном classify_and_extract(), который использует _analyze —
+    # собираем classification вручную, как для остальных intent-специфичных policy-тестов.
+    result = analyze_message(
+        "нет, не знаю к какому врачу",
+        policy_session,
+        knowledge_base,
+        {"intent": "doctor_uncertain", "service_id": None, "confidence": 0.9},
+    )
+    assert result.safe_context.get("general_cancelled") is not True
 
 
 def test_faq_question_uses_article_context(
@@ -2072,6 +2140,34 @@ def test_objection_price_answers_with_value_argument_not_backoff(policy_session,
     assert result.action == PolicyAction.ANSWER
     assert result.reason == PolicyReason.OBJECTION_HANDLED
     assert "вход" in str(result.safe_context.get("message_to_user")).lower()
+
+
+def test_bare_affirmative_after_objection_answers_the_offer(policy_session, knowledge_base) -> None:
+    """Живой баг (2026-08-10): objection_price спрашивает "расскажу подробнее, что входит?",
+    пользователь отвечает голым "давай" — раньше уходило в общий clarify вместо ответа на
+    же собственное предложение бота, потому что "давай" не содержит EXPLANATION_KEYWORDS.
+    Считаем это подтверждением ТОЛЬКО если последний ответ бота сам был objection_handled."""
+
+    policy_session.last_intent = PolicyReason.OBJECTION_HANDLED.value
+    policy_session.last_service_id = "biorevitalization"
+
+    result = _analyze("давай", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.service_id == "biorevitalization"
+    message = str(result.safe_context.get("message_to_user") or "").lower()
+    assert "что уточнить по этой услуге" not in message
+
+
+def test_bare_affirmative_without_prior_objection_is_unaffected(policy_session, knowledge_base) -> None:
+    """Регрессия: голое "давай" без предшествующего objection_handled не должно внезапно
+    начать давать service explanation — ведёт себя как раньше (обычно generic clarify)."""
+
+    assert policy_session.last_intent != PolicyReason.OBJECTION_HANDLED.value
+
+    result = _analyze("давай", policy_session, knowledge_base)
+
+    assert result.reason != PolicyReason.SERVICE_EXPLANATION
 
 
 def test_objection_hesitation_asks_one_clarifying_question(policy_session, knowledge_base) -> None:

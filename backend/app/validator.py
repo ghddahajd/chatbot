@@ -179,7 +179,8 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(
         phrasebook.get("price_disclaimer")
-        or "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей."
+        or "Это предварительная стоимость. Точную схему и цену определит врач на консультации — "
+        "без неё процедуру не проводим."
     )
 
     if question_type == "price":
@@ -354,7 +355,8 @@ def clean_template_answer(context: dict[str, Any]) -> str:
     phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
     price_disclaimer = str(
         phrasebook.get("price_disclaimer")
-        or "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей."
+        or "Это предварительная стоимость. Точную схему и цену определит врач на консультации — "
+        "без неё процедуру не проводим."
     )
     parts: list[str] = []
     if service.get("name"):

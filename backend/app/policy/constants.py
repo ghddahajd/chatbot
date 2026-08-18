@@ -353,8 +353,6 @@ BODY_TOPIC_SIGNAL_KEYWORDS = {
     "узи",
     "мрт",
     "рентген",
-    "анализ",
-    "анализы",
     "обследование",
     "диагностика",
     "операция",
@@ -758,6 +756,20 @@ COSMETIC_CONCERN_KEYWORDS = {
     "неровный тон",
     "морщин",
     "пигмент",
+    # 2026-08-18: клиент подтвердил, что папилломы/бородавки — не деликатная тема
+    # (в отличие от родинок, см. MEDICAL_REFERRAL_KEYWORDS — там намеренно остаётся
+    # передача оператору, а не прямая продажа услуги).
+    "папиллом",
+    "бородавк",
+    "шипиц",
+}
+# 2026-08-18: клиент прямо попросил прятать анализы из блока услуг/цен (там нет ни одной
+# позиции — прятать и не требовалось), но бот должен подтверждать, что сдать их можно,
+# а не уходить в размытый off_topic_body_redirect ("это не совсем наш профиль") — раньше
+# "анализ"/"анализы" были в BODY_TOPIC_SIGNAL_KEYWORDS и давали именно такой уклончивый ответ.
+LAB_TEST_KEYWORDS = {
+    "анализ",
+    "анализы",
 }
 # ID реального прайса rosh_import_demo (services.json) — раньше тут были ID из отставной
 # демо-заглушки rosh_demo (facial_cleansing/cosmetologist_consultation/biorevitalization),
@@ -777,6 +789,9 @@ COSMETIC_CONCERN_SERVICE_MAP = {
     "неровный тон": ["konsultacii_b8520924", "chistki_e744e513"],
     "морщин": ["botulinoterapiya_9d5734af", "biorevitalizaciya_9d426f68", "fillery_f2df3e74"],
     "пигмент": ["fotolechenie_bbl_85e80491", "lazernaya_shlifovka_8965cb81", "pilingi_8dde1279"],
+    "папиллом": ["udalenie_novoobrazovanii_12634fed", "konsultacii_b8520924"],
+    "бородавк": ["udalenie_novoobrazovanii_12634fed", "konsultacii_b8520924"],
+    "шипиц": ["udalenie_novoobrazovanii_12634fed", "konsultacii_b8520924"],
 }
 GENERIC_PRICE_MESSAGES = {
     "хочу уточнить цену",

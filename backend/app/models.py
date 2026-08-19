@@ -90,7 +90,10 @@ class Session(BaseModel):
     message_count: int = 0
     substantive_message_count: int = 0
     engagement_offer_count: int = 0
-    objection_response_count: int = 0
+    # По теме возражения (price/hesitation/competitor/guarantee/pain_fear), не общий счётчик —
+    # иначе второе возражение по НОВОЙ теме сразу получает backoff из-за старой (реальный баг,
+    # найден 2026-08-19). Словарь сам расширяется на будущие темы без правок кода.
+    objection_response_counts: dict[str, int] = Field(default_factory=dict)
     # Короткие гарантированные факты, накопленные по ходу разговора (жалоба/деликатная тема/
     # возражение) — показываются оператору ОТДЕЛЬНО от LLM-суммаризатора лида, который на
     # маленькой модели надёжно теряет/смазывает именно такие детали (см. чат от 2026-08-10).

@@ -201,7 +201,7 @@ class SessionStore:
         clear_active_frame: bool = False,
         substantive_message_count: Optional[int] = None,
         engagement_offer_count: Optional[int] = None,
-        objection_response_count: Optional[int] = None,
+        increment_objection_topic: Optional[str] = None,
         add_notable_flag: Optional[str] = None,
     ) -> Optional[Session]:
         async with self._lock:
@@ -220,8 +220,10 @@ class SessionStore:
                 session.substantive_message_count = substantive_message_count
             if engagement_offer_count is not None:
                 session.engagement_offer_count = engagement_offer_count
-            if objection_response_count is not None:
-                session.objection_response_count = objection_response_count
+            if increment_objection_topic:
+                session.objection_response_counts[increment_objection_topic] = (
+                    session.objection_response_counts.get(increment_objection_topic, 0) + 1
+                )
             if add_notable_flag and add_notable_flag not in session.notable_flags:
                 session.notable_flags = [*session.notable_flags, add_notable_flag]
             session.updated_at = datetime.utcnow()

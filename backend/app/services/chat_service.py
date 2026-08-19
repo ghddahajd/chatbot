@@ -758,9 +758,9 @@ class ChatService:
         substantive_message_count = None
         if self._is_substantive_policy_result(policy_result):
             substantive_message_count = int(session.substantive_message_count or 0) + 1
-        objection_response_count = None
+        increment_objection_topic = None
         if policy_result.reason in {PolicyReason.OBJECTION_HANDLED, PolicyReason.OBJECTION_BACKOFF}:
-            objection_response_count = int(session.objection_response_count or 0) + 1
+            increment_objection_topic = str(policy_result.safe_context.get("objection_topic") or "") or None
         await session_store.update_context(
             session.session_id,
             last_service_id=policy_result.service_id,
@@ -768,7 +768,7 @@ class ChatService:
             active_frame=active_frame,
             clear_active_frame=active_frame is None and policy_result.action in {PolicyAction.OFF_TOPIC, PolicyAction.REJECT},
             substantive_message_count=substantive_message_count,
-            objection_response_count=objection_response_count,
+            increment_objection_topic=increment_objection_topic,
             add_notable_flag=self._notable_flag_for_policy_result(policy_result),
         )
 

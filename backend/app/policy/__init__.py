@@ -831,7 +831,7 @@ def _objection_result(
     if phrase_key is None:
         return None
 
-    response_count = int(session.objection_response_count or 0)
+    response_count = session.objection_response_counts.get(objection_topic, 0)
     # §3.5 скрипта: "думаю"/"посоветуюсь" ИМЕННО на этапе записи (pending_action ==
     # BOOKING_CONTACT) — не тот же вопрос "что смущает" (objection_hesitation), который
     # звучит странно, когда контакт уже запрашивается, а мягкое "придержу интерес без

@@ -2207,7 +2207,7 @@ def test_booking_stage_hesitation_offers_to_hold_without_obligation(policy_sessi
 
 def test_booking_stage_hesitation_still_backs_off_after_two_attempts(policy_session, knowledge_base) -> None:
     policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
-    policy_session.objection_response_count = 2
+    policy_session.objection_response_counts = {"hesitation": 2}
 
     result = analyze_message(
         "Хорошо, я подумаю и напишу.",
@@ -2265,26 +2265,45 @@ def test_objection_pain_fear_gives_reassurance_not_escalation(policy_session, kn
     assert "обезболивание" in str(result.safe_context.get("message_to_user")).lower()
 
 
-def test_objection_backs_off_after_two_soft_attempts(policy_session, knowledge_base) -> None:
-    policy_session.objection_response_count = 0
+def test_objection_backs_off_after_two_soft_attempts_on_same_topic(policy_session, knowledge_base) -> None:
+    policy_session.objection_response_counts = {"price": 0}
     first = analyze_message(
         "так дорого", policy_session, knowledge_base, _objection_classification("price")
     )
     assert first.reason == PolicyReason.OBJECTION_HANDLED
 
-    policy_session.objection_response_count = 1
+    policy_session.objection_response_counts = {"price": 1}
     second = analyze_message(
-        "я подумаю", policy_session, knowledge_base, _objection_classification("hesitation")
+        "все равно дорого", policy_session, knowledge_base, _objection_classification("price")
     )
     assert second.reason == PolicyReason.OBJECTION_HANDLED
 
-    policy_session.objection_response_count = 2
+    policy_session.objection_response_counts = {"price": 2}
     third = analyze_message(
-        "в другой клинике дешевле", policy_session, knowledge_base, _objection_classification("competitor")
+        "ну очень дорого", policy_session, knowledge_base, _objection_classification("price")
     )
     assert third.action == PolicyAction.ANSWER
     assert third.reason == PolicyReason.OBJECTION_BACKOFF
     assert "не буду торопить" in str(third.safe_context.get("message_to_user")).lower()
+
+
+def test_objection_backoff_is_scoped_per_topic_not_global(policy_session, knowledge_base) -> None:
+    """Живой баг (2026-08-19): objection_response_count был ОДНИМ числом на всю сессию — два
+    возражения про цену молча включали backoff для совершенно другой, впервые поднятой темы
+    (боль/конкуренты/гарантии). Счётчик теперь per-topic (objection_response_counts), эта же
+    сессия/тема с двумя попытками не должна влиять на другую тему, поднятую впервые."""
+
+    policy_session.objection_response_counts = {"price": 2}
+
+    first_time_on_new_topic = analyze_message(
+        "Переживаю, что будет больно",
+        policy_session,
+        knowledge_base,
+        _objection_classification("pain_fear"),
+    )
+
+    assert first_time_on_new_topic.action == PolicyAction.ANSWER
+    assert first_time_on_new_topic.reason == PolicyReason.OBJECTION_HANDLED
 
 
 def test_objection_does_not_override_medical_escalation(policy_session, knowledge_base) -> None:

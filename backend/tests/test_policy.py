@@ -1111,6 +1111,26 @@ def test_bare_skolko_with_intro_words_is_price(policy_session, resolver, managed
     assert result.safe_context["question_type"] == "variants_list"
 
 
+def test_cherez_skolko_is_not_treated_as_price_question(policy_session, resolver, managed_env) -> None:
+    """Живой баг (2026-08-19): "через сколько можно забеременеть после родов" содержит токен
+    "сколько" не последним словом, не задевает DURATION_KEYWORDS ("сколько длится" и т.п.) —
+    _looks_like_bare_price_question ложно взводил price_requested, из-за чего faq_question-ветка
+    (правильная для такого сообщения, есть одобренная статья с этим triggre_phrase в реальных
+    данных клиента) пропускалась целиком, падало в generic unknown_service."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = analyze_message(
+        "через сколько можно забеременеть после родов?",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 1.0},
+    )
+
+    assert result.reason == PolicyReason.OK
+    assert result.safe_context.get("question_type") == "cosmetic_article_guidance"
+
+
 def test_skolko_duration_does_not_become_price(policy_session, knowledge_base) -> None:
     result = _analyze("сколько длится чистка лица?", policy_session, knowledge_base)
 
@@ -1891,6 +1911,34 @@ def test_medical_symptom_beats_fact_guard(
 
     assert result.action == PolicyAction.TRANSFER_OPERATOR
     assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_swelling_and_breathing_difficulty_are_hard_restricted_keywords(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (2026-08-19, найден при ревью red-статей): "опух" в HARD_RESTRICTED_KEYWORDS
+    не покрывает "распухло" (другой префикс, не подстрока), а "дышать"/"дыхание" не было вообще
+    — messages describing swelling/breathing difficulty could sneak past the hard-restricted
+    gate that blocks the RAG article-guidance rescue in the medical_requested branch, letting
+    a coincidentally-overlapping approved article answer instead of escalating. Tested with a
+    message that doesn't specifically target any one article, to check the keyword layer
+    itself rather than one particular collision."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    for message in ("рука сильно распухла после укола", "тяжело дышать после процедуры"):
+        result = analyze_message(
+            message,
+            policy_session,
+            knowledge_base,
+            {"intent": "medical_advice", "service_id": None, "confidence": 1.0},
+        )
+        assert result.action == PolicyAction.TRANSFER_OPERATOR, message
+        assert result.reason == PolicyReason.REGULATED_ADVICE, message
 
 
 def test_medical_symptom_is_not_bypassed_by_weak_rag_article_match(

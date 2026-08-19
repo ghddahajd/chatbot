@@ -99,19 +99,18 @@
         right: 24px;
         bottom: 24px;
         z-index: 2147483647;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 12px;
+        pointer-events: none;
       }
       .shell.pos-left {
         right: auto;
         left: 24px;
-        align-items: flex-start;
       }
 
       /* ── Launcher ── */
       .launcher {
+        position: absolute;
+        right: 0;
+        bottom: 0;
         width: 58px;
         height: 58px;
         border: 0;
@@ -123,12 +122,27 @@
         box-shadow: var(--shadow);
         display: grid;
         place-items: center;
-        transition: transform .18s ease, box-shadow .18s ease;
-        position: relative;
+        opacity: 1;
+        transform: scale(1);
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity .22s cubic-bezier(.16,1,.3,1), transform .22s cubic-bezier(.16,1,.3,1), box-shadow .18s ease;
       }
+      .shell.pos-left .launcher { right: auto; left: 0; }
       .launcher svg { width: 26px; height: 26px; }
       .launcher:hover { transform: translateY(-2px); box-shadow: 0 20px 48px rgba(8,14,13,.16); }
-      .launcher.hidden { display: none; }
+      .launcher.hidden {
+        opacity: 0;
+        transform: scale(.85);
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity .22s cubic-bezier(.16,1,.3,1), transform .22s cubic-bezier(.16,1,.3,1), visibility 0s linear .22s;
+      }
+      .launcher.pulse { animation: launcher-pulse 2.2s ease-in-out infinite; }
+      @keyframes launcher-pulse {
+        0%, 100% { box-shadow: var(--shadow), 0 0 0 0 rgba(8,14,13,.18); }
+        50% { box-shadow: var(--shadow), 0 0 0 9px rgba(8,14,13,0); }
+      }
 
       /* ── Unread badge ── */
       .unread {
@@ -144,19 +158,89 @@
       }
       .unread.visible { display: block; }
 
+      /* ── Attention teaser ── */
+      .teaser {
+        position: absolute;
+        right: 0;
+        bottom: 70px;
+        max-width: 240px;
+        opacity: 0;
+        transform: translateY(8px) scale(.96);
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity .24s cubic-bezier(.16,1,.3,1), transform .24s cubic-bezier(.16,1,.3,1), visibility 0s linear .24s;
+      }
+      .shell.pos-left .teaser { right: auto; left: 0; }
+      .teaser.visible {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity .24s cubic-bezier(.16,1,.3,1), transform .24s cubic-bezier(.16,1,.3,1);
+      }
+      .teaser-bubble {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 12px 34px 12px 14px;
+        box-shadow: var(--shadow);
+        cursor: pointer;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--text);
+      }
+      .teaser-bubble svg { width: 14px; height: 14px; flex-shrink: 0; }
+      .teaser-dismiss {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        width: 22px;
+        height: 22px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .teaser-dismiss svg { width: 12px; height: 12px; }
+
       /* ── Panel ── */
       .panel {
-        width: min(400px, calc(100vw - 32px));
-        height: min(660px, calc(100vh - 100px));
-        display: none;
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        width: min(420px, calc(100vw - 32px));
+        height: min(720px, calc(100vh - 100px));
+        display: flex;
         flex-direction: column;
         border-radius: var(--radius);
         background: var(--bg);
         box-shadow: var(--shadow);
         overflow: hidden;
         border: 1px solid var(--border-soft);
+        transform-origin: bottom right;
+        opacity: 0;
+        transform: translateY(14px) scale(.95);
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity .26s cubic-bezier(.16,1,.3,1), transform .26s cubic-bezier(.16,1,.3,1), visibility 0s linear .26s;
       }
-      .panel.open { display: flex; }
+      .shell.pos-left .panel { right: auto; left: 0; transform-origin: bottom left; }
+      .panel.open {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity .26s cubic-bezier(.16,1,.3,1), transform .26s cubic-bezier(.16,1,.3,1);
+      }
       .panel.demo-big {
         width: min(760px, calc(100vw - 32px));
         height: min(940px, calc(100vh - 24px));
@@ -172,18 +256,6 @@
         background: var(--bg);
         flex-shrink: 0;
       }
-      .avatar {
-        width: 42px;
-        height: 42px;
-        border-radius: var(--radius-sm);
-        background: var(--accent);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--bg);
-        flex-shrink: 0;
-      }
-      .avatar svg { width: 20px; height: 20px; }
       .header-info { flex: 1; min-width: 0; }
       .header-name {
         font-size: 15px;
@@ -243,26 +315,98 @@
       .close-btn svg { width: 16px; height: 16px; }
       .close-btn:hover { background: var(--border); color: var(--text); }
 
-      /* ── AI badge strip ── */
-      .ai-strip {
-        padding: 7px 16px;
-        border-bottom: 1px solid var(--border-soft);
-        display: flex;
-        justify-content: center;
-        background: var(--bg);
-        flex-shrink: 0;
-      }
-      .ai-strip-inner {
+      /* ── AI badge ── */
+      .ai-badge {
         display: inline-flex;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
         background: var(--accent-soft);
+        border: 0;
         border-radius: 999px;
-        padding: 3px 10px;
-        font-size: 12px;
+        padding: 4px 10px;
+        font: inherit;
+        font-size: 11px;
         font-weight: 700;
         color: var(--text);
         letter-spacing: .02em;
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+      .ai-badge svg { width: 11px; height: 11px; }
+
+      /* ── AI info modal ── */
+      .ai-modal {
+        position: absolute;
+        inset: 0;
+        background: rgba(8,14,13,.4);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 5;
+      }
+      .ai-modal.visible { display: flex; }
+      .ai-modal-card {
+        position: relative;
+        background: var(--bg);
+        border-radius: var(--radius);
+        padding: 24px;
+        width: 100%;
+        max-width: 320px;
+        box-shadow: 0 20px 50px rgba(8,14,13,.2);
+      }
+      .ai-modal-close {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .ai-modal-close svg { width: 16px; height: 16px; }
+      .ai-modal-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: var(--accent);
+        color: var(--accent-soft);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 14px;
+      }
+      .ai-modal-icon svg { width: 20px; height: 20px; }
+      .ai-modal-title {
+        font-size: 16px;
+        font-weight: 800;
+        color: var(--text);
+        margin-bottom: 8px;
+        letter-spacing: -.01em;
+      }
+      .ai-modal-body {
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: var(--text-secondary);
+      }
+      .ai-modal-ok {
+        margin-top: 18px;
+        width: 100%;
+        height: 44px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: var(--bg);
+        font: inherit;
+        font-size: 13.5px;
+        font-weight: 700;
+        cursor: pointer;
       }
 
       /* ── Messages ── */
@@ -313,6 +457,62 @@
         font-size: 13px;
         color: var(--text-muted);
         max-width: 240px;
+      }
+
+      /* ── Welcome / quick-start grid ── */
+      .welcome {
+        flex: 1;
+        margin: -14px -14px 0;
+        padding: 22px 18px 18px;
+      }
+      .welcome-text {
+        font-size: 15px;
+        line-height: 1.5;
+        color: var(--text);
+        margin-bottom: 18px;
+      }
+      .welcome-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .welcome-card {
+        text-align: left;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        border-radius: var(--radius-sm);
+        padding: 14px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        height: 108px;
+        font: inherit;
+        transition: border-color .15s, transform .12s;
+      }
+      .welcome-card:hover { border-color: var(--accent-border); transform: translateY(-1px); }
+      .welcome-card-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: var(--bg-page);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .welcome-card-icon svg { width: 18px; height: 18px; }
+      .welcome-card-title {
+        font-weight: 700;
+        font-size: 13.5px;
+        color: var(--text);
+        line-height: 1.25;
+      }
+      .welcome-card-sub {
+        font-size: 11.5px;
+        color: var(--text-muted);
+        line-height: 1.3;
+        margin-top: 2px;
       }
 
       /* ── Message bubbles ── */
@@ -651,15 +851,25 @@
       }
       .consent-accept:hover { background: var(--accent-dark); transform: translateY(-1px); }
 
-      /* ── Mobile ── */
+      /* ── Mobile: full-screen bottom sheet ── */
       @media (max-width: 480px) {
-        .shell { right: 12px; bottom: 12px; }
-        .shell.pos-left { left: 12px; right: auto; }
+        .shell { right: 0; bottom: 0; left: 0; top: 0; }
+        .launcher { right: 20px; bottom: 20px; }
+        .shell.pos-left .launcher { left: 20px; right: auto; }
+        .teaser { right: 20px; bottom: 88px; max-width: calc(100vw - 40px); }
+        .shell.pos-left .teaser { left: 20px; right: auto; }
         .panel {
-          width: calc(100vw - 24px);
-          height: min(78vh, 600px);
-          border-radius: 20px;
+          left: 0;
+          right: 0;
+          top: 64px;
+          bottom: 0;
+          width: auto;
+          height: auto;
+          border-radius: 20px 20px 0 0;
+          transform: translateY(16px);
         }
+        .shell.pos-left .panel { left: 0; right: 0; }
+        .panel.open { transform: translateY(0); }
         .composer { flex-direction: column; align-items: stretch; }
         .input-wrap { width: 100%; }
         .send-btn { width: 100%; }
@@ -675,14 +885,18 @@
         <span class="unread" aria-hidden="true"></span>
       </button>
 
+      <div class="teaser">
+        <div class="teaser-bubble" role="button" tabindex="0" aria-label="Открыть чат: Здравствуйте! Чем помочь?">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
+          <span>Здравствуйте! Чем помочь?</span>
+          <button class="teaser-dismiss" type="button" aria-label="Скрыть">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+      </div>
+
       <section class="panel" aria-live="polite">
         <header class="header">
-          <div class="avatar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
-              <path d="m9 12 2 2 4-4"></path>
-            </svg>
-          </div>
           <div class="header-info">
             <div class="header-name">AI-консультант</div>
             <div class="header-status">
@@ -690,6 +904,10 @@
               <span class="status-label">на связи</span>
             </div>
           </div>
+          <button class="ai-badge" type="button" aria-label="Что значит «с ИИ»">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
+            с ИИ
+          </button>
           <button class="close-btn" type="button" aria-label="Закрыть">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 6 6 18"></path>
@@ -698,8 +916,18 @@
           </button>
         </header>
 
-        <div class="ai-strip">
-          <div class="ai-strip-inner">✦ Отвечаем с ИИ</div>
+        <div class="ai-modal">
+          <div class="ai-modal-card">
+            <button class="ai-modal-close" type="button" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+            </button>
+            <div class="ai-modal-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
+            </div>
+            <div class="ai-modal-title">Отвечаем с ИИ</div>
+            <div class="ai-modal-body">ИИ-ассистент подсказывает по услугам, ценам и записи на основе данных клиники — это не замена приёму у врача. Если вопрос деликатный или нужен точный совет, позовите менеджера — подключим человека.</div>
+            <button class="ai-modal-ok" type="button">Понятно</button>
+          </div>
         </div>
 
         <div class="messages"></div>
@@ -779,6 +1007,13 @@
         consentPolicyWrap: this.$(".consent-policy-wrap"),
         consentLink: this.$(".consent-link"),
         consentAccept: this.$(".consent-accept"),
+        aiBadge: this.$(".ai-badge"),
+        aiModal: this.$(".ai-modal"),
+        aiModalClose: this.$(".ai-modal-close"),
+        aiModalOk: this.$(".ai-modal-ok"),
+        teaser: this.$(".teaser"),
+        teaserBubble: this.$(".teaser-bubble"),
+        teaserDismiss: this.$(".teaser-dismiss"),
       };
     }
 
@@ -811,6 +1046,7 @@
       if (DEMO_EXPAND_ENABLED) this.el.panel.classList.add("demo-big");
       this.pushGreeting();
       this.bootstrap();
+      this.scheduleTeaser();
     }
 
     bindEvents() {
@@ -822,32 +1058,113 @@
       this.el.inp.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.submit(); }
       });
+
+      const closeAiModal = () => this.el.aiModal.classList.remove("visible");
+      this.el.aiBadge.addEventListener("click", () => this.el.aiModal.classList.add("visible"));
+      this.el.aiModalClose.addEventListener("click", closeAiModal);
+      this.el.aiModalOk.addEventListener("click", closeAiModal);
+      this.el.aiModal.addEventListener("click", (e) => { if (e.target === this.el.aiModal) closeAiModal(); });
+
+      const openFromTeaser = () => { this.dismissTeaser(); this.toggle(); };
+      this.el.teaserBubble.addEventListener("click", openFromTeaser);
+      this.el.teaserBubble.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFromTeaser(); }
+      });
+      this.el.teaserDismiss.addEventListener("click", (e) => { e.stopPropagation(); this.dismissTeaser(); });
+    }
+
+    scheduleTeaser() {
+      this._teaserTimer = window.setTimeout(() => {
+        if (this.state.open) return;
+        this.el.teaser.classList.add("visible");
+        this.el.launcher.classList.add("pulse");
+      }, 2200);
+    }
+
+    dismissTeaser() {
+      window.clearTimeout(this._teaserTimer);
+      this.el.teaser.classList.remove("visible");
+      this.el.launcher.classList.remove("pulse");
     }
 
     pushGreeting() {
-      if (this.el.messages.childElementCount > 0) return;
+      if (this.el.messages.querySelector(".msg")) return;
+      const greetingLine = this.state.greetingText
+        || "Добрый день! Подскажу по услугам, ценам и записи — выберите тему или напишите вопрос своими словами.";
+
+      const existing = this.el.messages.querySelector(".welcome");
+      if (existing) {
+        const t = existing.querySelector(".welcome-text");
+        if (t) t.textContent = greetingLine;
+        return;
+      }
+
       const d = document.createElement("div");
-      d.className = "empty-state";
-      d.innerHTML = `
-        <div class="empty-icon">💬</div>
-        <div class="empty-title">Чем могу помочь?</div>
-        <div class="empty-sub">Спросите об услугах, ценах или запишитесь на приём</div>
-      `;
+      d.className = "welcome";
+
+      const text = document.createElement("div");
+      text.className = "welcome-text";
+      text.textContent = greetingLine;
+      d.appendChild(text);
+
+      const grid = document.createElement("div");
+      grid.className = "welcome-grid";
+      const cards = [
+        {
+          title: "Услуги и цены",
+          sub: "Все направления клиники",
+          icon: "M11.5 3H19a2 2 0 0 1 2 2v7.5a2 2 0 0 1-.586 1.414l-8 8a2 2 0 0 1-2.828 0l-7.5-7.5a2 2 0 0 1 0-2.828l8-8A2 2 0 0 1 11.5 3Z",
+          icon2: "M16.5 7.5h.01",
+          value: "Какие услуги у вас есть и сколько стоят?",
+        },
+        {
+          title: "Записаться на приём",
+          sub: "Подберём удобное время",
+          icon: "M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z",
+          icon2: "M8 3v4M16 3v4M4 10h16M9 15l2 2 4-4",
+          value: "Хочу записаться на консультацию",
+        },
+        {
+          title: "Частые вопросы",
+          sub: "Быстрые ответы без записи",
+          icon: "M4 4h16v12H9l-4.2 3.5A1 1 0 0 1 3 18.7V4Z",
+          icon2: "M9.6 9.2a2.4 2.4 0 1 1 3.4 2.2c-.9.5-1 1-1 1.8M12 15.4h.01",
+          value: "Можно у вас сдать анализы?",
+        },
+        {
+          title: "Позвать менеджера",
+          sub: "Ответит живой человек",
+          icon: "M4 12.5v-1a8 8 0 0 1 16 0v1",
+          icon2: "M2.5 12.5h3.5a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1.5 1.5 0 0 1-1.5-1.5ZM21.5 12.5H18a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h1.5A1.5 1.5 0 0 0 21 17ZM18 18.5V19a2 2 0 0 1-2 2h-2.5",
+          value: "Хочу поговорить с менеджером",
+        },
+      ];
+      for (const c of cards) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "welcome-card";
+        btn.innerHTML = `
+          <div class="welcome-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="${c.icon}"></path>
+              <path d="${c.icon2}"></path>
+            </svg>
+          </div>
+          <div>
+            <div class="welcome-card-title">${c.title}</div>
+            <div class="welcome-card-sub">${c.sub}</div>
+          </div>
+        `;
+        btn.addEventListener("click", () => this.sendText(c.value));
+        grid.appendChild(btn);
+      }
+      d.appendChild(grid);
       this.el.messages.appendChild(d);
     }
 
     clearGreeting() {
-      const e = this.el.messages.querySelector(".empty-state");
+      const e = this.el.messages.querySelector(".welcome");
       if (e) e.remove();
-    }
-
-    showGreeting() {
-      if (this.el.messages.querySelector(".msg")) return;
-      if (this.state.greetingText) {
-        this.addMsg("assistant", this.state.greetingText, true);
-      } else {
-        this.pushGreeting();
-      }
     }
 
     async bootstrap() {
@@ -1003,26 +1320,27 @@
     async restoreSession() {
       if (!this.state.companyId) { this.setStatus(STATUS.UNAVAILABLE); return; }
       this.state.sessionId = window.localStorage.getItem(this.storageKey()) || "";
-      if (!this.state.sessionId) { this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); return; }
+      if (!this.state.sessionId) { this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); return; }
       try {
         const res = await fetch(API_BASE + "/api/chat/session/" + this.state.sessionId);
-        if (!res.ok) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); return; }
+        if (!res.ok) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); return; }
         const data = await res.json();
-        if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); return; }
+        if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); return; }
         this.renderHistory(data.messages || []);
         this.setStatus(data.status);
         if (data.status === STATUS.HUMAN_ACTIVE) this.connectWS();
-      } catch (_) { this.setStatus(STATUS.AI_ACTIVE); this.showGreeting(); }
+      } catch (_) { this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); }
     }
 
     renderHistory(msgs) {
       this.el.messages.innerHTML = "";
-      if (!msgs.length) { this.showGreeting(); return; }
+      if (!msgs.length) { this.pushGreeting(); return; }
       for (const m of msgs) this.addMsg(m.role, m.text, true);
       this.scrollBottom();
     }
 
     toggle() {
+      this.dismissTeaser();
       this.state.open = !this.state.open;
       this.el.panel.classList.toggle("open", this.state.open);
       this.el.launcher.classList.toggle("hidden", this.state.open);

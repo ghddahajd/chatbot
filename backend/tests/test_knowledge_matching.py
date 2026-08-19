@@ -304,6 +304,41 @@ def test_faq_question_without_approved_mapping_keeps_old_behavior(
     assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
 
 
+def test_faq_question_ignores_weak_rag_article_overlap(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (2026-08-18, тот же класс, что "анализы" в этой сессии): faq_question был
+    единственной веткой из 6 без _has_strong_article_overlap — слабое совпадение в одно слово
+    забирало ответ вместо честного faq_question ниже. Сообщение и фейковый match специально
+    без общих trigger_phrase, чтобы проверить именно RAG-score путь, не lexical."""
+
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    weak_match = [
+        {
+            "title": "Темные круги под глазами",
+            "url": "https://www.medcenterrosh.ru/problems/temnye-veki-i-krugi-pod-glazami",
+            "snippet": "запись возможна в удобное для вас время",
+            "chunk_id": "fake",
+            "score": 6.1,
+        }
+    ]
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: weak_match)
+
+    result = analyze_message(
+        "напомните пожалуйста время работы",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
+
+
 def test_regulated_without_hard_signal_asks_followup_on_first_message(
     monkeypatch,
     policy_session,

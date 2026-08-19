@@ -2610,7 +2610,11 @@ def analyze_message(
             article_matches,
             normalized_message,
         )
-        if guidance_result is not None:
+        # Живой баг (2026-08-18, тот же класс, что чинили сегодня для "анализов"): это был
+        # единственный из 6 вызовов _cosmetic_article_guidance_result без гейта
+        # _has_strong_article_overlap — слабое семантическое совпадение по RAG-скору забирало
+        # ответ вместо честного faq_question ниже. Тот же гейт, что и во всех остальных ветках.
+        if guidance_result is not None and _has_strong_article_overlap(normalized_message, guidance_result):
             return guidance_result
 
         if not article_matches:

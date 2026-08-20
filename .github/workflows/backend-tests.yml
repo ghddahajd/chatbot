@@ -1,0 +1,28 @@
+name: Backend tests
+
+"on":
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      # Тесты читают клиентские фикстуры по путям вида "backend/data/clients/..." —
+      # относительно корня репозитория, не backend/. Запуск из backend/ или с
+      # неправильным PYTHONPATH ловит либо FileNotFoundError на этих путях, либо
+      # коллизию с одноимённым корневым scripts/ (не backend/scripts/) для одного
+      # теста — оба решаются запуском из корня, без --ignore и без PYTHONPATH-трюков
+      # (проверено live 2026-08-20, не гипотеза).
+      - name: Run tests
+        run: python -m pytest backend/tests -q

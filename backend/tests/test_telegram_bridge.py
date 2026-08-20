@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -71,6 +72,7 @@ def _service(
     *,
     group_chat_id: str = "-100123",
     clients_topic_id: str = "",
+    failures_file: Path | None = None,
 ) -> TelegramBridgeService:
     return TelegramBridgeService(
         bot_token="token",
@@ -78,6 +80,7 @@ def _service(
         session_store=store,
         ws_manager=ws_manager,
         clients_topic_id=clients_topic_id,
+        failures_file=failures_file,
     )
 
 
@@ -228,6 +231,89 @@ def test_call_does_not_retry_on_non_rate_limit_error(monkeypatch) -> None:
 
     send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
     assert len(send_calls) == 1
+
+
+def test_failed_send_writes_a_durable_failure_record(monkeypatch, tmp_path) -> None:
+    """Живая дыра (2026-08-20): неудачная отправка (не 429) не оставляла НИКАКОГО следа кроме
+    одной строчки в логе — не было способа потом узнать, дошла ли конкретная карточка. Теперь
+    неудача пишется в failures_file, с session_id для привязки к конкретному лиду."""
+
+    _reset_fake_client(monkeypatch)
+    FakeAsyncClient.responses["sendMessage"] = {
+        "ok": False,
+        "error_code": 400,
+        "description": "Bad Request: chat not found",
+    }
+    failures_file = tmp_path / "telegram_bridge_failures.jsonl"
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager, failures_file=failures_file)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    from app.utils.jsonl import read_jsonl
+
+    records = read_jsonl(failures_file)
+    assert len(records) == 1
+    assert records[0]["kind"] == "operator_queue_card"
+    assert records[0]["session_id"] == "sess-1"
+    assert records[0]["error_code"] == 400
+    assert records[0]["description"] == "Bad Request: chat not found"
+
+
+def test_successful_send_writes_no_failure_record(monkeypatch, tmp_path) -> None:
+    _reset_fake_client(monkeypatch)
+    failures_file = tmp_path / "telegram_bridge_failures.jsonl"
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager, failures_file=failures_file)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    assert not failures_file.exists()
+
+
+def test_failed_client_lead_card_send_writes_a_failure_record_with_session_id(monkeypatch, tmp_path) -> None:
+    _reset_fake_client(monkeypatch)
+    FakeAsyncClient.responses["sendMessage"] = {
+        "ok": False,
+        "error_code": 400,
+        "description": "Bad Request: chat not found",
+    }
+    failures_file = tmp_path / "telegram_bridge_failures.jsonl"
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(
+            store, ws_manager, clients_topic_id="42", failures_file=failures_file
+        )
+        await service.post_client_lead_card("карточка лида", session_id="sess-2")
+
+    anyio.run(run)
+
+    from app.utils.jsonl import read_jsonl
+
+    records = read_jsonl(failures_file)
+    assert len(records) == 1
+    assert records[0]["kind"] == "client_lead_card"
+    assert records[0]["session_id"] == "sess-2"
 
 
 def test_post_client_lead_card_sends_to_clients_topic_without_button(monkeypatch) -> None:

@@ -965,7 +965,7 @@ class ChatService:
                     f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n\n"
                     f"{_escape_markdown(lead.summary)}"
                 )
-                await bridge.post_client_lead_card(card_text)
+                await bridge.post_client_lead_card(card_text, session_id=lead.session_id)
         except Exception as error:
             logger.warning(
                 "telegram_bridge lead notify failed session_id=%s error=%s",

@@ -1,6 +1,7 @@
 """проверки generic delivery outbox."""
 
 import asyncio
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -875,3 +876,57 @@ def test_run_retry_loop_continues_after_retry_error(tmp_path: Path, resolver, mo
 
     anyio.run(run_loop)
     assert calls >= 2
+
+
+def _dead_record(delivery_id: str, timestamp: str) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "delivery_id": delivery_id,
+        "event_type": "lead_created",
+        "company_id": "rosh_demo",
+        "session_id": "session-1",
+        "destination_type": "telegram",
+        "status": "dead",
+        "attempts": 5,
+        "next_attempt_at": None,
+        "target": "chat",
+        "payload": {"summary": "лид"},
+        "last_error": "ConnectError",
+        "response_status": None,
+    }
+
+
+def test_outbox_health_ignores_old_dead_records(tmp_path: Path, resolver) -> None:
+    # Живой баг: одна протухшая доставка от месяца назад держала /health "degraded" вечно
+    # (реальный случай — dead-запись от 2026-07-07, доставка давно работает другим путём).
+    # dead_events_total всё ещё показывает историю, но status/dead_events смотрят только на
+    # активное окно.
+    service = DeliveryService(outbox_file=tmp_path / "delivery_outbox.jsonl", knowledge_base_resolver=resolver)
+    old_timestamp = (datetime.utcnow() - timedelta(days=30)).isoformat()
+
+    async def seed() -> dict[str, Any]:
+        await service._append_record(_dead_record("old-dead", old_timestamp))
+        return service.outbox_health()
+
+    import anyio
+
+    health = anyio.run(seed)
+    assert health["status"] == "ok"
+    assert health["dead_events"] == 0
+    assert health["dead_events_total"] == 1
+
+
+def test_outbox_health_flags_recent_dead_records(tmp_path: Path, resolver) -> None:
+    service = DeliveryService(outbox_file=tmp_path / "delivery_outbox.jsonl", knowledge_base_resolver=resolver)
+    recent_timestamp = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+
+    async def seed() -> dict[str, Any]:
+        await service._append_record(_dead_record("recent-dead", recent_timestamp))
+        return service.outbox_health()
+
+    import anyio
+
+    health = anyio.run(seed)
+    assert health["status"] == "degraded"
+    assert health["dead_events"] == 1
+    assert health["dead_events_total"] == 1

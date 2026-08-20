@@ -1595,7 +1595,7 @@ class _FakeTelegramBridge:
             }
         )
 
-    async def post_client_lead_card(self, card_text):
+    async def post_client_lead_card(self, card_text, *, session_id: str = ""):
         self.client_cards.append(card_text)
 
 

@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
 
-from .delivery import _escape_markdown
+from .delivery import _escape_markdown, _iso, _utcnow
 from .leads import recent_messages_for
 from .models import MessageRole
 from .sessions import SessionStore
+from .utils.jsonl import append_jsonl
 
 
 logger = logging.getLogger(__name__)
@@ -106,14 +108,40 @@ class TelegramBridgeService:
         session_store: SessionStore,
         ws_manager: Any,
         clients_topic_id: str = "",
+        failures_file: Path | None = None,
     ) -> None:
         self.bot_token = bot_token
         self.group_chat_id = group_chat_id
         self.session_store = session_store
         self.ws_manager = ws_manager
         self.clients_topic_id = clients_topic_id
+        self.failures_file = failures_file
         self._api_base = f"https://api.telegram.org/bot{bot_token}"
         self._offset = 0
+
+    def _record_failure(self, *, kind: str, session_id: str | None, data: dict[str, Any]) -> None:
+        """Раньше неудачная отправка (кроме 429, тот ретраится в _call) оставляла только одну
+        строчку в логе, которая укатывалась вниз консоли — не было способа потом узнать, дошла
+        ли конкретная карточка. Это не переезд на DeliveryService (та ретрай/dead-letter машина
+        рассчитана на разовые уведомления с фоновым повтором — для форвардинга живого сообщения
+        клиент<->оператор бэкграунд-ретрай через минуту не всегда даже имеет смысл, тема
+        отдельная, покрупнее) — просто честный durable-след для вопроса "а мы вообще узнаем?"."""
+
+        if self.failures_file is None:
+            return
+        try:
+            append_jsonl(
+                self.failures_file,
+                {
+                    "timestamp": _iso(_utcnow()),
+                    "kind": kind,
+                    "session_id": session_id,
+                    "error_code": data.get("error_code"),
+                    "description": data.get("description"),
+                },
+            )
+        except OSError as error:
+            logger.warning("telegram_bridge failure_log_write_error error=%s", type(error).__name__)
 
     @property
     def enabled(self) -> bool:
@@ -175,27 +203,31 @@ class TelegramBridgeService:
                 [{"text": "Взять в работу", "callback_data": f"{CLAIM_CALLBACK_PREFIX}{session_id}"}]
             ]
         }
-        await self._call(
+        data = await self._call(
             "sendMessage",
             chat_id=self.group_chat_id,
             text=card_text,
             parse_mode="Markdown",
             reply_markup=keyboard,
         )
+        if not data.get("ok"):
+            self._record_failure(kind="operator_queue_card", session_id=session_id, data=data)
 
-    async def post_client_lead_card(self, card_text: str) -> None:
+    async def post_client_lead_card(self, card_text: str, *, session_id: str = "") -> None:
         """Карточка в тему "Клиенты" — лид/запись без прямой необходимости в операторе.
         Без кнопки, без своей темы — просто лог."""
 
         if not self.enabled or not self.clients_topic_id:
             return
-        await self._call(
+        data = await self._call(
             "sendMessage",
             chat_id=self.group_chat_id,
             message_thread_id=int(self.clients_topic_id),
             text=card_text,
             parse_mode="Markdown",
         )
+        if not data.get("ok"):
+            self._record_failure(kind="client_lead_card", session_id=session_id or None, data=data)
 
     async def forward_client_message(self, session_id: str, text: str) -> None:
         """Пересылает новое сообщение клиента в уже существующую тему сессии (если есть)."""

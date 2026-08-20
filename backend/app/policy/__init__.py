@@ -87,6 +87,8 @@ BARE_SERVICE_MENTION_BLOCK_WORDS = {
     "на",
     "нужно",
     "подскажите",
+    "помогите",
+    "помощь",
     "почему",
     "почем",
     "почём",
@@ -1643,6 +1645,12 @@ HARD_RESTRICTED_KEYWORDS = {
     "распух",
     "дышать",
     "дыхание",
+    # Живой баг (2026-08-20): "горит"/"слабость" — жалоба на жжение и слабость после процедуры,
+    # спрятанная в бытовом вопросе про длительность, полностью игнорировалась. Тот же класс, что
+    # распух/дышать выше, просто другие слова — "жжет" уже был, "горит" гораздо обиходнее и не
+    # покрывался (другой корень, не форма того же слова), "слабость" не было вообще.
+    "горит",
+    "слабость",
     "щиплет",
     "щипет",
     "прокапат",
@@ -1977,7 +1985,7 @@ def _fact_guard_known_values_result(
     return None
 
 
-def analyze_message(
+def _analyze_message_core(
     message: str,
     session: Session,
     knowledge_base: KnowledgeBase,
@@ -3053,3 +3061,75 @@ def analyze_message(
         },
         quick_actions=["Посмотреть услуги", "Позвать менеджера"],
     )
+
+
+def _looks_like_answer_ignoring_booking(result: PolicyResult, booking_requested: bool) -> bool:
+    # ANSWER для завершённых ответов, CLARIFY для "вот варианты, какой интересует" (price-list
+    # шаблон, где реально всплыл этот баг, размечен именно как CLARIFY, не ANSWER) — оба этих
+    # экшена значат "дал содержательный текст", в отличие от reject/off_topic/small_talk/
+    # transfer_operator, которым бридж про запись был бы неуместен.
+    if not booking_requested or result.action not in (PolicyAction.ANSWER, PolicyAction.CLARIFY):
+        return False
+    # Ограничиваемся детерминированными force_direct_answer-ветками: у них message_to_user —
+    # готовый финальный текст, который безопасно дополнить. LLM-ветки тут не трогаем — им уже
+    # явно велено в BASE_SYSTEM_PROMPT не игнорировать второй вопрос молча, а текста на этом
+    # уровне (до генерации) ещё нет, дополнять нечего.
+    if not result.safe_context.get("force_direct_answer"):
+        return False
+    message_to_user = str(result.safe_context.get("message_to_user") or "")
+    if not message_to_user:
+        return False
+    lower = message_to_user.lower()
+    return "запис" not in lower and "заявк" not in lower
+
+
+def _augment_dropped_booking_intent(
+    result: PolicyResult, message: str, knowledge_base: KnowledgeBase
+) -> PolicyResult:
+    """Живой баг: составные сообщения вроде «сколько стоит эпиляция и можно ли записаться на
+    завтра?» отвечали только на информационную часть (цена/срок/объяснение) — просьба
+    записаться молча терялась. Тот же класс проблемы, что раньше нашли с потерей имени/города
+    в составном сообщении, только на этот раз в детерминированных force_direct_answer-ветках
+    (их в этом файле ~20) — точечно чинить каждую было бы игрой в вихрь, поэтому один общий
+    пост-чек поверх результата _analyze_message_core вместо правки каждой ветки по отдельности.
+    """
+    normalized_message = normalize_text(message)
+    booking_requested = contains_keyword(normalized_message, BOOKING_KEYWORDS)
+    if not _looks_like_answer_ignoring_booking(result, booking_requested):
+        return result
+
+    bridge = _phrase(knowledge_base, "booking_bridge") or (
+        "Записаться тоже можно — оставьте телефон и удобное время, менеджер подтвердит."
+    )
+    message_to_user = str(result.safe_context.get("message_to_user") or "")
+    new_context = dict(result.safe_context)
+    new_context["message_to_user"] = f"{message_to_user} {bridge}"
+
+    quick_actions = list(result.quick_actions)
+    if "Оставить телефон" not in quick_actions:
+        quick_actions.append("Оставить телефон")
+
+    return PolicyResult(
+        action=result.action,
+        reason=result.reason,
+        service_id=result.service_id,
+        confidence=result.confidence,
+        safe_context=new_context,
+        quick_actions=quick_actions,
+    )
+
+
+def analyze_message(
+    message: str,
+    session: Session,
+    knowledge_base: KnowledgeBase,
+    classification: Optional[dict[str, object]] = None,
+) -> PolicyResult:
+    """классифицирует сообщение до любого взаимодействия с llm.
+
+    Тонкая обёртка вокруг _analyze_message_core: применяет общий пост-чек поверх ЛЮБОЙ ветки
+    (см. _augment_dropped_booking_intent) вместо точечных правок внутри каждой из них.
+    """
+
+    result = _analyze_message_core(message, session, knowledge_base, classification)
+    return _augment_dropped_booking_intent(result, message, knowledge_base)

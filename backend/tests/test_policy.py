@@ -1181,6 +1181,24 @@ def test_expanded_unknown_service_does_not_use_named_phrase(policy_session, know
     assert "«" not in result.safe_context["message_to_user"]
 
 
+def test_bare_помогите_does_not_get_treated_as_a_service_name(policy_session, knowledge_base) -> None:
+    # Живой баг: одинокое "помогите" уходило в _unknown_service_message как попытка назвать
+    # услугу -> "«помогите» у нас не значится, но по этой теме могут быть похожие варианты.
+    # Показать?" — бессмысленный ответ, "помогите" это не название услуги. "подскажите" уже
+    # был в BARE_SERVICE_MENTION_BLOCK_WORDS для ровно того же случая — "помогите"/"помощь"
+    # были просто пропущены.
+    result = analyze_message(
+        "помогите",
+        policy_session,
+        knowledge_base,
+        {"intent": "unknown_service", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.UNKNOWN_SERVICE
+    assert "«" not in result.safe_context["message_to_user"]
+
+
 def test_booking_date_target_does_not_become_unknown_service(policy_session, knowledge_base) -> None:
     result = _analyze("хочу записаться на завтра", policy_session, knowledge_base)
 
@@ -1509,6 +1527,38 @@ def test_price_and_booking_compound_answers_price_first(policy_session, knowledg
     assert result.service_id == "facial_cleansing"
     assert result.safe_context["question_type"] == "price"
     assert "Оставить телефон" in result.quick_actions
+
+
+def test_wide_price_range_compound_booking_question_is_not_dropped(
+    policy_session, resolver, managed_env
+) -> None:
+    # Живой баг: "сколько стоит эпиляция и можно ли записаться на завтра?" отвечал ТОЛЬКО про
+    # цену (эта ветка — CLARIFY с force_direct_answer, не ANSWER), а просьба записаться молча
+    # терялась. Общий пост-чек (_augment_dropped_booking_intent) должен дописывать бридж поверх
+    # ЛЮБОЙ детерминированной ветки, не только price_and_booking_compound_answers_price_first
+    # (там другой сервис и другой action=ANSWER).
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze(
+        "сколько стоит эпиляция и можно ли записаться на завтра?", policy_session, knowledge_base
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.safe_context["force_direct_answer"] is True
+    message_to_user = result.safe_context["message_to_user"]
+    assert "цена сильно зависит от варианта" in message_to_user
+    assert "запис" in message_to_user.lower()
+    assert "Оставить телефон" in result.quick_actions
+    assert result.quick_actions.count("Оставить телефон") == 1
+
+
+def test_booking_bridge_not_added_without_booking_intent(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("сколько стоит эпиляция", policy_session, knowledge_base)
+
+    message_to_user = result.safe_context["message_to_user"]
+    assert "запис" not in message_to_user.lower()
 
 
 def test_new_question_after_booking_prompt_is_not_re_nagged(policy_session, knowledge_base) -> None:
@@ -2011,6 +2061,62 @@ def test_medical_keyword_gap_still_escalates_with_known_service_context(
         policy_session,
         knowledge_base,
         {"intent": "price_question", "service_id": "chistki_e744e513", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_buried_burning_and_weakness_complaint_escalates(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (2026-08-20), found live testing: жалоба ('лицо горит', 'слабость'),
+    спрятанная за бытовым вопросом про длительность процедуры, полностью игнорировалась
+    — MEDICAL_KEYWORDS (constants.py, реально используется is_restricted_question) не
+    содержал 'горит' ('жжет' — другой корень, не форма того же слова) и не содержал
+    'слабость' вообще. Тот же класс бага что test_medical_keyword_gap_still_escalates_
+    with_known_service_context, другие слова."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "подскажите сколько по времени длится биоревитализация, а то после чистки лицо "
+        "горит и есть небольшая слабость",
+        policy_session,
+        knowledge_base,
+        {"intent": "duration_question", "service_id": "biorevitalizaciya_9d426f68", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_buried_swelling_and_breathing_complaint_escalates(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (2026-08-20): распух/дышать/дыхание были добавлены в HARD_RESTRICTED_KEYWORDS
+    (__init__.py) 2026-08-19, но НЕ в MEDICAL_KEYWORDS (constants.py) — is_restricted_question()
+    (restricted.py), которая реально решает попадёт ли сообщение в medical_requested вообще,
+    читает именно MEDICAL_KEYWORDS. Утренний фикс закрыл только вторую (rescue-gate) дыру, не
+    первую (сам вход в medical-ветку) — при бытовой формулировке (жалоба не единственная тема
+    сообщения, интент классификатора не 'medical') сообщение всё ещё проходило мимо."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "подскажите сколько стоит биоревитализация, а то после укола лицо распухло и "
+        "тяжело дышать",
+        policy_session,
+        knowledge_base,
+        {"intent": "price_question", "service_id": "biorevitalizaciya_9d426f68", "confidence": 0.9},
     )
 
     assert result.action == PolicyAction.TRANSFER_OPERATOR

@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 MAX_DELIVERY_ATTEMPTS = 5
 BASE_BACKOFF_SECONDS = 60
 DELIVERY_TIMEOUT_SECONDS = 5.0
+# Сколько дней мёртвая доставка ещё считается активной проблемой для /health. Без этого
+# окна один-единственный протухший рекорд (например от давно нерабочего вебхука) держит
+# статус "degraded" вечно — реальный случай: дохлая запись от 2026-07-07 всё ещё красила
+# /health спустя месяц с лишним, хотя доставка давно работает нормально другим путём.
+DEAD_EVENT_HEALTH_WINDOW = timedelta(days=7)
 
 
 def _last_user_message_text(payload: dict[str, Any]) -> str:
@@ -268,15 +273,30 @@ class DeliveryService:
         }
 
     def outbox_health(self) -> dict[str, Any]:
-        """текущее состояние outbox для /health — без сети, только чтение файла на диске."""
+        """текущее состояние outbox для /health — без сети, только чтение файла на диске.
+
+        "dead" считается активной проблемой только внутри DEAD_EVENT_HEALTH_WINDOW — старые
+        мёртвые записи остаются в истории (see summary()) но не держат /health "degraded"
+        бесконечно.
+        """
 
         records = self._latest_records().values()
         pending = sum(1 for record in records if record.get("status") in {"pending", "failed"})
-        dead = sum(1 for record in records if record.get("status") == "dead")
+        cutoff = _utcnow() - DEAD_EVENT_HEALTH_WINDOW
+        dead_total = 0
+        dead_recent = 0
+        for record in records:
+            if record.get("status") != "dead":
+                continue
+            dead_total += 1
+            timestamp = _parse_datetime(record.get("timestamp"))
+            if timestamp is None or timestamp >= cutoff:
+                dead_recent += 1
         return {
-            "status": "degraded" if dead > 0 else "ok",
+            "status": "degraded" if dead_recent > 0 else "ok",
             "pending_events": pending,
-            "dead_events": dead,
+            "dead_events": dead_recent,
+            "dead_events_total": dead_total,
         }
 
     async def run_retry_loop(self, interval_seconds: int) -> None:

@@ -151,6 +151,24 @@ def test_openai_structured_classifier_uses_json_schema_response_format() -> None
     assert "domain_profile JSON" in client.last_payload["messages"][1]["content"]
 
 
+def test_structured_classifier_schema_marks_every_field_required() -> None:
+    """Живой репро §2026-08-22: Yandex отклоняет схему 400-й, если хоть одно поле не в
+    required (pydantic по умолчанию исключает оттуда всё с дефолтом — тут всё, кроме
+    intent/confidence). Проверено живым вызовом на реальном ключе отдельно; здесь —
+    что сама схема, которую мы реально отправляем, содержит все поля в required."""
+
+    client = _RecordingOpenAIClient({"intent": "price_question", "confidence": 0.5})
+
+    asyncio.run(
+        client.classify_structured("цена на эпиляцию", KNOWN_SERVICES, {"type": "generic_service"})
+    )
+
+    schema = client.last_payload["response_format"]["json_schema"]["schema"]
+    assert set(schema["required"]) == set(schema["properties"].keys())
+    assert "confidence" in schema["required"]
+    assert "risk" in schema["required"]
+
+
 def test_build_system_prompt_uses_question_type_block() -> None:
     price_prompt = build_system_prompt("price")
     faq_prompt = build_system_prompt("faq_question")

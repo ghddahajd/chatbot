@@ -409,12 +409,26 @@ class OpenAIClient(BaseLLMClient):
         )
 
     def _structured_classifier_response_format(self) -> dict[str, Any]:
+        # Живой репро (аудит §2026-08-22): Yandex Alice отклоняет этот response_format
+        # HTTP 400 ("all fields must be required, 'risk' is optional") — pydantic по
+        # умолчанию исключает из "required" любое поле с дефолтом (тут это всё, кроме
+        # intent/confidence). Существующий _post_chat_completions_with_schema_fallback уже
+        # ретраит без схемы на этот 400 — но в РЕТРАЕ (без схемы) Alice тоже не кладёт
+        # confidence (там нет дефолта), safe_normalize_intent_classification падает в None,
+        # и весь вызов уходит на отдельный, более слабый classify_and_extract — рабочий, но
+        # 2-3 LLM-вызова на сообщение вместо одного, каждый раз. Форсим все поля схемы в
+        # required (не трогая сам класс IntentClassification — дефолты там нужны нашему
+        # коду, только то, что уходит наружу) — проверено живым вызовом на реальном ключе:
+        # 200 вместо 400, confidence реально появляется в ответе. Остальным провайдерам
+        # (openai/gemini) более строгая схема не мешает — они её и так молча принимали.
+        schema = IntentClassification.model_json_schema()
+        schema["required"] = list(schema["properties"].keys())
         return {
             "type": "json_schema",
             "json_schema": {
                 "name": "intent_classification",
                 "strict": False,
-                "schema": IntentClassification.model_json_schema(),
+                "schema": schema,
             },
         }
 

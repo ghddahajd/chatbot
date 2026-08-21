@@ -6,7 +6,12 @@ services:
     container_name: chat-widget-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # 127.0.0.1, не 0.0.0.0 (аудит §2026-08-22): без этого docker публикует порт на всех
+      # интерфейсах хоста по умолчанию — обход nginx/TLS целиком (nginx у этого проекта
+      # нативный на хосте, не в докере, см. deploy/nginx.chat-widget.example.conf). Origin-
+      # проверка в widget.py это заголовок, который клиент сам присылает — curl её обходит
+      # тривиально, это не защита от прямого доступа к порту.
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
@@ -22,3 +27,25 @@ services:
       - ./widget:/app/widget
       - ./demo:/app/demo
       - ./client-input:/client-input:ro
+    # Дефолтный docker-логдрайвер json-file без лимита пишет access-log uvicorn на КАЖДЫЙ
+    # чат-запрос в stdout без ограничения — реальный риск забить диск на 50ГБ тарифе со
+    # временем (аудит §2026-08-22). max-size×max-file — общий потолок на инстанс, не на файл.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 2GB — половина от 4ГБ хоста (MSK 50), с запасом для ОС/докер-демона/будущих сервисов.
+    # Сам бэкенд лёгкий (FastAPI + RAG-индекс 1236 чанков + словари pymorphy2/natasha), но
+    # без потолка утечка памяти (например при переиндексации RAG на рестарте) уводит в OOM
+    # весь хост, а не только контейнер — можно поднять, если реально не хватит.
+    mem_limit: 2g
+    healthcheck:
+      # python, не curl — curl не установлен в образе (см. Dockerfile), тянуть его только
+      # ради healthcheck не хотелось. 200/207 (degraded, но отвечает) — здоров для докера,
+      # падает только на 503 (urlopen кидает HTTPError → ненулевой exit).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

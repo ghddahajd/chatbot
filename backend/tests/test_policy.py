@@ -2123,6 +2123,34 @@ def test_buried_swelling_and_breathing_complaint_escalates(
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_buried_pregnancy_long_form_escalates(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Аудит §2026-08-22: is_restricted_question() (restricted.py) — единственный первичный
+    триггер medical_requested — раньше читала только MEDICAL_KEYWORDS. Короткая форма
+    "беременна" там была, но полная "беременной"/"беременным" — другая лемма у pymorphy2, не
+    ловилось ни подстрокой, ни леммой. HARD_RESTRICTED_KEYWORDS ("беремен") уже покрывал это,
+    но использовался только как rescue-gate ПОСЛЕ входа в medical-ветку — не мог спасти
+    сообщение, которое туда не попало. Живой репро, не гипотеза: intent намеренно не
+    medical/regulated, чтобы проверить именно keyword-fallback, а не классификатор."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "подскажите сколько стоит биоревитализация, я беременной хожу, можно ли мне",
+        policy_session,
+        knowledge_base,
+        {"intent": "price_question", "service_id": "biorevitalizaciya_9d426f68", "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
 def test_safe_known_service_price_request_still_answers(
     policy_session,
     resolver,

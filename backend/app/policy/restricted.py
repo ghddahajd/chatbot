@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..knowledge import normalize_text
-from .constants import MEDICAL_KEYWORDS
+from .constants import HARD_RESTRICTED_KEYWORDS, MEDICAL_KEYWORDS
 from .extractors import contains_keyword, contains_keyword_lemma, lemmatize_tokens
 
 MEDICAL_RESTRICTED_CATEGORIES = {
@@ -77,9 +77,18 @@ def _medical_lemma_set() -> set[str]:
     # оставшаяся страховка. Раньше она матчила MEDICAL_KEYWORDS буквальной подстрокой ("опасно"
     # не матчило "опасен" — другая словоформа, не подстрока). Считаем леммы ключевых слов один
     # раз за процесс, не на каждое сообщение.
+    #
+    # С 2026-08-22 источник — объединение с HARD_RESTRICTED_KEYWORDS (аудит §2026-08-22): эта
+    # функция раньше видела только MEDICAL_KEYWORDS, хотя более широкий список уже существовал
+    # (использовался как rescue-gate в __init__.py, уже ПОСЛЕ того, как это решение принято).
+    # Живой репро: "я беременной делать можно?" не ловилось — короткая форма "беременна" (тут)
+    # и полная "беременной"/"беременным" — разные леммы у pymorphy2, а более широкий список не
+    # мог спасти, потому что до него дело не доходило.
     global _medical_single_word_lemmas
     if _medical_single_word_lemmas is None:
-        single_words = {keyword for keyword in MEDICAL_KEYWORDS if " " not in keyword}
+        single_words = {
+            keyword for keyword in (HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS) if " " not in keyword
+        }
         lemmas: set[str] = set()
         for word in single_words:
             lemmas.update(lemmatize_tokens(word))
@@ -102,7 +111,7 @@ def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str
 
     normalized_message = normalize_text(message)
     if _has_medical_restrictions(categories) and (
-        contains_keyword(normalized_message, MEDICAL_KEYWORDS)
+        contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS)
         or contains_keyword_lemma(normalized_message, _medical_lemma_set())
     ):
         return True, "medical"

@@ -113,11 +113,10 @@ class Settings(BaseSettings):
         return [item.strip() for item in self.allowed_origins.split(",") if item.strip()]
 
 
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    """возвращает закешированный экземпляр настроек."""
+def _apply_llm_provider_defaults(settings: Settings) -> Settings:
+    """выносит provider-specific композицию отдельно от Settings(), чтобы тестировать без
+    реального .env — конструируешь Settings(...) явными kwargs и гоняешь эту функцию."""
 
-    settings = Settings()
     if not settings.llm_api_key:
         if settings.llm_provider.lower() == "gemini" and settings.gemini_api_key:
             settings.llm_api_key = settings.gemini_api_key
@@ -139,10 +138,26 @@ def get_settings() -> Settings:
     # gpt://{folder_id}/{model}. Компонуем это тут же, как и gemini выше, а не в
     # build_llm_client — тот принимает только простые строки, не settings целиком.
     if settings.llm_provider.lower() == "yandex":
-        if settings.llm_base_url == "https://api.openai.com/v1":
+        # "in {"", default}", не "== default" — .env-шаблон (deploy/.env.production.example)
+        # оставляет LLM_BASE_URL/LLM_MODEL пустыми строками (LLM_BASE_URL=), не отсутствующими
+        # целиком. pydantic-settings это РАЗНЫЕ состояния: пустая строка — это "задано, но
+        # пусто", класс-дефолт при этом не подставляется вообще, "== default" тут просто не
+        # сработает никогда при копировании шаблона как есть.
+        if settings.llm_base_url in {"", "https://api.openai.com/v1"}:
             settings.llm_base_url = "https://ai.api.cloud.yandex.net/v1"
         if settings.yandex_folder_id and not settings.llm_model.startswith("gpt://"):
-            model_name = "aliceai-llm-flash/latest" if settings.llm_model == "gpt-4o-mini" else settings.llm_model
+            model_name = (
+                "aliceai-llm-flash/latest"
+                if settings.llm_model in {"", "gpt-4o-mini"}
+                else settings.llm_model
+            )
             settings.llm_model = f"gpt://{settings.yandex_folder_id}/{model_name}"
 
     return settings
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """возвращает закешированный экземпляр настроек."""
+
+    return _apply_llm_provider_defaults(Settings())

@@ -40,4 +40,21 @@ else
   echo "docker-entrypoint: CLIENT_DATA_DEPLOY_KEY not set, skipping client data pull (local dev?)."
 fi
 
-exec "$@"
+# Non-root от сюда и дальше (аудит §2026-08-22) — всё выше (git clone, mkdir/cp в /app/data)
+# нарочно ходит от root, потому что права смонтированных ./backend/data и ./backend/logs
+# зависят от хоста (локально — мой UID, на проде — кто там разворачивает докер), заранее
+# не угадать. chown каждый раз подстраивается под реальные права конкретного запуска, а не
+# захардкожен на билде.
+#
+# Не su — в этом минимальном образе su от root к обычному юзеру просит пароль (PAM,
+# не связано с аргументами, проверено отдельно — su -c путал ИЛИ ругался "Authentication
+# failure" в зависимости от порядка аргументов, ни один вариант не завёлся). python3 —
+# он уже в образе, os.setuid/setgid — сырой syscall, PAM вообще не участвует.
+chown -R appuser:appuser /app/data /app/logs
+exec python3 -c '
+import os, pwd, sys
+user = pwd.getpwnam("appuser")
+os.setgid(user.pw_gid)
+os.setuid(user.pw_uid)
+os.execvp(sys.argv[1], sys.argv[1:])
+' "$@"

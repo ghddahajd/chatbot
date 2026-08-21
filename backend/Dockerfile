@@ -5,6 +5,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Не USER тут — entrypoint должен стартовать от root (git clone клиентских данных для прода,
+# chown смонтированных томов под реальные права хоста), non-root включается уже внутри
+# docker-entrypoint.sh перед запуском самого uvicorn, см. там.
+RUN useradd --create-home --uid 1000 --shell /bin/sh appuser
+
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

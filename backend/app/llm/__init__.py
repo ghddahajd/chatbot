@@ -36,11 +36,14 @@ def build_llm_client(
     if normalized_provider == "mock" or not api_key:
         return MockLLMClient()
 
-    if normalized_provider in {"openai", "gemini", "openai_compatible"}:
+    if normalized_provider in {"openai", "gemini", "openai_compatible", "yandex"}:
         return OpenAIClient(
             api_key=api_key,
             model=model,
             base_url=base_url,
+            # disable_thinking — костыль под chat_template_kwargs для локальных thinking-моделей
+            # (Ollama/qwen), не под реальные хостед-провайдеры типа Yandex — им это не нужно и
+            # может сломать запрос лишним полем.
             disable_thinking=normalized_provider == "openai_compatible",
         )
 

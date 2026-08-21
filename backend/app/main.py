@@ -17,6 +17,7 @@ from .delivery import DeliveryService
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService, archive_old_leads
 from .llm import build_llm_client, get_system_prompt
+from .llm.mock import MockLLMClient
 from .policy import analyze_message
 from .rate_limit import RateLimiter
 from .services.rag_search import rag_corpus_status
@@ -268,7 +269,13 @@ async def healthcheck() -> JSONResponse:
         rag_status, rag_detail = "unavailable", str(corpus_status.get("error") or "not loaded")
     checks["rag_index"] = {"status": rag_status, "chunks_loaded": chunk_count, "detail": rag_detail}
 
-    is_mock_llm = settings.llm_provider == "mock"
+    # Живой репро (аудит §2026-08-22): раньше сравнивали settings.llm_provider == "mock" —
+    # строку конфига, не то, что реально построил build_llm_client(). Незнакомый provider
+    # (опечатка, неподдержанное значение) или падение каждого реального вызова в fallback
+    # молча уходили в MockLLMClient, а health показывал "ok" — единственный признак был бы
+    # шаблонные ответы в живых диалогах. Проверяем реальный класс объекта, не конфиг.
+    llm_client = getattr(app.state, "llm_client", None)
+    is_mock_llm = isinstance(llm_client, MockLLMClient)
     checks["llm_provider"] = {
         "status": "degraded" if is_mock_llm else "ok",
         "provider": settings.llm_provider,

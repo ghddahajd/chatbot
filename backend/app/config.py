@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     llm_skip_classifier_for_local: Optional[bool] = None
     openai_api_key: str = ""
     gemini_api_key: str = ""
+    yandex_api_key: str = ""
+    yandex_folder_id: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_operators_group_id: str = ""
@@ -119,6 +121,8 @@ def get_settings() -> Settings:
     if not settings.llm_api_key:
         if settings.llm_provider.lower() == "gemini" and settings.gemini_api_key:
             settings.llm_api_key = settings.gemini_api_key
+        elif settings.llm_provider.lower() == "yandex" and settings.yandex_api_key:
+            settings.llm_api_key = settings.yandex_api_key
         elif settings.openai_api_key:
             settings.llm_api_key = settings.openai_api_key
 
@@ -126,5 +130,19 @@ def get_settings() -> Settings:
         settings.llm_base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
         if settings.llm_model == "gpt-4o-mini":
             settings.llm_model = "gemini-3.5-flash"
+
+    # Живой репро (аудит §2026-08-22): "прямой доступ настроен" в памяти проекта означало
+    # "ключ рабочий", не "этот код умеет им пользоваться" — LLM_PROVIDER=yandex раньше молча
+    # падал на MockLLMClient() (build_llm_client не знал такого провайдера), и /health этого
+    # не видел (сравнивал строку конфига, не реальный класс клиента). Проверено живым вызовом
+    # на реальном ключе: Yandex отдаёт классический chat/completions по адресу ниже, модель —
+    # gpt://{folder_id}/{model}. Компонуем это тут же, как и gemini выше, а не в
+    # build_llm_client — тот принимает только простые строки, не settings целиком.
+    if settings.llm_provider.lower() == "yandex":
+        if settings.llm_base_url == "https://api.openai.com/v1":
+            settings.llm_base_url = "https://ai.api.cloud.yandex.net/v1"
+        if settings.yandex_folder_id and not settings.llm_model.startswith("gpt://"):
+            model_name = "aliceai-llm-flash/latest" if settings.llm_model == "gpt-4o-mini" else settings.llm_model
+            settings.llm_model = f"gpt://{settings.yandex_folder_id}/{model_name}"
 
     return settings

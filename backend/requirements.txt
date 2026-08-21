@@ -1,15 +1,30 @@
-fastapi==0.116.1
+# fastapi/starlette/python-multipart bumped 2026-08-22 (аудит §2026-08-22, pip-audit нашёл
+# 16 CVE между тремя пакетами) — starlette не тянется автоматом свежей версией транзитивно
+# через fastapi (pip не апгрейдит то, что уже удовлетворяет constraint), закреплён отдельно.
+# 537/537 тестов зелёные после бампа, живой прогон через докер тоже не сломался.
+fastapi==0.141.1
+starlette==1.6.0
 uvicorn[standard]==0.35.0
 pydantic==2.11.7
 pydantic-settings==2.10.1
 PyYAML==6.0.2
 httpx==0.28.1
 jinja2==3.1.6
-python-multipart==0.0.20
+python-multipart==0.0.32
 rapidfuzz==3.13.0
 rich==15.0.0
 questionary==2.1.1
 # офлайн NER для русского (извлечение имени человека в extractors.py) — pymorphy2 (зависимость
-# natasha) требует pkg_resources, который setuptools>=81 больше не поставляет.
+# natasha) требует pkg_resources для iter_entry_points (реальный поиск установленного словаря,
+# не косметика — без него анализатор не найдёт русский словарь вообще), который setuptools>=81
+# больше не поставляет. Пробовал: pkg_resources ничем не заглушить (нужен настоящий
+# WorkingSet), а pymorphy3 (форк без этой проблемы) не подходит — natasha жёстко требует именно
+# pymorphy2, замена всего NLP-стека, не однострочный фикс.
+#
+# Оставшаяся CVE (PYSEC-2026-3447, аудит §2026-08-22) — прочитал описание, не только номер: она
+# про `python -m build --sdist`/`setup.py sdist` на macOS APFS/HFS+ (Unicode-нормализация имён
+# файлов в MANIFEST.in). Мы ничего не собираем и не публикуем как sdist, setuptools тут только
+# транзитивная рантайм-зависимость pymorphy2 — модель угрозы этой CVE к нашему использованию
+# просто не применима. Пин осознанный, не забытый.
 setuptools<81
 natasha==1.6.0

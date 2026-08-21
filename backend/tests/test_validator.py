@@ -82,6 +82,33 @@ def test_article_guidance_validator_blocks_recommendation_language() -> None:
     )
 
 
+def test_article_guidance_validator_allows_disclosed_service_name_matching_equipment_pattern() -> None:
+    """Живой репро (аудит §2026-08-22, поймано на Alice, но баг не модели): UNSUPPORTED_
+    EQUIPMENT_PATTERNS — общий для всех клиентов список брендов ("bbl" среди них), написан не
+    под конкретных клиентов. У rosh_import_demo реальная, раскрытая услуга «Фотолечение BBL» —
+    любой ответ, который называет её по имени, раньше валился, независимо от того, кто его
+    сгенерировал. Название услуги передаётся в service_names — должно быть освобождено от
+    проверки, а не только от per-клиентского undisclosed_equipment_terms."""
+
+    context = {
+        "article_guidance_candidate": {
+            "excerpt": "Повышенная активность сальных желез приводит к жирному блеску и расширенным порам.",
+            "service_names": "Чистки, Фотолечение BBL, Консультации, Пилинги",
+        }
+    }
+
+    assert validate_article_guidance_response(
+        "При повышенной активности сальных желёз могут помочь чистки, фотолечение BBL, "
+        "консультации или пилинги. Точный подбор процедуры подтвердит специалист на консультации.",
+        context,
+    )
+    # но настоящую утечку (бренд НЕ входит в разрешённые названия) по-прежнему ловим
+    assert not validate_article_guidance_response(
+        "Рекомендую пройти чистку на аппарате Candela GentleLase, это поможет.",
+        context,
+    )
+
+
 def test_faq_validator_allows_non_price_numbers_grounded_in_article_context() -> None:
     context = {
         "question_type": "faq_question",

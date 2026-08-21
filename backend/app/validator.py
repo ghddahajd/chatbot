@@ -79,7 +79,6 @@ ARTICLE_GUIDANCE_FORBIDDEN_PATTERNS = (
         r"избавит|вылечит)",
         re.IGNORECASE,
     ),
-    *UNSUPPORTED_EQUIPMENT_PATTERNS,
     *UNSUPPORTED_EFFICACY_CLAIM_PATTERNS,
 )
 FAQ_ALLOWED_WORDS = {
@@ -131,6 +130,52 @@ def _brand_like_tokens(text: str) -> set[str]:
             if cleaned[0].isupper() and not cleaned.isupper():
                 tokens.add(cleaned.lower().replace("ё", "е"))
     return tokens
+
+
+def _known_service_names(context: dict[str, Any]) -> set[str]:
+    """Собирает названия услуг, которые модели прямо разрешили упоминать в этом ответе —
+    единственный, service, suggested_services, all_services, service_names из
+    article_guidance_candidate (там это строка через запятую, не список)."""
+
+    names: set[str] = set()
+
+    service = context.get("service")
+    if isinstance(service, dict) and service.get("name"):
+        names.add(str(service["name"]))
+
+    for key in ("suggested_services", "all_services"):
+        items = context.get(key)
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("name"):
+                    names.add(str(item["name"]))
+
+    guidance = context.get("article_guidance_candidate")
+    if isinstance(guidance, dict):
+        service_names = str(guidance.get("service_names") or "")
+        names.update(name.strip() for name in service_names.split(",") if name.strip())
+
+    return names
+
+
+def _unsupported_equipment_leak(answer: str, context: dict[str, Any]) -> bool:
+    """UNSUPPORTED_EQUIPMENT_PATTERNS — общий для всех клиентов список брендов оборудования,
+    написан не под конкретных клиентов (см. _undisclosed_equipment_pattern выше). Живой репро
+    (аудит §2026-08-22): у rosh_import_demo есть реальная, раскрытая услуга «Фотолечение BBL»
+    (fotolechenie_bbl_85e80491, нигде не помечена disclose: false) — голое "bbl" в общем списке
+    валило ЛЮБОЙ корректный ответ, который называет эту услугу по имени, независимо от модели
+    (проверено на Alice трижды одним и тем же кейсом). Маскируем уже известные, разрешённые
+    названия услуг из контекста перед проверкой общего списка — если модель упомянула что-то ещё,
+    не входящее в разрешённые названия, это по-прежнему ловится."""
+
+    masked_answer = answer
+    for name in sorted(_known_service_names(context), key=len, reverse=True):
+        masked_answer = re.sub(re.escape(name), "", masked_answer, flags=re.IGNORECASE)
+
+    if any(pattern.search(masked_answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
+        return True
+    undisclosed_pattern = _undisclosed_equipment_pattern(context)
+    return bool(undisclosed_pattern and undisclosed_pattern.search(answer))
 
 
 def _undisclosed_equipment_pattern(context: dict[str, Any]) -> re.Pattern[str] | None:
@@ -242,10 +287,7 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
         ungrounded_brand_words = _brand_like_tokens(answer) - _brand_like_tokens(snippets_text) - brand_safe_words
         if ungrounded_brand_words:
             return False
-        if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
-            return False
-        undisclosed_pattern = _undisclosed_equipment_pattern(context)
-        if undisclosed_pattern and undisclosed_pattern.search(answer):
+        if _unsupported_equipment_leak(answer, context):
             return False
 
     # research.md #6 (третий аудит): раньше проверка на гарантийные фразы (323-ФЗ/ст.24 ФЗ "О
@@ -285,10 +327,7 @@ def validate_consultation_response(answer: str, context: dict[str, Any] | None =
         return False
     if any(pattern.search(answer) for pattern in CONSULTATION_FORBIDDEN_PATTERNS):
         return False
-    if any(pattern.search(answer) for pattern in UNSUPPORTED_EQUIPMENT_PATTERNS):
-        return False
-    undisclosed_pattern = _undisclosed_equipment_pattern(context or {})
-    if undisclosed_pattern and undisclosed_pattern.search(answer):
+    if _unsupported_equipment_leak(answer, context or {}):
         return False
     if _context_has_medical_restrictions(context):
         return not any(pattern.search(answer) for pattern in MEDICAL_CONSULTATION_FORBIDDEN_PATTERNS)
@@ -304,8 +343,7 @@ def validate_article_guidance_response(answer: str, context: dict[str, Any] | No
         return False
     if context is None:
         return False
-    undisclosed_pattern = _undisclosed_equipment_pattern(context)
-    if undisclosed_pattern and undisclosed_pattern.search(answer):
+    if _unsupported_equipment_leak(answer, context):
         return False
 
     guidance = context.get("article_guidance_candidate")

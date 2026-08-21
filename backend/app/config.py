@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     leads_retention_days: int = 90
     leads_archive_interval_seconds: int = 86400
     leads_archive_enabled: bool = True
+    # analytics.jsonl пишет message_answered на КАЖДЫЙ ход диалога (см. track_answer в
+    # analytics.py) — в отличие от leads это чистый debug-хвост без структурного PII,
+    # поэтому старые записи не архивируем, а удаляем, сохранив только дневные счётчики
+    # (без текста) в analytics_rollup_file. unknown_question/regulated_handoff/
+    # operator_requested эта чистка не трогает — там сырой текст даёт длительную ценность
+    # (пробелы в базе знаний, аудит эскалаций), их retention не нужен.
+    analytics_message_retention_days: int = 60
+    analytics_prune_interval_seconds: int = 86400
+    analytics_prune_enabled: bool = True
     chat_rate_limit_enabled: bool = True
     chat_rate_limit_per_minute: int = 30
     # Сколько доверенных обратных прокси стоит перед приложением (Render = минимум 1).
@@ -86,6 +95,9 @@ class Settings(BaseSettings):
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
     leads_archive_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads_archive.jsonl")
     analytics_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "analytics.jsonl")
+    analytics_rollup_file: Path = Field(
+        default_factory=lambda: BASE_DIR / "logs" / "analytics_daily_rollup.jsonl"
+    )
     delivery_outbox_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "delivery_outbox.jsonl")
     telegram_bridge_failures_file: Path = Field(
         default_factory=lambda: BASE_DIR / "logs" / "telegram_bridge_failures.jsonl"

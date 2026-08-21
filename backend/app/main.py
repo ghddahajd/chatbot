@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .analytics import AnalyticsService
+from .analytics import AnalyticsService, archive_old_analytics_events
 from .config import get_settings
 from .delivery import DeliveryService
 from .knowledge import KnowledgeBaseResolver
@@ -63,6 +63,23 @@ async def _run_leads_archive_loop(
             raise
         except Exception as error:
             logger.warning("leads archive loop error=%s", type(error).__name__)
+
+
+async def _run_analytics_prune_loop(
+    analytics_file: Path,
+    rollup_file: Path,
+    *,
+    retention_days: int,
+    interval_seconds: int,
+) -> None:
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await asyncio.to_thread(archive_old_analytics_events, analytics_file, rollup_file, retention_days)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning("analytics prune loop error=%s", type(error).__name__)
 
 
 @asynccontextmanager
@@ -159,6 +176,16 @@ async def lifespan(app: FastAPI):
                 interval_seconds=settings.leads_archive_interval_seconds,
             )
         )
+    analytics_prune_task = None
+    if settings.analytics_prune_enabled:
+        analytics_prune_task = asyncio.create_task(
+            _run_analytics_prune_loop(
+                settings.analytics_file,
+                settings.analytics_rollup_file,
+                retention_days=settings.analytics_message_retention_days,
+                interval_seconds=settings.analytics_prune_interval_seconds,
+            )
+        )
 
     try:
         yield
@@ -179,6 +206,10 @@ async def lifespan(app: FastAPI):
             leads_archive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await leads_archive_task
+        if analytics_prune_task is not None:
+            analytics_prune_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await analytics_prune_task
         if snapshot_file is not None:
             await app.state.session_store.snapshot_to(snapshot_file, ttl_seconds=settings.session_ttl_seconds)
 

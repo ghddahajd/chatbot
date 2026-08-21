@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,11 +14,19 @@ from .models import PolicyAction, PolicyReason, PolicyResult, Session
 from .utils.jsonl import read_jsonl
 
 
+logger = logging.getLogger(__name__)
+
+
 UNKNOWN_REASONS = {
     PolicyReason.UNKNOWN_SERVICE,
     PolicyReason.PRICE_QUESTION_NO_SERVICE,
     PolicyReason.SIMILAR_SERVICES_FOUND,
 }
+# message_answered пишется на КАЖДЫЙ ход (track_answer) и не имеет ценности после
+# отладочного окна — единственный event_type, который archive_old_analytics_events
+# сворачивает в счётчики и удаляет. Остальные типы (unknown_question/regulated_handoff/
+# operator_requested/...) хранятся без ограничения — там сырой текст полезен и спустя месяцы.
+MESSAGE_RETENTION_EVENT_TYPES = {"message_answered"}
 
 
 class AnalyticsService:
@@ -177,3 +187,71 @@ class AnalyticsService:
             },
             "unanswered": unanswered,
         }
+
+
+def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retention_days: int) -> int:
+    """удаляет записи MESSAGE_RETENTION_EVENT_TYPES старше retention_days из analytics_file,
+    сохранив дневные счётчики (дата, company_id, action — без текста) в rollup_file.
+
+    Остальные event_type не трогает — они остаются в analytics_file без ограничения.
+    Возвращает количество удалённых записей. Ничего не делает (не трогает диск), если
+    удалять нечего — обычный случай при ежедневном запуске.
+    """
+
+    entries = read_jsonl(analytics_file)
+    if not entries:
+        return 0
+
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    keep: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry.get("event_type") not in MESSAGE_RETENTION_EVENT_TYPES:
+            keep.append(entry)
+            continue
+        try:
+            timestamp = datetime.fromisoformat(str(entry.get("timestamp")))
+        except (TypeError, ValueError):
+            keep.append(entry)
+            continue
+        (stale if timestamp < cutoff else keep).append(entry)
+
+    if not stale:
+        return 0
+
+    rollup_counts: dict[tuple[str, str, str], int] = defaultdict(int)
+    for entry in stale:
+        day = str(entry.get("timestamp") or "")[:10] or "unknown"
+        company_id = str(entry.get("company_id") or "unknown")
+        action = str((entry.get("metadata") or {}).get("action") or "unknown")
+        rollup_counts[(day, company_id, action)] += 1
+
+    rollup_file.parent.mkdir(parents=True, exist_ok=True)
+    with rollup_file.open("a", encoding="utf-8") as handle:
+        for (day, company_id, action), count in sorted(rollup_counts.items()):
+            handle.write(
+                _dump_jsonl_line(
+                    {"date": day, "company_id": company_id, "action": action, "count": count}
+                )
+            )
+
+    # атомарная перезапись "горячего" файла — временный файл + rename, чтобы конкурентный
+    # append (новое сообщение пришло ровно во время чистки) не попал под усечение.
+    tmp_path = analytics_file.with_suffix(analytics_file.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        for entry in keep:
+            handle.write(_dump_jsonl_line(entry))
+    os.replace(tmp_path, analytics_file)
+
+    logger.info(
+        "analytics prune: removed %d of %d message_answered entries older than %d days (analytics_file=%s)",
+        len(stale),
+        len(entries),
+        retention_days,
+        analytics_file,
+    )
+    return len(stale)
+
+
+def _dump_jsonl_line(entry: dict[str, Any]) -> str:
+    return json.dumps(entry, ensure_ascii=False) + "\n"

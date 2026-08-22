@@ -8,7 +8,7 @@ from typing import Optional
 
 from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phrasebook_value_to_text
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
-from ..services.rag_search import retrieve_article_context
+from ..services.rag_search import STOP_WORDS, retrieve_article_context
 from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
@@ -359,12 +359,35 @@ def _cosmetic_article_guidance_result(
     return None
 
 
+# Живой баг (аудит §2026-08-22, F-03): "у меня реакция после вашей процедуры помогите"
+# пересеклось со статьёй "Процедуры после 30" сразу по 3 токенам ≥4 символов — "после",
+# "процедуры", "вашей" (снипет статьи буквально содержит "для вашей кожи... Процедура
+# BBL... после 30") — ни один из них не говорит о теме сообщения, это общеупотребимые
+# слова, которые почти гарантированно есть в любой статье клиники. Порог "2+" прошёл на
+# пустом месте. STOP_WORDS переиспользуем из rag_search (уже курирован для того же класса
+# багов — там уже "после"/местоимения); "процедур*" фильтруем отдельно через
+# _token_prefix_match — этот корень уже один раз ловился как источник ложных совпадений
+# именно в этой функции (см. коммент на месте вызова в medical_requested-ветке), а сам он
+# слишком общий для клиники эстетической медицины, чтобы быть предметным сигналом.
+_WEAK_OVERLAP_STEM = "процедура"
+
+
+def _significant_overlap_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in normalize_text(text).split()
+        if len(token) >= 4
+        and token not in STOP_WORDS
+        and not _token_prefix_match(token, _WEAK_OVERLAP_STEM)
+    }
+
+
 def _has_strong_article_overlap(normalized_message: str, guidance_result: PolicyResult) -> bool:
-    """Отсекает случайные однословные RAG-совпадения (например "руки" в статье про
-    уход после 30, где это просто одна из зон тела, а не то, о чём спросил пользователь) —
-    для мягкого off-topic редиректа нужно 2+ значимых пересечения, не одно случайное слово.
-    Куратированный trigger_phrase-матч (человек уже подтвердил фразу) считается достаточным
-    сам по себе."""
+    """Отсекает случайные RAG-совпадения по общеупотребимым словам (например "руки" в
+    статье про уход после 30, где это просто одна из зон тела, а не то, о чём спросил
+    пользователь) — для мягкого off-topic редиректа нужно 2+ значимых пересечения, не
+    одно/два случайных общих слова. Куратированный trigger_phrase-матч (человек уже
+    подтвердил фразу) считается достаточным сам по себе."""
 
     mapping = guidance_result.safe_context.get("article_service_mapping")
     if isinstance(mapping, dict) and str(mapping.get("matched_phrase") or "").strip():
@@ -374,12 +397,12 @@ def _has_strong_article_overlap(normalized_message: str, guidance_result: Policy
     if not isinstance(article_context, list) or not article_context:
         return False
 
-    message_tokens = {token for token in normalized_message.split() if len(token) >= 4}
+    message_tokens = _significant_overlap_tokens(normalized_message)
     for item in article_context:
         if not isinstance(item, dict):
             continue
         text = f"{item.get('title') or ''} {item.get('snippet') or ''}"
-        text_tokens = {token for token in normalize_text(text).split() if len(token) >= 4}
+        text_tokens = _significant_overlap_tokens(text)
         if len(message_tokens & text_tokens) >= 2:
             return True
     return False

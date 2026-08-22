@@ -1336,6 +1336,16 @@ def test_fuzzy_greeting_does_not_match_unrelated_words(knowledge_base) -> None:
         assert classification["intent"] != "small_talk"
 
 
+def test_formal_greeting_zdravstvuyte_is_small_talk(policy_session, knowledge_base) -> None:
+    """Живой репро (аудит §2026-08-22): "здравствуйте" одна не ловилась — только "здравствуй"
+    было в списке, а edit-distance между ними (2, не 1) мимо fuzzy_contains допуска."""
+
+    result = _analyze("здравствуйте", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.SMALL_TALK
+    assert result.reason == PolicyReason.SMALL_TALK
+
+
 def test_fuzzy_price_and_short_service_typo(policy_session, knowledge_base) -> None:
     result = _analyze("сколко стоит чиска", policy_session, knowledge_base)
 
@@ -1635,6 +1645,31 @@ def test_bot_identity_question_recognizes_realnyy_not_just_bot_word(
     assert result.safe_context.get("general_cancelled") is not True
     message = str(result.safe_context.get("message_to_user") or "")
     assert "ничего пока не делаем" not in message.lower()
+
+
+def test_bot_identity_recognizes_botik_diminutive() -> None:
+    """Живой репро (аудит §2026-08-22): "ботик ты или живой чел" не матчилось — "бот" (3
+    символа) в contains_keyword требует ТОЧНОГО токена, "ботик" другой токен целиком.
+    _bot_identity_classification напрямую — это отдельный, более высокий слой
+    (chat_utils.resolve_classification), не classify_and_extract (там нет такого intent
+    вообще, оттуда и был провал первой версии этого теста — не тот слой тестировал)."""
+
+    from app.routes.chat_utils import _bot_identity_classification
+
+    result = _bot_identity_classification("ботик ты или живой чел")
+
+    assert result is not None
+    assert result["intent"] == "bot_identity"
+
+
+def test_bot_identity_botik_fix_does_not_misfire_on_botox() -> None:
+    """Проверено явно, не предположено: расширять до префикса "бот*" вместо точечного
+    добавления "ботик" поймало бы "ботокс" — реальную услугу этой клиники."""
+
+    from app.routes.chat_utils import _bot_identity_classification
+
+    assert _bot_identity_classification("сколько стоит ботокс") is None
+    assert _bot_identity_classification("а ботокс у вас есть?") is None
 
 
 def test_general_cancelled_does_not_trigger_on_rhetorical_ili_net(

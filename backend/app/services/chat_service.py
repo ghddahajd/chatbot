@@ -1193,11 +1193,28 @@ class ChatService:
                     quick_actions=[],
                 )
 
+            # Живой баг (аудит §2026-08-22): раньше тут был безусловный answer="" на ЛЮБОЕ
+            # сообщение, кроме контактных данных — включая жалобы/угрозы отзывом от уже
+            # разозлённого клиента. waiting_policy_result уже посчитан выше (полный pipeline,
+            # тот же COMPLAINT_ESCALATION_KEYWORDS-гейт, что и в AI_ACTIVE) — различаем жалобу
+            # от остального, не просто перестаём молчать одним и тем же текстом на всё.
+            if waiting_policy_result.reason == PolicyReason.COMPLAINT:
+                waiting_answer = self._phrase(
+                    "waiting_operator_complaint_ack",
+                    "Понимаю, ситуация неприятная. Ваше сообщение видит администратор вместе "
+                    "со всей историей переписки — он ответит вам в ближайшее время.",
+                )
+            else:
+                waiting_answer = self._phrase(
+                    "waiting_operator_ack",
+                    "Ваше сообщение получено. Администратор уже подключается к диалогу и скоро ответит.",
+                )
+            await session_store.append_message(session.session_id, MessageRole.ASSISTANT, waiting_answer)
             return ChatMessageResponse(
                 session_id=session.session_id,
                 status=session.status,
                 action=PolicyAction.REJECT,
-                answer="",
+                answer=waiting_answer,
                 lead_created=False,
                 quick_actions=[],
             )

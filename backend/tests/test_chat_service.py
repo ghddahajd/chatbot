@@ -1003,6 +1003,59 @@ def test_operator_second_request_transfers_after_soft_offer(test_client) -> None
     assert second_payload["status"] == "WAITING_OPERATOR"
 
 
+def test_waiting_operator_generic_followup_gets_acknowledgment_not_silence(test_client) -> None:
+    """Живой репро (аудит §2026-08-22): раньше ЛЮБОЕ сообщение в WAITING_OPERATOR, кроме
+    контактных данных, получало answer="" — буквальную тишину."""
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+
+    followup = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "а где вы находитесь?"},
+    ).json()
+
+    assert followup["answer"] != ""
+    assert "администратор" in followup["answer"].lower()
+
+
+def test_waiting_operator_complaint_followup_gets_distinct_acknowledgment(test_client) -> None:
+    """Та же тишина, но конкретно на жалобу/угрозу отзывом — самый плохой случай молчать
+    именно тут (уже разозлённый клиент). Текст должен отличаться от обычного follow-up,
+    не просто "не пустая строка" — подтверждает, что differentiate реально сработал."""
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+
+    complaint_followup = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "верните деньги, обращусь в Роспотребнадзор",
+        },
+    ).json()
+    generic_followup = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "а вы сегодня работаете?"},
+    ).json()
+
+    assert complaint_followup["answer"] != ""
+    assert complaint_followup["answer"] != generic_followup["answer"]
+
+
 def test_pending_contact_accepts_messy_phone_and_name(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",

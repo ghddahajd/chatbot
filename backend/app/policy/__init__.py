@@ -32,7 +32,11 @@ from .constants import (
     LAB_TEST_KEYWORDS,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
-    BENIGN_MEDICAL_KEYWORDS,
+    ACUTE_ALLERGY_KEYWORDS,
+    ACUTE_BLEEDING_KEYWORDS,
+    ACUTE_DETERIORATION_KEYWORDS,
+    PAIN_INTENSITY_KEYWORDS,
+    PAIN_WORDS,
     MEDICAL_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
@@ -1713,22 +1717,10 @@ def _has_hard_restricted_signal(normalized_message: str) -> bool:
     return contains_keyword_lemma(normalized_message, _hard_restricted_lemma_set())
 
 
-def _single_word_lemma_set(keywords: set[str]) -> set[str]:
-    lemmas: set[str] = set()
-    for word in keywords:
-        if " " not in word:
-            lemmas.update(lemmatize_tokens(word))
-    return lemmas
-
-
-_benign_medical_lemmas: set[str] | None = None
-_non_benign_medical_lemmas: set[str] | None = None
-
-
 def escalation_urgency_for(message: str) -> str:
     """calm/urgent для regulated_soft_offer — единая точка расчёта срочности.
 
-    Живой баг (аудит §2026-08-22, "скорая 103" систематически): раньше это считалось
+    Живой баг (аудит §2026-08-22, "скорая 103" систематически, Топ-1): раньше это считалось
     инлайном только в _medical_referral_result (keyword-путь), а LLM-риск-путь в
     chat_service.py вызывал _regulated_soft_offer_response() вообще без urgent=,
     молча получая дефолт True — "скорая" на ЛЮБОЕ сообщение, попавшее именно в этот
@@ -1736,27 +1728,29 @@ def escalation_urgency_for(message: str) -> str:
     вызывающих пути не могли разойтись снова тем же образом.
     """
 
-    return "calm" if _is_benign_medical_signal(normalize_text(message)) else "urgent"
+    return "urgent" if _has_acute_danger_signal(normalize_text(message)) else "calm"
 
 
-def _is_benign_medical_signal(normalized_message: str) -> bool:
-    # Живой баг (2026-08-10): "а они опасные?" (про пилинги, уже названные в разговоре)
-    # получало "urgent" тон со "скорая (103)" вместо спокойного — "опасные" не подстрока
-    # "опасно" в BENIGN_MEDICAL_KEYWORDS, ровно тот же класс бага, что чинили сегодня для
-    # эскалации/распознавания бота, просто фикс тогда не докатился до смягчения тона.
-    global _benign_medical_lemmas, _non_benign_medical_lemmas
-    if _benign_medical_lemmas is None:
-        _benign_medical_lemmas = _single_word_lemma_set(BENIGN_MEDICAL_KEYWORDS)
-    if _non_benign_medical_lemmas is None:
-        _non_benign_medical_lemmas = _single_word_lemma_set(MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS)
+def _has_acute_danger_signal(normalized_message: str) -> bool:
+    """Раздел 5 скрипта резервирует "скорую" буквально для 4 категорий — сильная боль,
+    кровотечение, аллергическая реакция, резкое ухудшение. Второй слой того же Топ-1
+    (после фикса межходовой утечки): прежняя _is_benign_medical_signal требовала явного
+    "смягчающего" слова, чтобы НЕ дать urgent — а MEDICAL_KEYWORDS широкий (там и "родинка",
+    и "рецепт"), так что почти любое мед-окрашенное сообщение дефолтилось в urgent без
+    единого признака реальной срочности: живые репро — голый ценовой вопрос "сколько стоит
+    удаление родинки" и даже шутка "а вы умеете готовить рецепты? лол" ("рецепт" совпал с
+    мед.термином) получали "скорая (103)". Теперь наоборот: urgent требует явного сигнала
+    ИЗ ЭТИХ 4 категорий, а не "не доказано, что безобидно"."""
 
-    is_benign = contains_keyword(normalized_message, BENIGN_MEDICAL_KEYWORDS) or contains_keyword_lemma(
-        normalized_message, _benign_medical_lemmas
+    if contains_keyword(normalized_message, ACUTE_BLEEDING_KEYWORDS):
+        return True
+    if contains_keyword(normalized_message, ACUTE_ALLERGY_KEYWORDS):
+        return True
+    if contains_keyword(normalized_message, ACUTE_DETERIORATION_KEYWORDS):
+        return True
+    return contains_keyword(normalized_message, PAIN_INTENSITY_KEYWORDS) and contains_keyword(
+        normalized_message, PAIN_WORDS
     )
-    has_other_medical_signal = contains_keyword(
-        normalized_message, MEDICAL_KEYWORDS - BENIGN_MEDICAL_KEYWORDS
-    ) or contains_keyword_lemma(normalized_message, _non_benign_medical_lemmas)
-    return is_benign and not has_other_medical_signal
 
 
 _NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}

@@ -602,7 +602,10 @@ def test_regulated_question_soft_offers_without_operator_event(test_client, monk
     assert response.status_code == 200
     assert payload["action"] == "clarify"
     assert payload["status"] == "AI_ACTIVE"
-    assert "103" in payload["answer"]
+    # Топ-1, второй слой (аудит §2026-08-22): "воспаление" само по себе не входит в 4
+    # острые категории раздела 5 (сильная боль/кровотечение/аллергия/резкое ухудшение) —
+    # calm-тон, без 103. Тест был про механизм soft-offer-без-operator-event, не про тон.
+    assert "103" not in payload["answer"]
     assert [action["label"] for action in payload["quick_actions"]] == [
         "Оставить телефон",
         "Подключить менеджера",

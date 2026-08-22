@@ -99,17 +99,37 @@ def test_escalation_urgency_for_benign_phrase_is_calm() -> None:
 
 
 def test_escalation_urgency_for_mixed_signal_is_urgent() -> None:
-    """безопасный дефолт на смешанных фразах — "больно" (benign) вместе с "кровит" (не benign)
-    остаётся urgent, не calm."""
+    """"болит" (сам по себе не опасный сигнал) вместе с "кровит" (реальное кровотечение,
+    раздел 5 скрипта) — urgent, кровотечение перекрывает нейтральный тон "болит"."""
 
     assert escalation_urgency_for("болит и кровит") == "urgent"
 
 
 def test_escalation_urgency_for_no_medical_signal_is_urgent() -> None:
-    """нет ни одного медицинского слова вообще — не считается calm по умолчанию, это не то же
-    самое, что "точно безобидно": is_benign требует РЕАЛЬНОГО совпадения с benign-словом."""
+    """Живой баг (аудит §2026-08-22, Топ-1, второй слой): раньше urgent был дефолтом без
+    единого признака срочности — "сколько стоит удаление родинки" (голый ценовой вопрос) и
+    даже шутка про "рецепты" получали "скорая (103)". Теперь urgent требует явного сигнала
+    из 4 категорий раздела 5 (сильная боль, кровотечение, аллергия, резкое ухудшение) — их
+    отсутствие значит calm, не "неизвестно, значит бей тревогу"."""
 
-    assert escalation_urgency_for("привет, как дела") == "urgent"
+    assert escalation_urgency_for("привет, как дела") == "calm"
+    assert escalation_urgency_for("сколько стоит удаление родинки") == "calm"
+    assert escalation_urgency_for("вы гарантируете что родинка не вырастет снова?") == "calm"
+
+
+def test_escalation_urgency_for_severe_pain_is_urgent() -> None:
+    assert escalation_urgency_for("очень сильно болит уже второй день") == "urgent"
+
+
+def test_escalation_urgency_for_rapid_deterioration_is_urgent() -> None:
+    assert escalation_urgency_for("резко ухудшилось состояние после процедуры") == "urgent"
+
+
+def test_escalation_urgency_for_mild_pain_alone_is_calm() -> None:
+    """Интенсификатор обязателен — просто "болит" без "сильно"/"невыносимо" остаётся calm,
+    иначе рутинные вопросы про типичную болезненность процедуры снова эскалируют."""
+
+    assert escalation_urgency_for("после укола немного болит, это нормально?") == "calm"
 
 
 def test_complaint_refund_legal_threat_escalate_immediately(policy_session, knowledge_base) -> None:

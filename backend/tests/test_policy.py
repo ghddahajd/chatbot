@@ -2258,6 +2258,32 @@ def test_complaint_reaction_after_procedure_escalates_not_safe_service_override(
     assert result.action == PolicyAction.TRANSFER_OPERATOR
 
 
+def test_list_services_question_not_hijacked_by_generic_word_article_overlap(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (аудит §2026-08-22, persona6): "Добрый день, хочу узнать про услуги
+    клиники" смэтчился с нерелевантной статьёй про капельницы для метаболизма через
+    пересечение по "день"/"клиники" (снипет: "...в день процедуры... врачи клиники ROSH
+    рекомендуют..." — общеупотребимые для любой статьи клиники слова, не про капельницы
+    и не про заданный вопрос). Честный список услуг должен остаться списком услуг."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "Добрый день, хочу узнать про услуги клиники",
+        policy_session,
+        knowledge_base,
+        {"intent": "list_services", "service_id": None, "confidence": 1.0},
+    )
+
+    assert result.safe_context.get("question_type") == "list_services"
+    assert "all_services" in result.safe_context
+
+
 def test_safe_known_service_price_request_still_answers(
     policy_session,
     resolver,

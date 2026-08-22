@@ -354,6 +354,41 @@ def test_objection_classification_matches_competitor_price() -> None:
     assert result["context_topic"] == "competitor"
 
 
+def test_objection_classification_matches_competitor_price_without_the_word_cheaper() -> None:
+    """Живой репро (аудит §2026-08-22): реальная фраза из транскрипта — цена конкурента
+    названа числом, а не словом "дешевле"."""
+
+    result = _objection_classification("В другой клинике за 1500. Там то же самое?")
+    assert result is not None
+    assert result["context_topic"] == "competitor"
+
+
+def test_objection_classification_matches_competitor_price_bare_number() -> None:
+    result = _objection_classification("у конкурентов эта процедура 2000")
+    assert result is not None
+    assert result["context_topic"] == "competitor"
+
+
+def test_objection_classification_competitor_number_ignores_small_counts() -> None:
+    """Не любое число рядом со словом "клиника" — счётчики сеансов/машин/раз обычно
+    однозначные-двузначные, не похожи на масштаб реальной цены в этом домене."""
+
+    assert _objection_classification("в клинике есть парковка на 5 машин?") is None
+    assert _objection_classification("в другой клинике сказали нужно 3 сеанса") is None
+    assert _objection_classification("а сколько это займёт, там говорили 2 раза в неделю") is None
+
+
+def test_objection_classification_competitor_number_ignores_unrelated_large_counts() -> None:
+    """Честная граница метода, не выдумана постфактум: 3-6-значное число рядом с контекстным
+    словом конкурента — это эвристика, не идеальный парсер цены. Тут заведомо придуманная,
+    маловероятная в реальном чате фраза, где число НЕ про цену, всё равно классифицируется
+    как объекшен — принятый компромисс, не тихо скрытый баг."""
+
+    result = _objection_classification("у вас в клинике 150 отзывов на сайте?")
+    assert result is not None
+    assert result["context_topic"] == "competitor"
+
+
 def test_objection_classification_matches_guarantee_request() -> None:
     result = _objection_classification("А вы гарантируете, что поможет?")
     assert result is not None

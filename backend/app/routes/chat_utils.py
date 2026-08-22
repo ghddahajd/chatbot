@@ -22,6 +22,7 @@ from ..policy.constants import (
     BOT_IDENTITY_SIGNAL_KEYWORDS,
     CLARIFY_SHORT_MESSAGES,
     COMPETITOR_CONTEXT_TOKENS,
+    COMPETITOR_PRICE_NUMBER_PATTERN,
     COMPETITOR_PRICE_TOKEN,
     DURATION_KEYWORDS,
     EXPLANATION_KEYWORDS,
@@ -556,8 +557,9 @@ def _objection_classification(message: str) -> dict[str, object] | None:
         normalized_message, PRICE_OBJECTION_TOKENS
     ):
         return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": "price"}
-    if contains_exact_token(normalized_message, {COMPETITOR_PRICE_TOKEN}) and contains_exact_token(
-        normalized_message, COMPETITOR_CONTEXT_TOKENS
+    if contains_exact_token(normalized_message, COMPETITOR_CONTEXT_TOKENS) and (
+        contains_exact_token(normalized_message, {COMPETITOR_PRICE_TOKEN})
+        or COMPETITOR_PRICE_NUMBER_PATTERN.search(normalized_message)
     ):
         return {"intent": "objection", "service_id": None, "confidence": 0.9, "context_topic": "competitor"}
     if contains_keyword(normalized_message, GUARANTEE_REQUEST_KEYWORDS):

@@ -2232,6 +2232,32 @@ def test_acute_allergic_reaction_adjective_form_escalates(
     assert result.action == PolicyAction.TRANSFER_OPERATOR
 
 
+def test_complaint_reaction_after_procedure_escalates_not_safe_service_override(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-03): "у меня реакция после вашей процедуры
+    помогите" — жалоба, ни одного слова из MEDICAL_KEYWORDS вообще, но и НЕ похожа на
+    FAQ_QUESTION_KEYWORDS (в отличие от "что нельзя после чистки" — та должна остаться
+    безопасной, см. test_escape_hatch_allows_safe_service_question_even_if_model_flags_
+    regulated). Структурный фикс SAFE_SERVICE_REQUEST_INTENTS/FAQ-гейта должен закрыть
+    оба случая одновременно, не по отдельности."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "у меня реакция после вашей процедуры помогите",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": "fillery_f2df3e74", "confidence": 1.0},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+
+
 def test_safe_known_service_price_request_still_answers(
     policy_session,
     resolver,

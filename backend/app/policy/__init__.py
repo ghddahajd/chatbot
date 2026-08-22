@@ -25,6 +25,7 @@ from .constants import (
     EQUIPMENT_QUESTION_KEYWORDS,
     EFFICACY_CLAIM_KEYWORDS,
     EXPLANATION_KEYWORDS,
+    FAQ_QUESTION_KEYWORDS,
     GENERIC_DOCTOR_LIST_KEYWORDS,
     GENERIC_PRICE_MESSAGES,
     HARD_RESTRICTED_KEYWORDS,
@@ -1630,6 +1631,19 @@ SAFE_SERVICE_REQUEST_INTENTS = {
     "price_question",
     "service_mention",
 }
+# Живой репро (аудит §2026-08-22, F-02/F-03): для medical_advice/regulated_advice просто
+# "нет hard-restricted keyword" — недостаточно безопасный критерий отмены medical_requested.
+# Живой пример: "у меня аллергическая реакция что делать!!!" верно классифицировалось как
+# regulated_advice (confidence 1.0), но оверрайд гасил это — "аллергическая" не было в
+# MEDICAL_KEYWORDS дословно. Но и просто убрать эти два интента из SAFE_SERVICE_REQUEST_INTENTS
+# нельзя — сломало бы test_escape_hatch_allows_safe_service_question_even_if_model_flags_regulated
+# ("что нельзя после процедуры чистки лица" — классификатор иногда завышает обычный уходовый
+# вопрос до regulated_advice, эскалировать его НЕ надо). Разница не в интенте, а в форме
+# сообщения: реальная жалоба не похожа на известный FAQ-паттерн, обычный уходовый вопрос —
+# похож. Для medical_advice/regulated_advice требуем ОБА признака: нет hard-restricted
+# сигнала, И сообщение совпадает с распознанным FAQ-паттерном (FAQ_QUESTION_KEYWORDS) —
+# не просто "не похоже на опасное", а "похоже на конкретный известный безопасный вопрос".
+_MEDICAL_INTENT_SAFE_OVERRIDE_INTENTS = {"medical_advice", "regulated_advice"}
 
 
 _hard_restricted_single_word_lemmas: set[str] | None = None
@@ -1742,7 +1756,11 @@ def _has_bare_negative_signal(normalized_message: str) -> bool:
 def _looks_like_safe_known_service_request(intent: str, normalized_message: str, service) -> bool:
     if service is None or intent not in SAFE_SERVICE_REQUEST_INTENTS:
         return False
-    return not _has_hard_restricted_signal(normalized_message)
+    if _has_hard_restricted_signal(normalized_message):
+        return False
+    if intent in _MEDICAL_INTENT_SAFE_OVERRIDE_INTENTS:
+        return contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS)
+    return True
 
 
 def _has_fact_guard_negation(normalized_message: str) -> bool:

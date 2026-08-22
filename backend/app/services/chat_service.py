@@ -20,7 +20,7 @@ from ..models import (
     PolicyReason,
     SessionStatus,
 )
-from ..policy import classify_and_extract, undisclosed_equipment_terms
+from ..policy import classify_and_extract, escalation_urgency_for, undisclosed_equipment_terms
 from ..policy.constants import NEGATIVE_MESSAGES, PHONE_PATTERN
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
@@ -246,9 +246,10 @@ class ChatService:
         )
         # "Если срочно — звоните... в скорую (103)" уместно для реально острых сигналов
         # (кровотечение, аллергия), но не для бытовых вопросов вроде "а больно?" — см.
-        # escalation_urgency в _medical_referral_result (policy/__init__.py). По умолчанию
-        # urgent=True (безопасный дефолт для путей без явной оценки срочности, например
-        # LLM-классификатора риска на consultation-ветке).
+        # escalation_urgency_for() (policy/__init__.py), единая точка расчёта для обоих
+        # вызывающих путей (аудит §2026-08-22 — раньше LLM-риск-путь её не считал вообще).
+        # Дефолт urgent=True в сигнатуре — страховка на случай будущего третьего вызывающего
+        # пути, который забудет посчитать срочность явно, не то, на что полагаются сейчас.
         phrase_key = "regulated_soft_offer" if urgent else "regulated_soft_offer_calm"
         answer = self._phrase(
             phrase_key,
@@ -1423,10 +1424,14 @@ class ChatService:
                     metadata={"source": "consultation_risk_classifier"},
                 )
                 if self._regulated_escalation_mode(knowledge_base) == "soft":
+                    # Живой баг (аудит §2026-08-22): этот вызов раньше не передавал urgent=
+                    # вообще — молча получал дефолт True ("скорая 103") на ЛЮБОЕ сообщение,
+                    # попавшее в этот (LLM-риск) путь, независимо от реальной срочности текста.
                     response_action, answer, response_quick_actions = await self._regulated_soft_offer_response(
                         session_store=session_store,
                         session=session,
                         knowledge_base=knowledge_base,
+                        urgent=escalation_urgency_for(message) != "calm",
                     )
                 else:
                     await analytics_service.track_event(

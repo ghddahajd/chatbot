@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from app.models import PendingAction, PolicyAction, PolicyReason
-from app.policy import analyze_message, classify_and_extract, undisclosed_equipment_terms
+from app.policy import analyze_message, classify_and_extract, escalation_urgency_for, undisclosed_equipment_terms
 
 
 def _classification(message: str, knowledge_base) -> dict[str, object]:
@@ -92,6 +92,24 @@ def test_classify_and_extract_still_flags_off_topic_and_unknown_service_when_not
     no_filler_services = [{"id": "chistka", "name": "Чистка лица", "synonyms": [], "category": "Косметология"}]
     unknown_result = classify_and_extract("а филлеры делаете?", no_filler_services, "Москва")
     assert unknown_result["intent"] == "unknown_service"
+
+
+def test_escalation_urgency_for_benign_phrase_is_calm() -> None:
+    assert escalation_urgency_for("а больно?") == "calm"
+
+
+def test_escalation_urgency_for_mixed_signal_is_urgent() -> None:
+    """безопасный дефолт на смешанных фразах — "больно" (benign) вместе с "кровит" (не benign)
+    остаётся urgent, не calm."""
+
+    assert escalation_urgency_for("болит и кровит") == "urgent"
+
+
+def test_escalation_urgency_for_no_medical_signal_is_urgent() -> None:
+    """нет ни одного медицинского слова вообще — не считается calm по умолчанию, это не то же
+    самое, что "точно безобидно": is_benign требует РЕАЛЬНОГО совпадения с benign-словом."""
+
+    assert escalation_urgency_for("привет, как дела") == "urgent"
 
 
 def test_complaint_refund_legal_threat_escalate_immediately(policy_session, knowledge_base) -> None:

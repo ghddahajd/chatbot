@@ -625,6 +625,36 @@ def test_benign_pain_question_soft_offer_has_no_emergency_number(test_client) ->
     assert "скорую" not in payload["answer"]
 
 
+def test_llm_consultation_risk_path_uses_computed_urgency_not_default_true(test_client, monkeypatch) -> None:
+    """Живой репро (аудит §2026-08-22, "скорая 103" систематически): _regulated_soft_offer_
+    response() раньше вызывался с LLM-риск-пути (classify_consultation_risk == RESTRICTED)
+    БЕЗ urgent= вообще — молча получал дефолт True на любое сообщение, попавшее именно в этот
+    путь, независимо от текста. Форсим RESTRICTED напрямую (не гоняясь за тем, натурально ли
+    реальный текст доходит сюда мимо keyword-гейта) и подменяем escalation_urgency_for на
+    контролируемое "calm", чтобы проверить именно то, что чинили: значение реально считается
+    и передаётся, а не отбрасывается на дефолт."""
+
+    import app.services.chat_service as chat_service_module
+
+    async def fake_restricted(request, message, context):
+        return "RESTRICTED", "test-request-id"
+
+    monkeypatch.setattr(chat_service_module, "classify_consultation_risk", fake_restricted)
+    monkeypatch.setattr(chat_service_module, "escalation_urgency_for", lambda message: "calm")
+
+    payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "у меня жирная кожа и расширенные поры, что подойдёт и почём?",
+        },
+    ).json()
+
+    assert "103" not in payload["answer"]
+    assert "скорую" not in payload["answer"]
+
+
 def test_cosmetic_multi_candidate_booking_followup_reoffers_same_services(test_client, managed_env) -> None:
     """Тот же аудитный диалог, шаг 'а когда можно записаться?' — раньше показывал ПОЛНЫЙ
     каталог услуг ("Внутривенный лазер Шатл Комби" в списке для записи на морщины вокруг

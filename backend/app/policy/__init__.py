@@ -900,9 +900,8 @@ def _medical_referral_result(
     # "а больно?"/"это нормально?" — бытовые вопросы, попавшие в MEDICAL_KEYWORDS вместе с
     # реально острыми сигналами (кровотечение, аллергия). Soft-offer текст (regulated_soft_offer)
     # для ВСЕХ них одинаково заканчивался "если срочно — звоните... в скорую (103)" — пугает на
-    # безобидном вопросе. is_benign_only=True только если В СООБЩЕНИИ НЕТ других медицинских
-    # слов (безопасный дефолт на смешанных фразах вроде "болит и кровит").
-    is_benign_only = _is_benign_medical_signal(normalized_message)
+    # безобидном вопросе. escalation_urgency_for()=calm только если В СООБЩЕНИИ НЕТ других
+    # медицинских слов (безопасный дефолт на смешанных фразах вроде "болит и кровит").
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
@@ -915,7 +914,7 @@ def _medical_referral_result(
             "restricted_category": restricted_category,
             "referral_service": consultation_service.model_dump() if consultation_service else None,
             "extra_referral_service": growth_removal_service.model_dump() if growth_removal_service else None,
-            "escalation_urgency": "calm" if is_benign_only else "urgent",
+            "escalation_urgency": escalation_urgency_for(normalized_message),
         },
         quick_actions=_medical_referral_quick_actions(
             consultation_service, extra_service=growth_removal_service
@@ -1659,6 +1658,20 @@ def _single_word_lemma_set(keywords: set[str]) -> set[str]:
 
 _benign_medical_lemmas: set[str] | None = None
 _non_benign_medical_lemmas: set[str] | None = None
+
+
+def escalation_urgency_for(message: str) -> str:
+    """calm/urgent для regulated_soft_offer — единая точка расчёта срочности.
+
+    Живой баг (аудит §2026-08-22, "скорая 103" систематически): раньше это считалось
+    инлайном только в _medical_referral_result (keyword-путь), а LLM-риск-путь в
+    chat_service.py вызывал _regulated_soft_offer_response() вообще без urgent=,
+    молча получая дефолт True — "скорая" на ЛЮБОЕ сообщение, попавшее именно в этот
+    путь, независимо от реальной срочности текста. Единая функция — чтобы оба
+    вызывающих пути не могли разойтись снова тем же образом.
+    """
+
+    return "calm" if _is_benign_medical_signal(normalize_text(message)) else "urgent"
 
 
 def _is_benign_medical_signal(normalized_message: str) -> bool:

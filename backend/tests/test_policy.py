@@ -2304,6 +2304,57 @@ def test_list_services_question_not_hijacked_by_generic_word_article_overlap(
     assert "all_services" in result.safe_context
 
 
+def test_skin_growth_question_not_hijacked_by_pronoun_article_overlap(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (аудит §2026-08-22, "4 независимых случая", разобран 2026-08-23):
+    "у меня образование на коже в таком месте что стесняюсь говорить" смэтчилось со
+    статьёй "Кожа после лазерной шлифовки" через "образование"+"таком" (снипет: "Образование
+    корочек... В таком случае..." — "образование" тут настоящая смысловая коллизия про
+    заживление, не про нарост пациента, а "таком" — обычное указательное местоимение)."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "у меня образование на коже в таком месте что стесняюсь говорить",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.8},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
+
+
+def test_bikini_area_growth_question_not_hijacked_by_zone_article_overlap(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (аудит §2026-08-22, "4 независимых случая", разобран 2026-08-23):
+    "ХОЧУ УБРАТЬ ОБРАЗОВАНИЕ В ЗОНЕ БИКИНИ" смэтчилось со статьёй "Лазерная эпиляция
+    бикини" через "зоне"+"бикини" (снипет: "...в зоне глубокого бикини..." — совпадение
+    по анатомической зоне, не по теме вопроса: нарост на коже, не эпиляция)."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "ХОЧУ УБРАТЬ ОБРАЗОВАНИЕ В ЗОНЕ БИКИНИ",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": None, "confidence": 0.8},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.safe_context.get("question_type") != "cosmetic_article_guidance"
+
+
 def test_safe_known_service_price_request_still_answers(
     policy_session,
     resolver,

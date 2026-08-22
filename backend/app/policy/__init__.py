@@ -821,6 +821,17 @@ OBJECTION_PHRASE_KEYS = {
     "guarantee": "objection_guarantee",
     "pain_fear": "objection_pain_fear",
 }
+# Живой репро (аудит §2026-08-22): "price" и "hesitation" на практике одна и та же "не готов
+# сейчас" мысль, просто разными словами ("дорого, надо подумать") — трейс живого диалога
+# (P3_2 → price, P3_4/P3_5 → hesitation, P3_8 «...надо решить — всё дорого» → снова price)
+# показал 3 мягких попытки подряд без backoff, потому что классификатор давал им разные
+# context_topic на каждой перефразировке, а per-topic счётчик (1a0db39) считает раздельно.
+# competitor/guarantee/pain_fear НЕ трогаем — это реально разные тревоги пациента, не варианты
+# одной и той же, объединять их было бы неправильно.
+OBJECTION_COUNTING_TOPIC = {
+    "price": "price_or_hesitation",
+    "hesitation": "price_or_hesitation",
+}
 OBJECTION_BACKOFF_ATTEMPTS = 2
 OBJECTION_QUICK_ACTIONS = ["Позвать менеджера", "Посмотреть услуги"]
 
@@ -841,7 +852,11 @@ def _objection_result(
     if phrase_key is None:
         return None
 
-    response_count = session.objection_response_counts.get(objection_topic, 0)
+    # counting_topic ТОЛЬКО для счётчика попыток — objection_topic (специфичный) остаётся
+    # как есть для выбора фразы и для проверки ниже (booking_hesitation_hold должен сработать
+    # именно на "hesitation", не на объединённом ключе).
+    counting_topic = OBJECTION_COUNTING_TOPIC.get(objection_topic, objection_topic)
+    response_count = session.objection_response_counts.get(counting_topic, 0)
     # §3.5 скрипта: "думаю"/"посоветуюсь" ИМЕННО на этапе записи (pending_action ==
     # BOOKING_CONTACT) — не тот же вопрос "что смущает" (objection_hesitation), который
     # звучит странно, когда контакт уже запрашивается, а мягкое "придержу интерес без
@@ -863,6 +878,7 @@ def _objection_result(
                     knowledge_base, "objection_backoff", seed=_phrase_seed(session, "objection_backoff")
                 ),
                 "objection_topic": objection_topic,
+                "objection_counting_topic": counting_topic,
             },
             quick_actions=OBJECTION_QUICK_ACTIONS,
         )
@@ -875,6 +891,7 @@ def _objection_result(
             "force_direct_answer": True,
             "message_to_user": _phrase(knowledge_base, phrase_key, seed=_phrase_seed(session, phrase_key)),
             "objection_topic": objection_topic,
+            "objection_counting_topic": counting_topic,
         },
         quick_actions=quick_actions,
     )

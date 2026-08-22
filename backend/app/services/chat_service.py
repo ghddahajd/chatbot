@@ -761,7 +761,15 @@ class ChatService:
             substantive_message_count = int(session.substantive_message_count or 0) + 1
         increment_objection_topic = None
         if policy_result.reason in {PolicyReason.OBJECTION_HANDLED, PolicyReason.OBJECTION_BACKOFF}:
-            increment_objection_topic = str(policy_result.safe_context.get("objection_topic") or "") or None
+            # objection_counting_topic — объединяет price/hesitation в общий счётчик (аудит
+            # §2026-08-22, per-topic счётчик размывался между их перефразировками); остальные
+            # objection_topic считаются независимо, как и раньше. Фолбэк на objection_topic —
+            # на случай если какой-то будущий вызывающий путь не станет ставить этот ключ.
+            increment_objection_topic = str(
+                policy_result.safe_context.get("objection_counting_topic")
+                or policy_result.safe_context.get("objection_topic")
+                or ""
+            ) or None
         await session_store.update_context(
             session.session_id,
             last_service_id=policy_result.service_id,

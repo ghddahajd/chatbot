@@ -1056,6 +1056,32 @@ def test_waiting_operator_complaint_followup_gets_distinct_acknowledgment(test_c
     assert complaint_followup["answer"] != generic_followup["answer"]
 
 
+def test_price_and_hesitation_objections_share_backoff_end_to_end(test_client) -> None:
+    """Полный цикл через реальный /api/chat/message, точные формулировки из транскрипта
+    живого QA-аудита (§2026-08-22, P3_2 → P3_4 → P3_8) — не только policy-юнит с ручным
+    сидом счётчика, а реальный инкремент через session_store на каждом шаге."""
+
+    session_id = None
+    for message in ("3000 рублей — это дорого", "мне надо подумать, возможно завтра напишу"):
+        payload = test_client.post(
+            "/api/chat/message",
+            json={"company_id": "rosh_demo", "session_id": session_id, "message": message},
+        ).json()
+        session_id = payload["session_id"]
+        assert payload["action"] == "answer"
+
+    third = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "спасибо, подумаю ещё, надо решить, всё дорого",
+        },
+    ).json()
+
+    assert "не буду торопить" in third["answer"].lower()
+
+
 def test_pending_contact_accepts_messy_phone_and_name(test_client) -> None:
     first_response = test_client.post(
         "/api/chat/message",

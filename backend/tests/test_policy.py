@@ -2407,7 +2407,9 @@ def test_booking_stage_hesitation_offers_to_hold_without_obligation(policy_sessi
 
 def test_booking_stage_hesitation_still_backs_off_after_two_attempts(policy_session, knowledge_base) -> None:
     policy_session.pending_action = PendingAction.BOOKING_CONTACT.value
-    policy_session.objection_response_counts = {"hesitation": 2}
+    # price_or_hesitation, не "hesitation" — счётчик считается по объединённому ключу
+    # (аудит §2026-08-22), см. test_objection_price_and_hesitation_share_backoff_counter.
+    policy_session.objection_response_counts = {"price_or_hesitation": 2}
 
     result = analyze_message(
         "Хорошо, я подумаю и напишу.",
@@ -2466,25 +2468,52 @@ def test_objection_pain_fear_gives_reassurance_not_escalation(policy_session, kn
 
 
 def test_objection_backs_off_after_two_soft_attempts_on_same_topic(policy_session, knowledge_base) -> None:
-    policy_session.objection_response_counts = {"price": 0}
+    policy_session.objection_response_counts = {"price_or_hesitation": 0}
     first = analyze_message(
         "так дорого", policy_session, knowledge_base, _objection_classification("price")
     )
     assert first.reason == PolicyReason.OBJECTION_HANDLED
 
-    policy_session.objection_response_counts = {"price": 1}
+    policy_session.objection_response_counts = {"price_or_hesitation": 1}
     second = analyze_message(
         "все равно дорого", policy_session, knowledge_base, _objection_classification("price")
     )
     assert second.reason == PolicyReason.OBJECTION_HANDLED
 
-    policy_session.objection_response_counts = {"price": 2}
+    policy_session.objection_response_counts = {"price_or_hesitation": 2}
     third = analyze_message(
         "ну очень дорого", policy_session, knowledge_base, _objection_classification("price")
     )
     assert third.action == PolicyAction.ANSWER
     assert third.reason == PolicyReason.OBJECTION_BACKOFF
     assert "не буду торопить" in str(third.safe_context.get("message_to_user")).lower()
+
+
+def test_objection_price_and_hesitation_share_backoff_counter(policy_session, knowledge_base) -> None:
+    """Живой репро (аудит §2026-08-22, трейс P3_2→P3_4→P3_5→P3_8): "дорого" и "надо подумать"
+    — одна и та же "не готов сейчас" мысль, перефразированная. Раньше это писалось в разные
+    ключи objection_response_counts ("price" vs "hesitation") — backoff после 2 попыток не
+    срабатывал, если человек чередовал формулировки, как в реальном диалоге аудита."""
+
+    price_then_hesitation = analyze_message(
+        "так дорого", policy_session, knowledge_base, _objection_classification("price")
+    )
+    assert price_then_hesitation.reason == PolicyReason.OBJECTION_HANDLED
+
+    # analyze_message сам не инкрементирует счётчик (это делает chat_service.py через
+    # session_store), поэтому имитируем инкремент вручную между шагами — как реально
+    # накопился бы счётчик после первого ответа выше.
+    policy_session.objection_response_counts = {"price_or_hesitation": 1}
+    second = analyze_message(
+        "надо подумать", policy_session, knowledge_base, _objection_classification("hesitation")
+    )
+    assert second.reason == PolicyReason.OBJECTION_HANDLED
+
+    policy_session.objection_response_counts = {"price_or_hesitation": 2}
+    third = analyze_message(
+        "подумаю ещё, всё дорого", policy_session, knowledge_base, _objection_classification("price")
+    )
+    assert third.reason == PolicyReason.OBJECTION_BACKOFF
 
 
 def test_objection_backoff_is_scoped_per_topic_not_global(policy_session, knowledge_base) -> None:

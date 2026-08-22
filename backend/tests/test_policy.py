@@ -2204,6 +2204,34 @@ def test_buried_pregnancy_long_form_escalates(
     assert result.reason == PolicyReason.REGULATED_ADVICE
 
 
+def test_acute_allergic_reaction_adjective_form_escalates(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-02, реальное сообщение из транскрипта): "у меня
+    аллергическая реакция что делать!!!" не эскалировало — "аллергическая" (прилагательное,
+    лемма "аллергический") не связывалось с "аллергия"/"аллергии" (существительное) в
+    MEDICAL_KEYWORDS ни подстрокой, ни леммой. Без сигнала _has_hard_restricted_signal
+    _looks_like_safe_known_service_request флипал medical_requested обратно в False (intent
+    regulated_advice + резолвленный service — ровно этот случай), и RAG подставлял случайную
+    статью про филлеры вместо предупреждения о срочности (которое RAG САМ находил, score
+    13.86 в трейсе аудита, но до генерации оно не доходило)."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "у меня аллергическая реакция что делать!!!",
+        policy_session,
+        knowledge_base,
+        {"intent": "regulated_advice", "service_id": "fillery_f2df3e74", "confidence": 1.0},
+    )
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+
+
 def test_safe_known_service_price_request_still_answers(
     policy_session,
     resolver,

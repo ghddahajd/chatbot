@@ -538,6 +538,38 @@ def test_booking_contact_enqueues_booking_event(test_client, monkeypatch) -> Non
     assert events[-1]["session_id"] == first_payload["session_id"]
 
 
+def test_direct_address_question_without_question_mark_answered_not_treated_as_contact(
+    test_client,
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-10): во время сбора контакта (pending_action=
+    BOOKING_CONTACT) пользователь пишет "стоп я же не спросила про заявку ещё. скажи адрес
+    сначала" — БЕЗ "?". _looks_like_new_question раньше матчила смену темы только по "?",
+    это сообщение проваливалось в общий "напишите телефон" вместо ответа на прямой вопрос
+    об адресе."""
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "хочу записаться на Консультация косметолога",
+        },
+    ).json()
+    assert first_payload["action"] == "clarify"
+
+    second_payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": first_payload["session_id"],
+            "message": "стоп я же не спросила про заявку ещё. скажи адрес сначала",
+        },
+    ).json()
+
+    assert "напишите" not in second_payload["answer"].lower()
+    assert "телефон" not in second_payload["answer"].lower()
+
+
 def test_successful_booking_clears_pending_and_does_not_duplicate_lead(test_client, managed_env) -> None:
     first_response = test_client.post(
         "/api/chat/message",

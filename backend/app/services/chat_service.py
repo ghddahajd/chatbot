@@ -21,7 +21,7 @@ from ..models import (
     SessionStatus,
 )
 from ..policy import classify_and_extract, escalation_urgency_for, undisclosed_equipment_terms
-from ..policy.constants import NEGATIVE_MESSAGES, PHONE_PATTERN
+from ..policy.constants import CLINIC_LOCATION_KEYWORDS, NEGATIVE_MESSAGES, PHONE_PATTERN
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
@@ -504,6 +504,13 @@ class ChatService:
         """
 
         if "?" in message:
+            return True
+        # Живой баг (аудит §2026-08-22, F-10): "стоп я же не спросила про заявку ещё. скажи
+        # адрес сначала" — прямой информационный запрос, но БЕЗ "?" (повелительное наклонение,
+        # не вопрос). "?" не сработал, локальный классификатор тоже не матчит эту фразу — бот
+        # игнорировал прямой вопрос об адресе и снова просил телефон. CLINIC_LOCATION_KEYWORDS
+        # уже курирован для адреса/часов работы в другом месте (_clinic_info_result).
+        if contains_keyword(normalize_text(message), CLINIC_LOCATION_KEYWORDS):
             return True
         # Живой баг: "я подумаю"/"дорого"/"дешевле в другом месте" во время сбора контакта
         # (pending_action) не содержат "?" и не матчят базовый локальный классификатор

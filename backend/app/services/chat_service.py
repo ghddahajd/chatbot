@@ -21,7 +21,12 @@ from ..models import (
     SessionStatus,
 )
 from ..policy import classify_and_extract, escalation_urgency_for, undisclosed_equipment_terms
-from ..policy.constants import CLINIC_LOCATION_KEYWORDS, NEGATIVE_MESSAGES, PHONE_PATTERN
+from ..policy.constants import (
+    CLINIC_LOCATION_KEYWORDS,
+    NEGATIVE_MESSAGES,
+    PAIN_FEAR_ANTICIPATION_KEYWORDS,
+    PHONE_PATTERN,
+)
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..routes.chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
@@ -234,6 +239,7 @@ class ChatService:
         session_store,
         session,
         knowledge_base,
+        message: str = "",
         referral_service: object = None,
         extra_referral_service: object = None,
         urgent: bool = True,
@@ -264,6 +270,14 @@ class ChatService:
             ),
             seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
         )
+        # Живой баг (аудит §2026-08-22, "Ниже"): "я в ПАНИКЕ", "😱😱 помогите... боюсь",
+        # "боюсь идти к врачу вообще" — 16/16 проб получали одинаковый холодный процедурный
+        # текст без единого элемента эмоционального отклика, "Понимаю" из шаблона сразу
+        # переходило в процедуру. PAIN_FEAR_ANTICIPATION_KEYWORDS уже существовал для другой
+        # цели (объекшен-хендлинг на предстоящую боль) — переиспользуем его же слова здесь,
+        # не заводя отдельный список специально под тон.
+        if contains_keyword(normalize_text(message), PAIN_FEAR_ANTICIPATION_KEYWORDS):
+            answer = f"Понимаю, это тревожит. {answer}"
         quick_actions = self._regulated_soft_quick_actions()
         referral_action = self._referral_quick_action(referral_service)
         # 2026-08-18: клиент подтвердил, что тема новообразований не настолько деликатная,
@@ -1403,6 +1417,7 @@ class ChatService:
                     session_store=session_store,
                     session=session,
                     knowledge_base=knowledge_base,
+                    message=message,
                     referral_service=policy_result.safe_context.get("referral_service"),
                     extra_referral_service=policy_result.safe_context.get("extra_referral_service"),
                     urgent=policy_result.safe_context.get("escalation_urgency") != "calm",
@@ -1498,6 +1513,7 @@ class ChatService:
                         session_store=session_store,
                         session=session,
                         knowledge_base=knowledge_base,
+                        message=message,
                         urgent=escalation_urgency_for(message) != "calm",
                     )
                 else:

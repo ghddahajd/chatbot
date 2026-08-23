@@ -659,6 +659,26 @@ def test_benign_pain_question_soft_offer_has_no_emergency_number(test_client) ->
     assert "103" not in payload["answer"]
 
 
+def test_panic_message_gets_empathetic_prefix_before_medical_referral(test_client) -> None:
+    """Живой репро (аудит §2026-08-22, "Ниже", находка A4): "я в ПАНИКЕ", "боюсь идти к
+    врачу вообще" и т.д. — 16/16 живых проб получали один и тот же холодный процедурный
+    текст без единого элемента эмоционального отклика. PAIN_FEAR_ANTICIPATION_KEYWORDS уже
+    существовал для другой цели (объекшен-хендлинг) — переиспользован здесь для эмпатичного
+    префикса, не заведён отдельный список специально под тон."""
+
+    payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "я в панике, у меня родинка меняет цвет",
+        },
+    ).json()
+
+    assert payload["action"] == "clarify"
+    assert payload["answer"].startswith("Понимаю, это тревожит.")
+
+
 def test_phone_given_alongside_regulated_question_still_creates_lead(test_client, monkeypatch) -> None:
     """Живой репро (аудит §2026-08-22, F-11): "окей ладно дам телефон. 89991234567. кстати я
     беременна это важно для приёма дерматолога?" — телефон и медицинский вопрос в ОДНОМ

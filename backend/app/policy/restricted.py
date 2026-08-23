@@ -96,6 +96,35 @@ def _medical_lemma_set() -> set[str]:
     return _medical_single_word_lemmas
 
 
+# Живой баг (аудит §2026-08-22, "Ниже"): "Я уже третий раз пишу сюда и никто не отвечает
+# нормально! Что за безобразие" — "нормально" в MEDICAL_KEYWORDS (нужно для легитимного "это
+# нормально после процедуры?", см. test_benign_pain_question_marked_calm_not_urgent — не
+# трогаем) ложно матчило чистую жалобу на сервис. Из-за этого medical_requested перехватывал
+# сообщение РАНЬШЕ, чем COMPLAINT_ESCALATION_KEYWORDS вообще успевал его проверить (medical
+# safety стоит строго первым приоритетом в policy/__init__.py, намеренно — не меняем порядок).
+# "отвечает/отвечают/пишет/пишут/работает/работают нормально" — коллокация про качество
+# ответа/сервиса, не про медицинскую норму; исключаем конкретно её, не трогая слово в остальных
+# контекстах.
+NON_MEDICAL_NORMALNO_COLLOCATIONS = {
+    "отвечает нормально",
+    "отвечают нормально",
+    "отвечаете нормально",
+    "пишет нормально",
+    "пишут нормально",
+    "пишете нормально",
+    "работает нормально",
+    "работают нормально",
+}
+_normalno_lemmas: set[str] | None = None
+
+
+def _normalno_lemma_set() -> set[str]:
+    global _normalno_lemmas
+    if _normalno_lemmas is None:
+        _normalno_lemmas = set(lemmatize_tokens("нормально"))
+    return _normalno_lemmas
+
+
 def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str | None]:
     """
     возвращает (is_restricted, category).
@@ -110,9 +139,14 @@ def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str
         return False, None
 
     normalized_message = normalize_text(message)
+    medical_keywords = HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS
+    medical_lemmas = _medical_lemma_set()
+    if contains_keyword(normalized_message, NON_MEDICAL_NORMALNO_COLLOCATIONS):
+        medical_keywords = medical_keywords - {"нормально"}
+        medical_lemmas = medical_lemmas - _normalno_lemma_set()
     if _has_medical_restrictions(categories) and (
-        contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS)
-        or contains_keyword_lemma(normalized_message, _medical_lemma_set())
+        contains_keyword(normalized_message, medical_keywords)
+        or contains_keyword_lemma(normalized_message, medical_lemmas)
     ):
         return True, "medical"
     if _normalized_categories(categories) & REMOTE_SAFETY_CATEGORIES:

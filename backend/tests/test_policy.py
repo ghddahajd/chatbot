@@ -191,6 +191,26 @@ def test_benign_pain_question_marked_calm_not_urgent(policy_session, knowledge_b
         assert result.safe_context.get("escalation_urgency") == "calm"
 
 
+def test_service_complaint_normalno_does_not_misfire_as_medical(
+    policy_session, knowledge_base
+) -> None:
+    """Живой репро (аудит §2026-08-22, "Ниже"): "Я уже третий раз пишу сюда и никто не
+    отвечает нормально! Что за безобразие вообще" — "нормально" в MEDICAL_KEYWORDS ложно
+    матчило чистую жалобу на сервис, перехватывая её раньше, чем COMPLAINT_ESCALATION_KEYWORDS
+    вообще успевал проверить сообщение (medical safety стоит раньше по приоритету) — давая
+    холодный медицинский текст вместо жалобы. "это нормально после процедуры?" (легитимный
+    медицинский кейс, см. test_benign_pain_question_marked_calm_not_urgent) должен продолжать
+    эскалировать как обычно."""
+
+    result = _analyze(
+        "Я уже третий раз пишу сюда и никто не отвечает нормально! Что за безобразие вообще",
+        policy_session,
+        knowledge_base,
+    )
+
+    assert result.reason != PolicyReason.REGULATED_ADVICE
+
+
 def test_routine_danger_question_gets_calm_tone_not_urgent(
     policy_session, resolver, managed_env
 ) -> None:

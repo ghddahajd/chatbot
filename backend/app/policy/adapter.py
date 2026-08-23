@@ -76,7 +76,17 @@ def merge_policy_classifications(
         return model_result
     if local_intent in PROTECTED_LOCAL_INTENTS and local_confidence >= 0.75:
         return local_result
-    if local_intent == "service_mention" and local_service_id and model_intent == "list_services":
+    # Живой баг (run_ai_evals.py, rosh_import_apparatnaya_cleaning_mention): голое "чистка"/
+    # "аппаратная чистка" (просто названа услуга, без "хочу записаться"/"можно на" и т.п.)
+    # модель уверенно (confidence=1.0) тегала как booking_request, хотя local верно резолвил
+    # service_mention с конкретным service_id — бот сразу просил телефон вместо ответа о
+    # услуге. Та же защита, что уже была для model_intent=="list_services" (эта же строка
+    # выше), просто раньше не покрывала "booking_request" — тот же класс проблемы (бэйр
+    # упоминание услуги не должно продвигаться моделью в более "активный" интент).
+    if local_intent == "service_mention" and local_service_id and model_intent in {
+        "list_services",
+        "booking_request",
+    }:
         return local_result
     if local_intent == "faq_question" and local_confidence >= 0.75 and model_intent in {
         "service_mention",

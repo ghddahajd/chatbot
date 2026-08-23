@@ -215,6 +215,21 @@ def test_merge_keeps_local_service_list_when_model_says_off_topic() -> None:
     assert result["intent"] == "list_services"
 
 
+def test_merge_keeps_local_service_mention_when_model_says_booking_request() -> None:
+    """Живой репро (run_ai_evals.py, rosh_import_apparatnaya_cleaning_mention): голое
+    "чистка"/"аппаратная чистка" — просто названа услуга, без "хочу записаться" и т.п. —
+    модель уверенно (confidence=1.0) тегала booking_request, хотя local верно резолвил
+    service_mention с конкретным service_id — бот сразу просил телефон вместо ответа о
+    услуге. Та же защита, что уже была для model_intent=="list_services"."""
+
+    result = merge_policy_classifications(
+        {"intent": "service_mention", "service_id": "chistki_e744e513", "confidence": 0.78},
+        {"intent": "booking_request", "service_id": "chistki_e744e513", "confidence": 1.0},
+    )
+
+    assert result["intent"] == "service_mention"
+
+
 def test_merge_keeps_local_operator_when_model_says_off_topic() -> None:
     result = merge_policy_classifications(
         {"intent": "operator_request", "service_id": None, "confidence": 0.88},

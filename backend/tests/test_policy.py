@@ -121,6 +121,15 @@ def test_escalation_urgency_for_severe_pain_is_urgent() -> None:
     assert escalation_urgency_for("очень сильно болит уже второй день") == "urgent"
 
 
+def test_escalation_urgency_for_ochen_bolit_is_urgent() -> None:
+    """Найдено фоновым агентом при проверке смежных зон (2026-08-23): "очень болит"/"очень
+    больно не могу терпеть" оставались calm — "очень" отсутствовало в PAIN_INTENSITY_
+    KEYWORDS, хотя это самый частый усилитель боли в разговорной речи."""
+
+    assert escalation_urgency_for("просто очень болит") == "urgent"
+    assert escalation_urgency_for("очень больно не могу терпеть") == "urgent"
+
+
 def test_escalation_urgency_for_rapid_deterioration_is_urgent() -> None:
     assert escalation_urgency_for("резко ухудшилось состояние после процедуры") == "urgent"
 

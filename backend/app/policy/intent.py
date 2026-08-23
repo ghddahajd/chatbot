@@ -204,9 +204,9 @@ def classify_and_extract(
     normalized_message = normalize_text(message)
     if normalized_message in CLARIFY_SHORT_MESSAGES:
         return {"intent": "clarify", "service_id": None, "confidence": 0.7}
-    if is_location_mismatch(message, normalized_message, company_city):
-        return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
     catalog_text = _tenant_catalog_text(known_services)
+    if is_location_mismatch(message, normalized_message, company_city, known_service_text=catalog_text):
+        return {"intent": "location_mismatch", "service_id": None, "confidence": 0.86}
     off_topic_keywords = _exclude_keywords_covered_by_catalog(OFF_TOPIC_KEYWORDS, catalog_text)
     unknown_service_keywords = _exclude_keywords_covered_by_catalog(UNKNOWN_SERVICE_KEYWORDS, catalog_text)
 

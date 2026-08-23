@@ -728,6 +728,7 @@ def find_unsupported_city(
     company_city: str,
     *,
     message: str = "",
+    known_service_text: str = "",
 ) -> Optional[str]:
     normalized_company_city = normalize_text(company_city)
     if f"не из {normalized_company_city}" in normalized_message:
@@ -738,7 +739,15 @@ def find_unsupported_city(
     # его передают), поэтому это дополнение, не замена словарного пути ниже.
     if message:
         ner_city = _run_ner_for_city(message, skip_normalized=normalized_company_city)
-        if ner_city:
+        # Живой баг (run_ai_evals.py, u_service_details): "что входит в Биоревитализация?" —
+        # NER принял капитализированное, незнакомое модели название услуги за топоним (город),
+        # is_location_mismatch увёл ответ в "у нас только очно, вы из другого города?" вместо
+        # ответа про услугу. known_service_text — опциональная сверка с реальным каталогом
+        # клиента (не все вызовы его передают) — если NER "нашёл город", а это на самом деле
+        # известное название услуги, не доверяем этому конкретному NER-совпадению.
+        if ner_city and not (
+            known_service_text and normalize_text(ner_city) in known_service_text
+        ):
             return " ".join(word.capitalize() for word in ner_city.split())
 
     for city_form, city_name in KNOWN_CITY_FORMS.items():
@@ -787,13 +796,21 @@ def mentions_company_city(normalized_message: str, company_city: str, *, message
     return False
 
 
-def is_location_mismatch(message: str, normalized_message: str, company_city: str) -> bool:
+def is_location_mismatch(
+    message: str,
+    normalized_message: str,
+    company_city: str,
+    *,
+    known_service_text: str = "",
+) -> bool:
     normalized_company_city = normalize_text(company_city)
     if mentions_company_city(normalized_message, company_city, message=message):
         return False
     if contains_keyword(normalized_message, LOCATION_MISMATCH_KEYWORDS):
         return True
-    if find_unsupported_city(normalized_message, company_city, message=message):
+    if find_unsupported_city(
+        normalized_message, company_city, message=message, known_service_text=known_service_text
+    ):
         return True
 
     for pattern in LOCATION_PATTERNS:

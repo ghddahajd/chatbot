@@ -2094,7 +2094,23 @@ def _analyze_message_core(
         # исключения §4.5-объекшен (research.md #5) всё равно проваливался бы в эскалацию
         # здесь, даже когда chat_utils уже провалидировал, что другого мед-сигнала нет.
         medical_requested = False
-    unsupported_city = find_unsupported_city(normalized_message, knowledge_base.company.city, message=message)
+    # Живой баг (run_ai_evals.py, u_service_details): "что входит в Биоревитализация?" — NER
+    # принял капитализированное, незнакомое модели название услуги за топоним. Реальный каталог
+    # клиента — сверка, чтобы не доверять такому NER-совпадению (см. find_unsupported_city).
+    known_service_text = normalize_text(
+        " ".join(
+            term
+            for svc in knowledge_base.services
+            for term in [svc.name, *svc.synonyms]
+            if term
+        )
+    )
+    unsupported_city = find_unsupported_city(
+        normalized_message,
+        knowledge_base.company.city,
+        message=message,
+        known_service_text=known_service_text,
+    )
     city_in_text = city_prepositional(knowledge_base.company.city)
     sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
 
@@ -2296,7 +2312,7 @@ def _analyze_message_core(
         )
 
     if intent == "location_mismatch" or is_location_mismatch(
-        message, normalized_message, knowledge_base.company.city
+        message, normalized_message, knowledge_base.company.city, known_service_text=known_service_text
     ):
         return PolicyResult(
             action=PolicyAction.CLARIFY,

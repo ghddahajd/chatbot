@@ -331,6 +331,27 @@ def test_is_location_mismatch_still_catches_real_mismatch_for_non_dict_city() ->
     assert is_location_mismatch(message, normalize_text(message), "Ярославль") is True
 
 
+def test_is_location_mismatch_ner_does_not_mistake_known_service_name_for_a_city() -> None:
+    """Живой репро (run_ai_evals.py, u_service_details): "что входит в Биоревитализация?" —
+    NER принял капитализированное, незнакомое модели название услуги ("Биоревитализация") за
+    топоним, is_location_mismatch уводил ответ в "у нас только очно, вы из другого города?"
+    вместо ответа про услугу. known_service_text — реальный каталог клиента; NER-совпадение,
+    которое на деле является известным названием услуги, больше не доверяется."""
+
+    message = "что входит в Биоревитализация?"
+    normalized = normalize_text(message)
+
+    assert is_location_mismatch(message, normalized, "Москва") is True
+
+    known_service_text = normalize_text("Биоревитализация Ботулинотерапия Лазерная эпиляция")
+    assert (
+        is_location_mismatch(
+            message, normalized, "Москва", known_service_text=known_service_text
+        )
+        is False
+    )
+
+
 def test_is_location_mismatch_recognizes_bare_peterburg_without_sankt_prefix() -> None:
     """'Петербург' без 'Санкт-' — обиходная форма, которой не было в KNOWN_CITY_FORMS (там
     только полное 'санкт-петербург'/'санкт петербург' и синоним 'питер')."""

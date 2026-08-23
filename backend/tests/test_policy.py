@@ -1955,6 +1955,32 @@ def test_fact_guard_stays_before_faq_rag(
     assert "fact_guard" in result.safe_context
 
 
+def test_fact_guard_acknowledges_bundled_price_question(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-12): "ксеомин это тоже самое что ботокс? и сколько
+    стоит на лоб" — fact_guard верно блокирует обсуждение "ботокс", но раньше давал ОДИН И
+    ТОТ ЖЕ текст без учёта вложенного ценового вопроса про разрешённый бренд (Ксеомин) —
+    follow-up с новым вопросом получал дословно тот же ответ, что и предыдущий ход."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "ксеомин это тоже самое что ботокс? и сколько стоит на лоб",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    assert "fact_guard" in result.safe_context
+    message = str(result.safe_context.get("message_to_user") or "")
+    assert "стоимост" in message.lower()
+
+
 def test_fact_guard_ignores_negated_blocked_value(
     policy_session,
     resolver,

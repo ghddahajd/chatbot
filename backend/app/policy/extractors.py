@@ -441,6 +441,32 @@ def contains_keyword(normalized_text: str, keywords: set[str]) -> bool:
     return False
 
 
+def contains_keyword_word_start(normalized_text: str, keywords: set[str]) -> bool:
+    """Как contains_keyword, но однословный ключ должен начинать токен, а не быть где угодно
+    внутри него — по-прежнему ловит склонения (стем+окончание: "процедур" -> "процедуры"), но
+    не составные слова, где ключ — вторая половина. Живой баг (аудит §2026-08-22): "лечение"
+    (легитимное MEDICAL_KEYWORDS) матчило "фотолечение" ("фото"+"лечение" — своя раскрытая
+    услуга клиники, не про лечение вообще) как подстроку где угодно в строке — "расскажи про
+    фотолечение" уходило в regulated_advice/эскалацию вместо ответа про услугу. Для
+    HARD_RESTRICTED_KEYWORDS/MEDICAL_KEYWORDS (единственные два потребителя на сейчас) это
+    безопаснее contains_keyword — там нет ключей, задуманных как суффикс составного слова."""
+
+    tokens = normalized_text.split()
+    token_set = set(tokens)
+    for keyword in keywords:
+        if " " in keyword:
+            if _contains_token_sequence(tokens, keyword.split()):
+                return True
+            continue
+        if len(keyword) <= 3:
+            if keyword in token_set:
+                return True
+            continue
+        if any(token.startswith(keyword) for token in tokens):
+            return True
+    return False
+
+
 def contains_exact_token(normalized_text: str, tokens: set[str]) -> bool:
     """Строгая проверка вхождения ЦЕЛОГО токена — в отличие от contains_keyword, не матчит
     по сырой подстроке для длинных однословных ключей. Нужна для слов, у которых есть частая

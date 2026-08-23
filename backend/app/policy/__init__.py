@@ -54,6 +54,7 @@ from .extractors import (
     contains_day_or_time_lemma,
     contains_keyword,
     contains_keyword_lemma,
+    contains_keyword_word_start,
     extract_name,
     extract_person_lemma_via_ner,
     extract_phone,
@@ -1744,7 +1745,7 @@ def _has_hard_restricted_signal(normalized_message: str) -> bool:
     # отправляло вопрос в общую RAG-ветку мимо эскалации и бренд-гарда. Быстрая подстрочная
     # проверка остаётся первой (бесплатно ловит буквальные совпадения); лемматизация — только
     # запасной, более медленный проход, если она ничего не нашла.
-    if contains_keyword(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS):
+    if contains_keyword_word_start(normalized_message, HARD_RESTRICTED_KEYWORDS | MEDICAL_KEYWORDS):
         return True
     return contains_keyword_lemma(normalized_message, _hard_restricted_lemma_set())
 

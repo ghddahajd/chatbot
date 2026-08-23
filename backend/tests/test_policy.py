@@ -220,6 +220,30 @@ def test_service_complaint_normalno_does_not_misfire_as_medical(
     assert result.reason != PolicyReason.REGULATED_ADVICE
 
 
+def test_compound_word_does_not_falsely_trigger_medical_restriction(
+    policy_session, resolver, managed_env
+) -> None:
+    """Живой репро (run_ai_evals.py, rosh_import_bbl_details): "расскажи про фотолечение bbl"
+    (реальная, раскрытая услуга клиники fotolechenie_bbl_85e80491) эскалировало в
+    regulated_advice вместо ответа про услугу — "фотолечение" ("фото"+"лечение") содержит
+    "лечение" (легитимное MEDICAL_KEYWORDS) как ПОДСТРОКУ, но это составное слово, не про
+    "лечение" в медицинском смысле. contains_keyword_word_start требует, чтобы ключ начинал
+    токен, а не был где угодно внутри — ловит склонения ("лечения"/"лечению"), но не суффикс
+    составного слова."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    for message in ["расскажи про фотолечение bbl", "расскажи про фотолечение"]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.reason != PolicyReason.REGULATED_ADVICE, message
+
+    # склонения легитимного ключа по-прежнему должны ловиться (не регрессия в другую сторону)
+    result = _analyze("какое лечение вы назначите от аллергии", policy_session, knowledge_base)
+    assert result.reason == PolicyReason.REGULATED_ADVICE
+
+
 def test_routine_danger_question_gets_calm_tone_not_urgent(
     policy_session, resolver, managed_env
 ) -> None:

@@ -7,7 +7,12 @@ from typing import Any
 
 from ..knowledge import normalize_text
 from .constants import HARD_RESTRICTED_KEYWORDS, MEDICAL_KEYWORDS
-from .extractors import contains_keyword, contains_keyword_lemma, lemmatize_tokens
+from .extractors import (
+    contains_keyword,
+    contains_keyword_lemma,
+    contains_keyword_word_start,
+    lemmatize_tokens,
+)
 
 MEDICAL_RESTRICTED_CATEGORIES = {
     "medical",
@@ -145,7 +150,7 @@ def is_restricted_question(message: str, domain_profile: Any) -> tuple[bool, str
         medical_keywords = medical_keywords - {"нормально"}
         medical_lemmas = medical_lemmas - _normalno_lemma_set()
     if _has_medical_restrictions(categories) and (
-        contains_keyword(normalized_message, medical_keywords)
+        contains_keyword_word_start(normalized_message, medical_keywords)
         or contains_keyword_lemma(normalized_message, medical_lemmas)
     ):
         return True, "medical"

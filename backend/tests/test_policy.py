@@ -1511,6 +1511,22 @@ def test_local_classifier_marks_moisture_aftercare_as_faq(policy_session, knowle
     assert classification["intent"] == "faq_question"
 
 
+def test_local_classifier_does_not_treat_zapisatsya_k_vam_as_visit_question(
+    policy_session, knowledge_base
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-07): "хочу записаться к вам кароч на лазерное
+    удаление шрама от акне можно и сколько стоит" матчило VISIT_KEYWORDS через "записаться
+    к вам" и уходило в contact_link/"очный приём в Москве" — не ответ на запись+цену.
+    "записаться к вам" — обычная формулировка booking, не про приезд/локацию."""
+
+    classification = _classification(
+        "хочу записаться к вам кароч на лазерное удаление шрама от акне можно и сколько стоит",
+        knowledge_base,
+    )
+
+    assert classification["intent"] != "contact_link"
+
+
 def test_local_classifier_marks_pochem_as_price_question(policy_session, knowledge_base) -> None:
     classification = _classification("а чистка лица почём?", knowledge_base)
 

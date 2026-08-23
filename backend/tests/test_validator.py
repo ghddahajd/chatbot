@@ -13,7 +13,7 @@ def test_validator_blocks_wall_of_services_answer() -> None:
     шаблон) сгенерировала один абзац из 24 услуг через запятую вместо "1-3 предложения"
     (раздел 1 скрипта). Точный текст реального живого ответа."""
 
-    context = {"question_type": "list_services"}
+    context = {"question_type": "list_services", "user_message": "чем вы занимаетесь"}
     answer = (
         "Мы предлагаем биоревитализацию, ботулинотерапию, внутривенный лазер Шатл Комби, "
         "игольчатый RF лифтинг, консультации, лазерную терапию (Skin Tyte, Forever Clear, "
@@ -28,10 +28,27 @@ def test_validator_blocks_wall_of_services_answer() -> None:
 
 
 def test_validator_allows_short_service_mention_list() -> None:
-    context = {"question_type": "list_services"}
+    context = {"question_type": "list_services", "user_message": "чем вы занимаетесь"}
     answer = "У нас есть биоревитализация и мезотерапия. Уточните, что вас интересует?"
 
     assert validate_response(answer, context)
+
+
+def test_validator_allows_wall_of_services_when_explicitly_requested() -> None:
+    """Регрессия (пойман пользователем сразу после первого фикса): "покажи услуги"/"хочу
+    услуги" — та же question_type=list_services, что и у "чем вы занимаетесь", но это ЯВНАЯ
+    просьба показать список — полный ответ тут правильный, не "простыня". Лимит по запятым
+    не должен применяться, если сообщение само явно просит список услуг."""
+
+    answer = (
+        "Мы предлагаем биоревитализацию, ботулинотерапию, лазерную эпиляцию, мезотерапию, "
+        "пилинги, филлеры, чистки, консультации, гинекологию, прессотерапию, экзосомальную "
+        "терапию. Уточните, какая услуга Вас интересует?"
+    )
+
+    for message in ["покажи услуги", "хочу услуги", "список услуг", "услуги"]:
+        context = {"question_type": "list_services", "user_message": message}
+        assert validate_response(answer, context), message
 
 
 def test_validator_comma_limit_does_not_apply_outside_list_services() -> None:

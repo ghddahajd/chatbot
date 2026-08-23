@@ -19,6 +19,7 @@ from .constants import (
     LEAD_REQUEST_KEYWORDS,
     OFF_TOPIC_KEYWORDS,
     OPERATOR_REQUEST_KEYWORDS,
+    PRICE_FUZZY_EXCLUDE_TOKENS,
     PRICE_KEYWORDS,
     PROMPT_INJECTION_KEYWORDS,
     SERVICE_LIST_FAST_MESSAGES,
@@ -224,7 +225,7 @@ def classify_and_extract(
 
     if (
         (contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS) or _looks_like_comparison_question(normalized_message))
-        and not fuzzy_contains(normalized_message, PRICE_KEYWORDS)
+        and not fuzzy_contains(normalized_message, PRICE_KEYWORDS, exclude_tokens=PRICE_FUZZY_EXCLUDE_TOKENS)
         and not contains_keyword(normalized_message, DURATION_KEYWORDS)
     ):
         return {"intent": "faq_question", "service_id": service_id, "confidence": 0.84}
@@ -242,7 +243,7 @@ def classify_and_extract(
         return {"intent": "contact_link", "service_id": None, "confidence": 0.88}
     if contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS):
         return {"intent": "lead_request", "service_id": service_id, "confidence": 0.88}
-    if fuzzy_contains(normalized_message, PRICE_KEYWORDS):
+    if fuzzy_contains(normalized_message, PRICE_KEYWORDS, exclude_tokens=PRICE_FUZZY_EXCLUDE_TOKENS):
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.86}
     if contains_keyword(normalized_message, BOOKING_KEYWORDS):
         return {"intent": "booking_request", "service_id": service_id, "confidence": 0.88}

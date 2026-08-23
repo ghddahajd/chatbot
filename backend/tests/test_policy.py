@@ -1554,6 +1554,24 @@ def test_local_classifier_marks_pochem_as_price_question(policy_session, knowled
     assert classification["service_id"] == "facial_cleansing"
 
 
+def test_local_classifier_pochemu_does_not_fuzzy_match_pochem_price(
+    policy_session, knowledge_base
+) -> None:
+    """Живой репро (аудит §2026-08-22, "F-17"/помечено отчётом как "деградация сессии" —
+    диагноз отчёта был неверным, воспроизводится и в свежей сессии без истории): "почему
+    скорая при каждом втором вопросе? ...доставка ли у вас средств по уходу налажена в
+    другие города?" — "почему" (расстояние Левенштейна 1 от "почем", разговорного "почём?"
+    из PRICE_KEYWORDS) ложно матчило price_question вместо честного ответа про доставку."""
+
+    classification = _classification(
+        "почему скорая при каждом втором вопросе? я не умираю, просто из другого города. "
+        "скажите хотя бы: доставка ли у вас средств по уходу налажена в другие города?",
+        knowledge_base,
+    )
+
+    assert classification["intent"] != "price_question"
+
+
 def test_local_classifier_marks_import_pochem_as_price_question(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
     classification = _classification("а пилинги почём?", knowledge_base)

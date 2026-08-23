@@ -42,6 +42,7 @@ from .constants import (
     NEGATIVE_MESSAGES,
     OMS_FACT_KEYWORDS,
     OPERATOR_REQUEST_KEYWORDS,
+    PRICE_FUZZY_EXCLUDE_TOKENS,
     PRICE_KEYWORDS,
     PRODUCTS_FACT_KEYWORDS,
     TELEGRAM_KEYWORDS,
@@ -1914,7 +1915,7 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
             # ОДИН И ТОТ ЖЕ текст на любой follow-up с упомянутым блокированным брендом,
             # включая явный вопрос о цене. Сама защита бренда не смягчается — просто не
             # оставляем ценовой вопрос совсем без ответа.
-            if fuzzy_contains(normalized_message, PRICE_KEYWORDS):
+            if fuzzy_contains(normalized_message, PRICE_KEYWORDS, exclude_tokens=PRICE_FUZZY_EXCLUDE_TOKENS):
                 message_to_user += " Точную стоимость по разрешённым вариантам подскажет менеджер."
         return PolicyResult(
             action=PolicyAction.CLARIFY,
@@ -2070,7 +2071,7 @@ def _analyze_message_core(
         explanation_requested = True
     price_requested = (
         intent == "price_question"
-        or fuzzy_contains(normalized_message, PRICE_KEYWORDS)
+        or fuzzy_contains(normalized_message, PRICE_KEYWORDS, exclude_tokens=PRICE_FUZZY_EXCLUDE_TOKENS)
         or _looks_like_bare_price_question(normalized_message)
     )
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)

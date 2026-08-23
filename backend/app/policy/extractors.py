@@ -450,10 +450,26 @@ def contains_exact_token(normalized_text: str, tokens: set[str]) -> bool:
     return bool(set(normalized_text.split()) & tokens)
 
 
-def fuzzy_contains(normalized_text: str, keywords: set[str], *, min_len: int = 4) -> bool:
-    """Узкий fuzzy-match для UX-слов, не для safety/medical."""
+def fuzzy_contains(
+    normalized_text: str,
+    keywords: set[str],
+    *,
+    min_len: int = 4,
+    exclude_tokens: frozenset[str] = frozenset(),
+) -> bool:
+    """Узкий fuzzy-match для UX-слов, не для safety/medical.
 
-    tokens = [token for token in normalized_text.split() if token]
+    exclude_tokens — слова, которые НЕ считаются кандидатом на fuzzy-совпадение, даже если
+    формально в пределах расстояния 1 от ключевого слова. Живой баг (аудит §2026-08-22):
+    "почему" (обычное вопросительное слово) отличается от "почем" (разговорное "почём?" из
+    PRICE_KEYWORDS) на одну букву — фраза "почему скорая при каждом втором вопросе..."
+    ложно матчила price_question. Раньше от такого же класса бага для SMALL_TALK_KEYWORDS
+    защищались, только сверяя ВСЁ сообщение целиком (SMALL_TALK_FUZZY_EXCLUDE) — здесь
+    "почему" внутри длинного предложения, нужна проверка на уровне токена."""
+
+    tokens = [
+        token for token in normalized_text.split() if token and token not in exclude_tokens
+    ]
     for keyword in keywords:
         if " " in keyword:
             if keyword in normalized_text:

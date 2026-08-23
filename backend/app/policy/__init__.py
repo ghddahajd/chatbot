@@ -1171,8 +1171,16 @@ def _doctor_matches(message: str, doctor: dict[str, str]) -> bool:
         for msg_token in message_tokens
     ):
         return True
+    # Живой баг: specialty "гинеколог" — сырая подстрока раздетого текста, а "гинекологии"/
+    # "гинекологу" (существительное ПОЛЯ "гинекология" в разных падежах) содержат "гинеколог"
+    # как префикс. "расскажи про X в гинекологии" (RAG-вопрос про процедуру) матчило врача по
+    # специальности и полностью перебивало найденный RAG-ответ карточкой "вот наш гинеколог".
+    # Лемма отличает "гинекология" (поле) от "гинеколог" (специальность врача) — pymorphy это
+    # разные словарные леммы, а не просто разные падежи одного слова.
     specialty = normalize_text(doctor.get("specialty", ""))
-    return bool(specialty and specialty in normalized_message)
+    if not specialty:
+        return False
+    return contains_keyword_lemma(normalized_message, set(lemmatize_tokens(specialty)))
 
 
 def _format_doctors(doctors: list[dict[str, str]]) -> str:
@@ -2455,6 +2463,35 @@ def _analyze_message_core(
                     ),
                 },
                 quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+            )
+
+        # Живой баг (RAG-развёртка по 156 реальным статьям, 2026-08-24): классификатор помечает
+        # intent="off_topic" для тем, которых нет в services.json, но которые есть как СТАТЬЯ у
+        # клиники (трихология, фотодинамическая терапия, конкретная модель оборудования) — бот
+        # отвечал шаблонным отказом, хотя материал есть. _retrieve_article_context_safe уже
+        # фильтрует по MIN_ARTICLE_SCORE (тот же порог, что и faq_question ниже) — случайный
+        # мусорный запрос не наберёт 2+ совпадения и сюда не попадёт, останется тот же отказ.
+        #
+        # Намеренно НЕ проверяем _cosmetic_article_guidance_result здесь (в отличие от
+        # faq_question/body-topic веток) — она берёт первый URL из топ-3 RAG-матчей, который
+        # ЕСТЬ в article_service_map, независимо от score. Живой баг при разработке этой ветки:
+        # "GE Logiq 7 Pro ultrasound" — RAG верно поставил статью про сам аппарат на 1-е место
+        # (score 38.5), но она не привязана ни к одной услуге; в куратированной карте оказалась
+        # 2-я по score статья "Ведение беременности" — и ответ ушёл про неё вместо аппарата.
+        # Прямой ответ по лучшему article_matches[0] этой ошибки не совершает.
+        article_matches = _retrieve_article_context_safe(message)
+        if article_matches:
+            return PolicyResult(
+                action=PolicyAction.ANSWER,
+                reason=PolicyReason.FAQ_QUESTION,
+                confidence=classifier_confidence or 0.8,
+                safe_context={
+                    "article_context": article_matches,
+                    "question_type": "faq_question",
+                    "domain_profile": knowledge_base.domain_profile,
+                    "phrasebook": getattr(knowledge_base, "phrasebook", {}),
+                },
+                quick_actions=_article_quick_actions(article_matches),
             )
 
         return PolicyResult(

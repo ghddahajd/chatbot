@@ -616,6 +616,27 @@ clinic_info:
         assert "Соколов Пётр Ильич" in result.safe_context["message_to_user"], message
 
 
+def test_clinic_doctor_specialty_lemma_does_not_match_field_noun(policy_session, resolver, managed_env) -> None:
+    """Живой баг: specialty "гинеколог" матчился сырой подстрокой ("specialty in message"),
+    а "гинекологии"/"гинекологу" — падежи существительного ПОЛЯ "гинекология" (лемма
+    "гинекология") — содержат "гинеколог" как префикс. "Расскажи про X в гинекологии"
+    (RAG-вопрос про конкретную процедуру) перехватывался doctor-info веткой и отвечал именем
+    врача вместо темы вопроса. Лемма отличает поле от специальности, "нужен гинеколог"
+    (та же лемма, что и specialty) при этом продолжает работать."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze(
+        "расскажи про кольпоскопия – что это такое в гинекологии", policy_session, knowledge_base
+    )
+    assert result.safe_context.get("clinic_info_topic") != "doctors", result.safe_context
+    assert "Сарычев" not in result.safe_context.get("message_to_user", "")
+
+    result = _analyze("мне нужен гинеколог", policy_session, knowledge_base)
+    assert result.action == PolicyAction.ANSWER
+    assert "Сарычев Денис Сергеевич" in result.safe_context["message_to_user"]
+
+
 def test_clinic_doctor_name_alone_answers_from_config(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 
@@ -1912,6 +1933,58 @@ def test_faq_question_uses_article_context(
     assert result.safe_context["question_type"] == "faq_question"
     assert result.safe_context["article_context"]
     assert result.quick_actions[0]["type"] == "link"
+
+
+def test_off_topic_answers_from_article_when_confident_rag_match(
+    policy_session,
+    knowledge_base,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Живой баг (RAG-развёртка по 156 реальным статьям, 2026-08-24): классификатор помечает
+    off_topic для тем без строки в services.json, но с реальной статьёй у клиники — бот
+    отвечал шаблонным "это не по моей части", хотя материал есть. Теперь off_topic пробует
+    тот же порог уверенности (MIN_ARTICLE_SCORE), что и faq_question, прежде чем отказывать."""
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    result = analyze_message(
+        "как проходит кольпоскопия",
+        policy_session,
+        knowledge_base,
+        {"intent": "off_topic", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.FAQ_QUESTION
+    assert result.safe_context["article_context"]
+
+
+def test_off_topic_still_declines_without_a_confident_rag_match(
+    policy_session,
+    knowledge_base,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Регресс-проверка на риск, который поднял пользователь: мусорный/случайный запрос без
+    реального пересечения слов со статьями клиники должен по-прежнему получать честный отказ,
+    а не выдумывать ответ по слабому совпадению."""
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    result = analyze_message(
+        "какая сегодня погода на улице",
+        policy_session,
+        knowledge_base,
+        {"intent": "off_topic", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.action == PolicyAction.OFF_TOPIC
+    assert result.reason == PolicyReason.OFF_TOPIC
 
 
 def test_faq_question_can_use_article_context_for_known_service(

@@ -11,6 +11,7 @@ from .policy.restricted import has_medical_restricted_category
 
 logger = logging.getLogger(__name__)
 _intercept_count = 0
+MAX_COMMAS_IN_LIST_ANSWER = 6
 
 RAW_CONTEXT_PATTERNS = (
     re.compile(r"\bservice_id\b", re.IGNORECASE),
@@ -289,6 +290,18 @@ def _validate_fact_constraints(answer: str, context: dict[str, Any]) -> bool:
             return False
         if _unsupported_equipment_leak(answer, context):
             return False
+
+    # Живой баг (аудит §2026-08-22, "Ниже"): "чем вы занимаетесь"/"покажи список услуг" —
+    # модель сама (mode: safe_complete, не шаблон) генерировала один абзац из 24-28 услуг
+    # через запятую вместо "1-3 предложения, без простыней" (раздел 1 скрипта). Сопоставлять
+    # названия услуг из контекста с текстом ответа ненадёжно — в живом предложении они стоят
+    # в разных падежах ("биоревитализацию", не "Биоревитализация" как в каталоге), а
+    # многословные названия делят общие слова ("лазерная терапия"/"лазерная шлифовка"/
+    # "лазерный пилинг" — совпадение по одному "лазер*" задвоило бы счёт). Считаем запятые
+    # в самом ответе — для ЭТОГО типа вопроса короткий уместный ответ упоминает 1-3 услуги
+    # (максимум пара запятых), а простыня из 20+ штук всегда даёт запятых на порядок больше.
+    if question_type == "list_services" and answer.count(",") > MAX_COMMAS_IN_LIST_ANSWER:
+        return False
 
     # research.md #6 (третий аудит): раньше проверка на гарантийные фразы (323-ФЗ/ст.24 ФЗ "О
     # рекламе") стояла ТОЛЬКО внутри блока faq_question — ответы про цену/длительность/

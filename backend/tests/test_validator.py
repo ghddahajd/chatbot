@@ -8,6 +8,45 @@ from app.validator import (
 )
 
 
+def test_validator_blocks_wall_of_services_answer() -> None:
+    """Живой репро (аудит §2026-08-22, "Ниже"): "чем вы занимаетесь" — модель сама (не
+    шаблон) сгенерировала один абзац из 24 услуг через запятую вместо "1-3 предложения"
+    (раздел 1 скрипта). Точный текст реального живого ответа."""
+
+    context = {"question_type": "list_services"}
+    answer = (
+        "Мы предлагаем биоревитализацию, ботулинотерапию, внутривенный лазер Шатл Комби, "
+        "игольчатый RF лифтинг, консультации, лазерную терапию (Skin Tyte, Forever Clear, "
+        "Forever Young, HALO), лазерную шлифовку, лазерную эпиляцию, лазерный пилинг, "
+        "мезотерапию, пилинги, уходы и маски, филлеры, фотолечение BBL, чистки, эксимерный "
+        "лазер, биорезонансную терапию на аппарате BICOM, гинекологию, диагностику на "
+        "аппарате BICOM BODY CHECK, удаление новообразований, прессотерапию, экзосомальную "
+        "терапию. Уточните, какая услуга Вас интересует?"
+    )
+
+    assert not validate_response(answer, context)
+
+
+def test_validator_allows_short_service_mention_list() -> None:
+    context = {"question_type": "list_services"}
+    answer = "У нас есть биоревитализация и мезотерапия. Уточните, что вас интересует?"
+
+    assert validate_response(answer, context)
+
+
+def test_validator_comma_limit_does_not_apply_outside_list_services() -> None:
+    """Порог по запятым специфичен для list_services — обычный развёрнутый ответ на другой
+    тип вопроса (например explanation) не должен внезапно начать отбрасываться."""
+
+    context = {"question_type": "explanation"}
+    answer = (
+        "Процедура подходит для коррекции морщин, повышения тонуса кожи, увлажнения, "
+        "стимуляции коллагена, выравнивания текстуры и общего омоложения."
+    )
+
+    assert validate_response(answer, context)
+
+
 def test_consultation_validator_blocks_medical_terms_for_medical_profile() -> None:
     context = {"domain_profile": {"type": "medical", "restricted_advice": ["medical_treatment"]}}
 

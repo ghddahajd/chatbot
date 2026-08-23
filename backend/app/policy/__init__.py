@@ -953,11 +953,13 @@ def _objection_result(
 
 
 def _medical_referral_result(
+    message: str,
     normalized_message: str,
     knowledge_base: KnowledgeBase,
     session: Session,
     service,
     restricted_category: str | None,
+    phone: str | None = None,
 ) -> PolicyResult:
     consultation_service = None
     growth_removal_service = None
@@ -974,20 +976,33 @@ def _medical_referral_result(
     # для ВСЕХ них одинаково заканчивался "если срочно — звоните... в скорую (103)" — пугает на
     # безобидном вопросе. escalation_urgency_for()=calm только если В СООБЩЕНИИ НЕТ других
     # медицинских слов (безопасный дефолт на смешанных фразах вроде "болит и кровит").
+    safe_context: dict[str, object] = {
+        "force_direct_answer": True,
+        "message_to_user": message_to_user,
+        "handoff_message": message_to_user,
+        "restricted_category": restricted_category,
+        "referral_service": consultation_service.model_dump() if consultation_service else None,
+        "extra_referral_service": growth_removal_service.model_dump() if growth_removal_service else None,
+        "escalation_urgency": escalation_urgency_for(normalized_message),
+    }
+    # Живой баг (аудит §2026-08-22, F-11): "окей ладно дам телефон. 89991234567. кстати я
+    # беременна это важно для приёма дерматолога?" — телефон в том же сообщении, что и
+    # медицинский вопрос, но эта ветка возвращается раньше общей "if phone:" проверки ниже
+    # по функции и никогда её не достигает — номер молча терялся, lead_created=false. Кладём
+    # контакт в safe_context тем же способом, что и _contact_safe_context — chat_service.py
+    # подхватывает его в TRANSFER_OPERATOR/REGULATED_ADVICE-ветке и создаёт лид, не теряя
+    # при этом мягкий медицинский текст (soft-offer), в отличие от обычного ASK_CONTACT-пути.
+    if phone:
+        safe_context["contact"] = {
+            "name": extract_name(message, phone, known_services=knowledge_base.services),
+            "phone": phone,
+        }
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.REGULATED_ADVICE,
         service_id=service.id if service else None,
         confidence=0.98,
-        safe_context={
-            "force_direct_answer": True,
-            "message_to_user": message_to_user,
-            "handoff_message": message_to_user,
-            "restricted_category": restricted_category,
-            "referral_service": consultation_service.model_dump() if consultation_service else None,
-            "extra_referral_service": growth_removal_service.model_dump() if growth_removal_service else None,
-            "escalation_urgency": escalation_urgency_for(normalized_message),
-        },
+        safe_context=safe_context,
         quick_actions=_medical_referral_quick_actions(
             consultation_service, extra_service=growth_removal_service
         ),
@@ -2120,11 +2135,13 @@ def _analyze_message_core(
                     return _symptom_followup_result(guidance_result, knowledge_base, session)
                 return guidance_result
         return _medical_referral_result(
+            message,
             normalized_message,
             knowledge_base,
             session,
             service,
             restricted_category,
+            phone,
         )
 
     if contains_keyword(normalized_message, COMPLAINT_ESCALATION_KEYWORDS):

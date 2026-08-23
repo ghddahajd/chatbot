@@ -1357,6 +1357,41 @@ class ChatService:
                 policy_result.reason == PolicyReason.REGULATED_ADVICE
                 and self._regulated_escalation_mode(knowledge_base) == "soft"
             ):
+                # Живой баг (аудит §2026-08-22, F-11): "дам телефон. 89991234567. кстати я
+                # беременна..." — телефон и медицинский вопрос в одном сообщении. _medical_
+                # referral_result кладёт "contact" в safe_context именно для этого случая (та
+                # же форма, что _contact_safe_context) — создаём лид здесь же, не теряя мягкий
+                # медицинский текст (в отличие от обычного ASK_CONTACT-пути с другим ответом).
+                contact = policy_result.safe_context.get("contact")
+                if contact:
+                    lead = build_lead_from_contact(
+                        company_id=session.company_id,
+                        session_id=session.session_id,
+                        contact=contact,
+                        summary=self._lead_summary(
+                            session,
+                            message,
+                            is_booking_request=False,
+                            name=contact.get("name") if isinstance(contact, dict) else None,
+                            phone=contact.get("phone") if isinstance(contact, dict) else None,
+                        ),
+                        service_id=policy_result.service_id,
+                        reason=classify_lead_reason(
+                            last_intent=prior_last_intent, is_booking_request=False
+                        ),
+                        needs_operator=True,
+                        lead_trigger=lead_trigger_for(
+                            is_booking_request=False, is_operator_flow=False, is_regulated_flow=True
+                        ),
+                        unresolved_query="",
+                        recent_messages=recent_messages_for(session),
+                        operator_url=self._operator_session_url(session.session_id),
+                    )
+                    await self._finalize_lead_summary(session, lead)
+                    await lead_service.save(lead)
+                    lead_created = True
+                    await session_store.set_lead_requested(session.session_id, True)
+                    await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
                 response_action, answer, response_quick_actions = await self._regulated_soft_offer_response(
                     session_store=session_store,
                     session=session,

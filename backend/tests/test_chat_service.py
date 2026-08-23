@@ -625,6 +625,38 @@ def test_benign_pain_question_soft_offer_has_no_emergency_number(test_client) ->
 
     assert payload["action"] == "clarify"
     assert "103" not in payload["answer"]
+
+
+def test_phone_given_alongside_regulated_question_still_creates_lead(test_client, monkeypatch) -> None:
+    """Живой репро (аудит §2026-08-22, F-11): "окей ладно дам телефон. 89991234567. кстати я
+    беременна это важно для приёма дерматолога?" — телефон и медицинский вопрос в ОДНОМ
+    сообщении. medical_requested-ветка раньше возвращалась раньше общей "if phone:" проверки
+    и никогда её не достигала — номер молча терялся, lead_created оставался False, хотя
+    пациент прямым текстом дал контакт."""
+
+    events = []
+
+    async def fake_enqueue_event(**kwargs):
+        events.append(kwargs)
+        return []
+
+    monkeypatch.setattr(test_client.app.state.delivery_service, "enqueue_event", fake_enqueue_event)
+
+    payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": None,
+            "message": "окей ладно дам телефон. 89991234567. кстати я беременна это важно для приёма дерматолога?",
+        },
+    ).json()
+
+    assert payload["lead_created"] is True
+    assert events[-1]["event_type"] == "lead_created"
+    assert events[-1]["company_id"] == "rosh_demo"
+    # Мягкий медицинский текст должен остаться, не замениться на generic "спасибо, передали
+    # контакты" — это по-прежнему TRANSFER_OPERATOR/REGULATED_ADVICE ветка, просто с лидом.
+    assert "специалист" in payload["answer"].lower()
     assert "скорую" not in payload["answer"]
 
 

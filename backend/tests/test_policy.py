@@ -1185,6 +1185,25 @@ def test_price_without_service_asks_clarification(policy_session, knowledge_base
     assert result.quick_actions
 
 
+def test_generic_price_question_with_question_words_asks_clarification_not_unknown_service(
+    policy_session, knowledge_base
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-06): "прайс есть какой" классифицируется верно
+    (price_question, service_id=None), но mentions_unknown_service считал "есть"/"какой"
+    названием неизвестной услуги (не входили в service_noise) — общий вопрос о прайсе уходил
+    в шаблон "не нашёл по этой УСЛУГЕ", звучащий как "у нас нет такой услуги"."""
+
+    result = analyze_message(
+        "прайс есть какой",
+        policy_session,
+        knowledge_base,
+        {"intent": "price_question", "service_id": None, "confidence": 0.86},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.PRICE_QUESTION_NO_SERVICE
+
+
 def test_unknown_service_suggests_similar(policy_session, knowledge_base) -> None:
     result = _analyze("есть пилинг?", policy_session, knowledge_base)
 

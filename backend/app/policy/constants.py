@@ -454,6 +454,7 @@ PAIN_FEAR_ANTICIPATION_KEYWORDS = {
     "волнуюсь",
     "страшно",
     "паник",
+    "тревож",
 }
 PAIN_OR_SIDE_EFFECT_KEYWORDS = {
     "больно",

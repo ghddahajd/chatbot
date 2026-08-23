@@ -1336,6 +1336,32 @@ def test_geography_not_moscow(policy_session, knowledge_base) -> None:
     assert result.reason == PolicyReason.LOCATION_MISMATCH
 
 
+def test_location_mismatch_does_not_promise_unconfirmed_remote_format(
+    policy_session, knowledge_base
+) -> None:
+    """Живой репро (аудит §2026-08-22, F-13): "возможно есть удалённый формат консультации
+    для вашего случая" — ничем не подтверждённое обещание (клиника только очно, ни в услугах,
+    ни в конфиге клиента нет упоминания дистанционного приёма). Не должно звучать как обещание
+    конкретной возможности."""
+
+    result = _analyze("я не из Москвы, можно к вам?", policy_session, knowledge_base)
+
+    message = str(result.safe_context.get("message_to_user") or "")
+    assert "удалённый формат" not in message
+
+
+def test_location_mismatch_message_uses_multi_variant_phrasebook_key(knowledge_base) -> None:
+    """Живой репро (аудит §2026-08-22, F-13): 3 разных сообщения в одной сессии получали
+    дословно один и тот же захардкоженный текст. Теперь это ключ фразбука с несколькими
+    вариантами (тот же приём ротации, что и у остальных многовариантных ответов) — конкретная
+    ротация зависит от session_id и в юнит-тесте недетерминирована, поэтому здесь проверяем
+    сам факт наличия вариантов, не то, какой из них выпадет."""
+
+    value = knowledge_base.phrasebook.get("location_mismatch_offer")
+    assert isinstance(value, list)
+    assert len(value) > 1
+
+
 def test_small_talk_greeting(policy_session, knowledge_base) -> None:
     result = _analyze("привет", policy_session, knowledge_base)
 

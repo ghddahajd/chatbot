@@ -2294,10 +2294,13 @@ def _analyze_message_core(
             confidence=classifier_confidence or 0.86,
             safe_context={
                 "company_city": knowledge_base.company.city,
-                "message_to_user": (
-                    f"Очный приём только в {city_in_text}. "
-                    "Уточните, пожалуйста, у менеджера — возможно есть удалённый формат консультации для вашего случая."
-                ),
+                "message_to_user": _format_phrase(
+                    knowledge_base,
+                    "location_mismatch_offer",
+                    seed=_phrase_seed(session, "location_mismatch_offer"),
+                    city=city_in_text,
+                )
+                or f"Очный приём только в {city_in_text}. Уточните, пожалуйста, у менеджера, какой формат записи подойдёт в вашем случае.",
                 "context_for_model": {
                     "company_city": knowledge_base.company.city,
                     "note": (
@@ -2310,7 +2313,7 @@ def _analyze_message_core(
                 {
                     "label": "Позвать менеджера",
                     "type": "message",
-                    "value": "Хочу узнать про удалённый формат",
+                    "value": "Уточнить формат записи",
                 }
             ],
         )

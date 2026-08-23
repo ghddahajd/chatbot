@@ -1,0 +1,125 @@
+{"id": "smoke_price_биоревитализация", "company": "rosh_import_demo", "message": "сколько стоит Биоревитализация", "expected_service_id": "biorevitalizaciya_9d426f68"}
+{"id": "smoke_explain_биоревитализация", "company": "rosh_import_demo", "message": "расскажи про Биоревитализация", "expected_service_id": "biorevitalizaciya_9d426f68"}
+{"id": "smoke_mention_биоревитализация", "company": "rosh_import_demo", "message": "Биоревитализация", "expected_service_id": "biorevitalizaciya_9d426f68"}
+{"id": "smoke_variant_биоревитализация_0_введение_искусственных_имплантатов_в_мяг", "company": "rosh_import_demo", "message": "сколько стоит Введение искусственных имплантатов в мягкие ткани Bellarti Nucleo 20 ( 2мл. )", "expected_service_id": "biorevitalizaciya_9d426f68"}
+{"id": "smoke_variant_биоревитализация_1_введение_искусственных_имплантатов_в_мяг", "company": "rosh_import_demo", "message": "сколько стоит Введение искусственных имплантатов в мягкие ткани VISCODERM HYDROBOOSTER ( 1 мл. )", "expected_service_id": "biorevitalizaciya_9d426f68"}
+{"id": "smoke_price_ботулинотерапия", "company": "rosh_import_demo", "message": "сколько стоит Ботулинотерапия", "expected_service_id": "botulinoterapiya_9d5734af"}
+{"id": "smoke_explain_ботулинотерапия", "company": "rosh_import_demo", "message": "расскажи про Ботулинотерапия", "expected_service_id": "botulinoterapiya_9d5734af"}
+{"id": "smoke_mention_ботулинотерапия", "company": "rosh_import_demo", "message": "Ботулинотерапия", "expected_service_id": "botulinoterapiya_9d5734af"}
+{"id": "smoke_variant_ботулинотерапия_0_ботулинотерапия_ксеомин_1_ед", "company": "rosh_import_demo", "message": "сколько стоит Ботулинотерапия (Ксеомин) 1 ед.", "expected_service_id": "botulinoterapiya_9d5734af"}
+{"id": "smoke_variant_ботулинотерапия_1_ботулинотерапия_миотокс_1_ед", "company": "rosh_import_demo", "message": "сколько стоит Ботулинотерапия (Миотокс) 1 ед.", "expected_service_id": "botulinoterapiya_9d5734af"}
+{"id": "smoke_price_внутривенный_лазер_шатл_комби", "company": "rosh_import_demo", "message": "сколько стоит Внутривенный лазер Шатл Комби", "expected_service_id": "vnutrivennyi_lazer_shatl_kombi_0aba3cc7"}
+{"id": "smoke_explain_внутривенный_лазер_шатл_комби", "company": "rosh_import_demo", "message": "расскажи про Внутривенный лазер Шатл Комби", "expected_service_id": "vnutrivennyi_lazer_shatl_kombi_0aba3cc7"}
+{"id": "smoke_mention_внутривенный_лазер_шатл_комби", "company": "rosh_import_demo", "message": "Внутривенный лазер Шатл Комби", "expected_service_id": "vnutrivennyi_lazer_shatl_kombi_0aba3cc7"}
+{"id": "smoke_variant_внутривенный_лазер_шатл_комби_0_внутривенное_лазерное_облучение_крови_на", "company": "rosh_import_demo", "message": "сколько стоит Внутривенное лазерное облучение крови на аппарате \"Шатл - Комби\"", "expected_service_id": "vnutrivennyi_lazer_shatl_kombi_0aba3cc7"}
+{"id": "smoke_variant_внутривенный_лазер_шатл_комби_1_лазерное_облучение_крови_надвенным_элект", "company": "rosh_import_demo", "message": "сколько стоит Лазерное облучение крови надвенным электродом на аппарате \"Шатл - Комби\"", "expected_service_id": "vnutrivennyi_lazer_shatl_kombi_0aba3cc7"}
+{"id": "smoke_price_игольчатый_rf_лифтинг", "company": "rosh_import_demo", "message": "сколько стоит Игольчатый RF лифтинг", "expected_service_id": "igolchatyi_rf_lifting_26bb6108"}
+{"id": "smoke_explain_игольчатый_rf_лифтинг", "company": "rosh_import_demo", "message": "расскажи про Игольчатый RF лифтинг", "expected_service_id": "igolchatyi_rf_lifting_26bb6108"}
+{"id": "smoke_mention_игольчатый_rf_лифтинг", "company": "rosh_import_demo", "message": "Игольчатый RF лифтинг", "expected_service_id": "igolchatyi_rf_lifting_26bb6108"}
+{"id": "smoke_variant_игольчатый_rf_лифтинг_0_игольчатая_rf_терапия_т_зона", "company": "rosh_import_demo", "message": "сколько стоит Игольчатая RF терапия - Т зона", "expected_service_id": "igolchatyi_rf_lifting_26bb6108"}
+{"id": "smoke_variant_игольчатый_rf_лифтинг_1_игольчатая_rf_терапия_щеки_веки_2_зоны", "company": "rosh_import_demo", "message": "сколько стоит Игольчатая RF терапия - щеки + веки ( 2 зоны )", "expected_service_id": "igolchatyi_rf_lifting_26bb6108"}
+{"id": "smoke_price_консультации", "company": "rosh_import_demo", "message": "сколько стоит Консультации", "expected_service_id": "konsultacii_b8520924"}
+{"id": "smoke_explain_консультации", "company": "rosh_import_demo", "message": "расскажи про Консультации", "expected_service_id": "konsultacii_b8520924"}
+{"id": "smoke_mention_консультации", "company": "rosh_import_demo", "message": "Консультации", "expected_service_id": "konsultacii_b8520924"}
+{"id": "smoke_variant_консультации_0_консультация_гинеколога", "company": "rosh_import_demo", "message": "сколько стоит Консультация гинеколога", "expected_service_id": "konsultacii_b8520924"}
+{"id": "smoke_variant_консультации_1_экспресс_осмотр_15_минут", "company": "rosh_import_demo", "message": "сколько стоит Экспресс осмотр (15 минут)", "expected_service_id": "konsultacii_b8520924"}
+{"id": "smoke_price_лазерная_терапия_skin_tyte", "company": "rosh_import_demo", "message": "сколько стоит Лазерная Терапия Skin Tyte", "expected_service_id": "lazernaya_terapiya_skin_tyte_40372815"}
+{"id": "smoke_explain_лазерная_терапия_skin_tyte", "company": "rosh_import_demo", "message": "расскажи про Лазерная Терапия Skin Tyte", "expected_service_id": "lazernaya_terapiya_skin_tyte_40372815"}
+{"id": "smoke_mention_лазерная_терапия_skin_tyte", "company": "rosh_import_demo", "message": "Лазерная Терапия Skin Tyte", "expected_service_id": "lazernaya_terapiya_skin_tyte_40372815"}
+{"id": "smoke_variant_лазерная_терапия_skin_tyte_0_воздействие_инфракрасным_излучением_skin", "company": "rosh_import_demo", "message": "сколько стоит Воздействие инфракрасным излучением Skin Tyte - 1 зона ( 4кв.см. )", "expected_service_id": "lazernaya_terapiya_skin_tyte_40372815"}
+{"id": "smoke_variant_лазерная_терапия_skin_tyte_1_воздействие_инфракрасным_излучением_skin", "company": "rosh_import_demo", "message": "сколько стоит Воздействие инфракрасным излучением Skin Tyte - ягодицы", "expected_service_id": "lazernaya_terapiya_skin_tyte_40372815"}
+{"id": "smoke_price_лазерная_терапия_forever_clear", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия\r\n  Forever Clear", "expected_service_id": "lazernaya_terapiya_forever_clear_1bb9413f"}
+{"id": "smoke_explain_лазерная_терапия_forever_clear", "company": "rosh_import_demo", "message": "расскажи про Лазерная терапия\r\n  Forever Clear", "expected_service_id": "lazernaya_terapiya_forever_clear_1bb9413f"}
+{"id": "smoke_mention_лазерная_терапия_forever_clear", "company": "rosh_import_demo", "message": "Лазерная терапия\r\n  Forever Clear", "expected_service_id": "lazernaya_terapiya_forever_clear_1bb9413f"}
+{"id": "smoke_variant_лазерная_терапия_forever_clear_0_лазерная_терапия_forever_clear_t_зона", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия Forever Clear - T зона", "expected_service_id": "lazernaya_terapiya_forever_clear_1bb9413f"}
+{"id": "smoke_variant_лазерная_терапия_forever_clear_1_лазерная_терапия_forever_clear_щеки_за_о", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия Forever Clear - щеки (за обе)", "expected_service_id": "lazernaya_terapiya_forever_clear_1bb9413f"}
+{"id": "smoke_price_лазерная_терапия_forever_young", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия Forever Young", "expected_service_id": "lazernaya_terapiya_forever_young_de29e9ad"}
+{"id": "smoke_explain_лазерная_терапия_forever_young", "company": "rosh_import_demo", "message": "расскажи про Лазерная терапия Forever Young", "expected_service_id": "lazernaya_terapiya_forever_young_de29e9ad"}
+{"id": "smoke_mention_лазерная_терапия_forever_young", "company": "rosh_import_demo", "message": "Лазерная терапия Forever Young", "expected_service_id": "lazernaya_terapiya_forever_young_de29e9ad"}
+{"id": "smoke_variant_лазерная_терапия_forever_young_0_лазерная_терапия_forever_young_одна_вспы", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия Forever Young ( одна вспышка )", "expected_service_id": "lazernaya_terapiya_forever_young_de29e9ad"}
+{"id": "smoke_variant_лазерная_терапия_forever_young_1_лазерная_терапия_forever_young_щеки_за_о", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия Forever Young - щеки ( за обе )", "expected_service_id": "lazernaya_terapiya_forever_young_de29e9ad"}
+{"id": "smoke_price_лазерная_терапия_halo", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия HALO", "expected_service_id": "lazernaya_terapiya_halo_6d7bdf9f"}
+{"id": "smoke_explain_лазерная_терапия_halo", "company": "rosh_import_demo", "message": "расскажи про Лазерная терапия HALO", "expected_service_id": "lazernaya_terapiya_halo_6d7bdf9f"}
+{"id": "smoke_mention_лазерная_терапия_halo", "company": "rosh_import_demo", "message": "Лазерная терапия HALO", "expected_service_id": "lazernaya_terapiya_halo_6d7bdf9f"}
+{"id": "smoke_variant_лазерная_терапия_halo_0_лазерная_терапия_halo_т_зона", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия HALO - Т зона", "expected_service_id": "lazernaya_terapiya_halo_6d7bdf9f"}
+{"id": "smoke_variant_лазерная_терапия_halo_1_лазерная_терапия_halo_щеки_обе", "company": "rosh_import_demo", "message": "сколько стоит Лазерная терапия HALO - щеки ( обе )", "expected_service_id": "lazernaya_terapiya_halo_6d7bdf9f"}
+{"id": "smoke_price_лазерная_шлифовка", "company": "rosh_import_demo", "message": "сколько стоит Лазерная шлифовка", "expected_service_id": "lazernaya_shlifovka_8965cb81"}
+{"id": "smoke_explain_лазерная_шлифовка", "company": "rosh_import_demo", "message": "расскажи про Лазерная шлифовка", "expected_service_id": "lazernaya_shlifovka_8965cb81"}
+{"id": "smoke_mention_лазерная_шлифовка", "company": "rosh_import_demo", "message": "Лазерная шлифовка", "expected_service_id": "lazernaya_shlifovka_8965cb81"}
+{"id": "smoke_variant_лазерная_шлифовка_0_фракционная_абляционная_шлифовка_profrac", "company": "rosh_import_demo", "message": "сколько стоит Фракционная абляционная шлифовка ProFractional - T зона", "expected_service_id": "lazernaya_shlifovka_8965cb81"}
+{"id": "smoke_variant_лазерная_шлифовка_1_фракционная_абляционная_шлифовка_zoom_sc", "company": "rosh_import_demo", "message": "сколько стоит Фракционная абляционная шлифовка ZOOM SCAN -\"Т зона\"", "expected_service_id": "lazernaya_shlifovka_8965cb81"}
+{"id": "smoke_price_лазерная_эпиляция", "company": "rosh_import_demo", "message": "сколько стоит Лазерная эпиляция", "expected_service_id": "lazernaya_epilyaciya_bc614e41"}
+{"id": "smoke_explain_лазерная_эпиляция", "company": "rosh_import_demo", "message": "расскажи про Лазерная эпиляция", "expected_service_id": "lazernaya_epilyaciya_bc614e41"}
+{"id": "smoke_mention_лазерная_эпиляция", "company": "rosh_import_demo", "message": "Лазерная эпиляция", "expected_service_id": "lazernaya_epilyaciya_bc614e41"}
+{"id": "smoke_variant_лазерная_эпиляция_0_лазерная_эпиляция_1_вспышка", "company": "rosh_import_demo", "message": "сколько стоит Лазерная эпиляция ( 1 вспышка )", "expected_service_id": "lazernaya_epilyaciya_bc614e41"}
+{"id": "smoke_variant_лазерная_эпиляция_1_лазерная_эпиляция_тела_10_10_кв_см", "company": "rosh_import_demo", "message": "сколько стоит Лазерная эпиляция тела ( 10*10 кв.см. )", "expected_service_id": "lazernaya_epilyaciya_bc614e41"}
+{"id": "smoke_price_лазерный_пилинг", "company": "rosh_import_demo", "message": "сколько стоит Лазерный пилинг", "expected_service_id": "lazernyi_piling_15ed1f53"}
+{"id": "smoke_explain_лазерный_пилинг", "company": "rosh_import_demo", "message": "расскажи про Лазерный пилинг", "expected_service_id": "lazernyi_piling_15ed1f53"}
+{"id": "smoke_mention_лазерный_пилинг", "company": "rosh_import_demo", "message": "Лазерный пилинг", "expected_service_id": "lazernyi_piling_15ed1f53"}
+{"id": "smoke_variant_лазерный_пилинг_0_лазерный_пилинг_microlaserpeel_т_зона", "company": "rosh_import_demo", "message": "сколько стоит Лазерный пилинг MicroLaserPeel - Т зона", "expected_service_id": "lazernyi_piling_15ed1f53"}
+{"id": "smoke_variant_лазерный_пилинг_1_лазерный_пилинг_nanolaserpeel_лицо_до_10", "company": "rosh_import_demo", "message": "сколько стоит Лазерный пилинг NanoLaserPeel - лицо (до 10 микрон)", "expected_service_id": "lazernyi_piling_15ed1f53"}
+{"id": "smoke_price_мезотерапия", "company": "rosh_import_demo", "message": "сколько стоит Мезотерапия", "expected_service_id": "mezoterapiya_a62ea8d4"}
+{"id": "smoke_explain_мезотерапия", "company": "rosh_import_demo", "message": "расскажи про Мезотерапия", "expected_service_id": "mezoterapiya_a62ea8d4"}
+{"id": "smoke_mention_мезотерапия", "company": "rosh_import_demo", "message": "Мезотерапия", "expected_service_id": "mezoterapiya_a62ea8d4"}
+{"id": "smoke_variant_мезотерапия_0_мезотерапия_волосистой_части_головы", "company": "rosh_import_demo", "message": "сколько стоит Мезотерапия волосистой части головы", "expected_service_id": "mezoterapiya_a62ea8d4"}
+{"id": "smoke_variant_мезотерапия_1_мезотерапия_моно_препарат_3", "company": "rosh_import_demo", "message": "сколько стоит Мезотерапия, моно препарат №3", "expected_service_id": "mezoterapiya_a62ea8d4"}
+{"id": "smoke_price_пилинги", "company": "rosh_import_demo", "message": "сколько стоит Пилинги", "expected_service_id": "pilingi_8dde1279"}
+{"id": "smoke_explain_пилинги", "company": "rosh_import_demo", "message": "расскажи про Пилинги", "expected_service_id": "pilingi_8dde1279"}
+{"id": "smoke_mention_пилинги", "company": "rosh_import_demo", "message": "Пилинги", "expected_service_id": "pilingi_8dde1279"}
+{"id": "smoke_variant_пилинги_0_азелаиновый_пилинг", "company": "rosh_import_demo", "message": "сколько стоит Азелаиновый пилинг", "expected_service_id": "pilingi_8dde1279"}
+{"id": "smoke_variant_пилинги_1_пилинг_яблочный_applepeel", "company": "rosh_import_demo", "message": "сколько стоит Пилинг Яблочный ApplePeel", "expected_service_id": "pilingi_8dde1279"}
+{"id": "smoke_price_уходы_и_маски", "company": "rosh_import_demo", "message": "сколько стоит Уходы и маски", "expected_service_id": "uhody_i_maski_c2d46c2a"}
+{"id": "smoke_explain_уходы_и_маски", "company": "rosh_import_demo", "message": "расскажи про Уходы и маски", "expected_service_id": "uhody_i_maski_c2d46c2a"}
+{"id": "smoke_mention_уходы_и_маски", "company": "rosh_import_demo", "message": "Уходы и маски", "expected_service_id": "uhody_i_maski_c2d46c2a"}
+{"id": "smoke_variant_уходы_и_маски_0_восстанавливающая_маска_meso_wharton_pos", "company": "rosh_import_demo", "message": "сколько стоит Восстанавливающая маска Meso-Wharton \"post treatment\"", "expected_service_id": "uhody_i_maski_c2d46c2a"}
+{"id": "smoke_variant_уходы_и_маски_1_маска_область_спины_3_зоны", "company": "rosh_import_demo", "message": "сколько стоит Маска, область спины ( 3 зоны)", "expected_service_id": "uhody_i_maski_c2d46c2a"}
+{"id": "smoke_price_филлеры", "company": "rosh_import_demo", "message": "сколько стоит Филлеры", "expected_service_id": "fillery_f2df3e74"}
+{"id": "smoke_explain_филлеры", "company": "rosh_import_demo", "message": "расскажи про Филлеры", "expected_service_id": "fillery_f2df3e74"}
+{"id": "smoke_mention_филлеры", "company": "rosh_import_demo", "message": "Филлеры", "expected_service_id": "fillery_f2df3e74"}
+{"id": "smoke_variant_филлеры_0_введение_искусственных_имплантатов_в_мяг", "company": "rosh_import_demo", "message": "сколько стоит Введение искусственных имплантатов в мягкие ткани Aesthe FillV200 ( 1 флакон )", "expected_service_id": "fillery_f2df3e74"}
+{"id": "smoke_variant_филлеры_1_введнение_искусственных_имплантов_в_мягк", "company": "rosh_import_demo", "message": "сколько стоит Введнение искусственных имплантов в мягкие ткани Aliaxin LV (1 мл.)", "expected_service_id": "fillery_f2df3e74"}
+{"id": "smoke_price_фотолечение_bbl", "company": "rosh_import_demo", "message": "сколько стоит Фотолечение BBL", "expected_service_id": "fotolechenie_bbl_85e80491"}
+{"id": "smoke_explain_фотолечение_bbl", "company": "rosh_import_demo", "message": "расскажи про Фотолечение BBL", "expected_service_id": "fotolechenie_bbl_85e80491"}
+{"id": "smoke_mention_фотолечение_bbl", "company": "rosh_import_demo", "message": "Фотолечение BBL", "expected_service_id": "fotolechenie_bbl_85e80491"}
+{"id": "smoke_variant_фотолечение_bbl_0_фототерапия_кожи_bbl_т_зона", "company": "rosh_import_demo", "message": "сколько стоит Фототерапия кожи BBL - Т зона", "expected_service_id": "fotolechenie_bbl_85e80491"}
+{"id": "smoke_variant_фотолечение_bbl_1_фототерапия_кожи_bbl_ягодицы", "company": "rosh_import_demo", "message": "сколько стоит Фототерапия кожи BBL - ягодицы", "expected_service_id": "fotolechenie_bbl_85e80491"}
+{"id": "smoke_price_чистки", "company": "rosh_import_demo", "message": "сколько стоит Чистки", "expected_service_id": "chistki_e744e513"}
+{"id": "smoke_explain_чистки", "company": "rosh_import_demo", "message": "расскажи про Чистки", "expected_service_id": "chistki_e744e513"}
+{"id": "smoke_mention_чистки", "company": "rosh_import_demo", "message": "Чистки", "expected_service_id": "chistki_e744e513"}
+{"id": "smoke_variant_чистки_0_вскрытие_угревого_элемента", "company": "rosh_import_demo", "message": "сколько стоит Вскрытие угревого элемента", "expected_service_id": "chistki_e744e513"}
+{"id": "smoke_variant_чистки_1_механическая_чистка_спины", "company": "rosh_import_demo", "message": "сколько стоит Механическая чистка спины", "expected_service_id": "chistki_e744e513"}
+{"id": "smoke_price_эксимерный_лазер", "company": "rosh_import_demo", "message": "сколько стоит Эксимерный лазер", "expected_service_id": "eksimernyi_lazer_9308f545"}
+{"id": "smoke_explain_эксимерный_лазер", "company": "rosh_import_demo", "message": "расскажи про Эксимерный лазер", "expected_service_id": "eksimernyi_lazer_9308f545"}
+{"id": "smoke_mention_эксимерный_лазер", "company": "rosh_import_demo", "message": "Эксимерный лазер", "expected_service_id": "eksimernyi_lazer_9308f545"}
+{"id": "smoke_variant_эксимерный_лазер_0_лечение_на_аппарате_эксилайт_одна_процед", "company": "rosh_import_demo", "message": "сколько стоит Лечение на аппарате Эксилайт (одна процедура - 1 категория)", "expected_service_id": "eksimernyi_lazer_9308f545"}
+{"id": "smoke_variant_эксимерный_лазер_1_лечение_на_аппарате_эксилайт_одна_процед", "company": "rosh_import_demo", "message": "сколько стоит Лечение на аппарате Эксилайт (одна процедура - 3 категория)", "expected_service_id": "eksimernyi_lazer_9308f545"}
+{"id": "smoke_price_биорезонансная_терапия_на_аппарате_bicom", "company": "rosh_import_demo", "message": "сколько стоит Биорезонансная терапия на аппарате BICOM", "expected_service_id": "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"}
+{"id": "smoke_explain_биорезонансная_терапия_на_аппарате_bicom", "company": "rosh_import_demo", "message": "расскажи про Биорезонансная терапия на аппарате BICOM", "expected_service_id": "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"}
+{"id": "smoke_mention_биорезонансная_терапия_на_аппарате_bicom", "company": "rosh_import_demo", "message": "Биорезонансная терапия на аппарате BICOM", "expected_service_id": "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"}
+{"id": "smoke_variant_биорезонансная_терапия_на_аппарате_bicom_0_выявление_аллергенов_на_аппарате_bicom", "company": "rosh_import_demo", "message": "сколько стоит Выявление аллергенов на аппарате BICOM", "expected_service_id": "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"}
+{"id": "smoke_variant_биорезонансная_терапия_на_аппарате_bicom_1_симптоматическое_лечение_на_аппарате_bic", "company": "rosh_import_demo", "message": "сколько стоит Симптоматическое лечение на аппарате BICOM ( от 8 лет)", "expected_service_id": "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"}
+{"id": "smoke_price_гинекология", "company": "rosh_import_demo", "message": "сколько стоит Гинекология", "expected_service_id": "ginekologiya_fd7d28b2"}
+{"id": "smoke_explain_гинекология", "company": "rosh_import_demo", "message": "расскажи про Гинекология", "expected_service_id": "ginekologiya_fd7d28b2"}
+{"id": "smoke_mention_гинекология", "company": "rosh_import_demo", "message": "Гинекология", "expected_service_id": "ginekologiya_fd7d28b2"}
+{"id": "smoke_variant_гинекология_0_индивидуальный_подбор_метода_контрацепци", "company": "rosh_import_demo", "message": "сколько стоит Индивидуальный подбор метода контрацепции", "expected_service_id": "ginekologiya_fd7d28b2"}
+{"id": "smoke_variant_гинекология_1_удаление_внутриматочной_спирали", "company": "rosh_import_demo", "message": "сколько стоит Удаление внутриматочной спирали", "expected_service_id": "ginekologiya_fd7d28b2"}
+{"id": "smoke_price_диагностика_на_аппарате_bicom_body_check", "company": "rosh_import_demo", "message": "сколько стоит Диагностика на аппарате BICOM BODY CHECK", "expected_service_id": "diagnostika_na_apparate_bicom_body_check_9bf8a621"}
+{"id": "smoke_explain_диагностика_на_аппарате_bicom_body_check", "company": "rosh_import_demo", "message": "расскажи про Диагностика на аппарате BICOM BODY CHECK", "expected_service_id": "diagnostika_na_apparate_bicom_body_check_9bf8a621"}
+{"id": "smoke_mention_диагностика_на_аппарате_bicom_body_check", "company": "rosh_import_demo", "message": "Диагностика на аппарате BICOM BODY CHECK", "expected_service_id": "diagnostika_na_apparate_bicom_body_check_9bf8a621"}
+{"id": "smoke_variant_диагностика_на_аппарате_bicom_body_check_0_полная_диагностика_bicom_body_check", "company": "rosh_import_demo", "message": "сколько стоит Полная диагностика BICOM BODY CHECK", "expected_service_id": "diagnostika_na_apparate_bicom_body_check_9bf8a621"}
+{"id": "smoke_variant_диагностика_на_аппарате_bicom_body_check_1_экспресс_диагностика_bicom_body_check", "company": "rosh_import_demo", "message": "сколько стоит Экспресс диагностика BICOM BODY CHECK", "expected_service_id": "diagnostika_na_apparate_bicom_body_check_9bf8a621"}
+{"id": "smoke_price_удаление_новообразований", "company": "rosh_import_demo", "message": "сколько стоит Удаление новообразований", "expected_service_id": "udalenie_novoobrazovanii_12634fed"}
+{"id": "smoke_explain_удаление_новообразований", "company": "rosh_import_demo", "message": "расскажи про Удаление новообразований", "expected_service_id": "udalenie_novoobrazovanii_12634fed"}
+{"id": "smoke_mention_удаление_новообразований", "company": "rosh_import_demo", "message": "Удаление новообразований", "expected_service_id": "udalenie_novoobrazovanii_12634fed"}
+{"id": "smoke_variant_удаление_новообразований_0_вскрытие_и_обработка_кист_до_0_5_см", "company": "rosh_import_demo", "message": "сколько стоит Вскрытие и обработка кист до 0,5 см.", "expected_service_id": "udalenie_novoobrazovanii_12634fed"}
+{"id": "smoke_variant_удаление_новообразований_1_удаление_папилломы_до_0_5_см_1_шт", "company": "rosh_import_demo", "message": "сколько стоит Удаление папилломы до 0,5 см. (1 шт.)", "expected_service_id": "udalenie_novoobrazovanii_12634fed"}
+{"id": "smoke_price_прессотерапия", "company": "rosh_import_demo", "message": "сколько стоит Прессотерапия", "expected_service_id": "pressoterapiya_9cb42ab5"}
+{"id": "smoke_explain_прессотерапия", "company": "rosh_import_demo", "message": "расскажи про Прессотерапия", "expected_service_id": "pressoterapiya_9cb42ab5"}
+{"id": "smoke_mention_прессотерапия", "company": "rosh_import_demo", "message": "Прессотерапия", "expected_service_id": "pressoterapiya_9cb42ab5"}
+{"id": "smoke_variant_прессотерапия_0_лимфодренаж_ног_30_минут", "company": "rosh_import_demo", "message": "сколько стоит Лимфодренаж ног 30 минут", "expected_service_id": "pressoterapiya_9cb42ab5"}
+{"id": "smoke_variant_прессотерапия_1_лимфодренаж_рук_30_минут", "company": "rosh_import_demo", "message": "сколько стоит Лимфодренаж рук 30 минут", "expected_service_id": "pressoterapiya_9cb42ab5"}
+{"id": "smoke_price_экзосомальная_терапия", "company": "rosh_import_demo", "message": "сколько стоит Экзосомальная терапия", "expected_service_id": "ekzosomalnaya_terapiya_bbbd0116"}
+{"id": "smoke_explain_экзосомальная_терапия", "company": "rosh_import_demo", "message": "расскажи про Экзосомальная терапия", "expected_service_id": "ekzosomalnaya_terapiya_bbbd0116"}
+{"id": "smoke_mention_экзосомальная_терапия", "company": "rosh_import_demo", "message": "Экзосомальная терапия", "expected_service_id": "ekzosomalnaya_terapiya_bbbd0116"}
+{"id": "smoke_variant_экзосомальная_терапия_0_экзосомальная_терапия_кожи_маской_asce", "company": "rosh_import_demo", "message": "сколько стоит Экзосомальная терапия кожи маской ASCE", "expected_service_id": "ekzosomalnaya_terapiya_bbbd0116"}
+{"id": "smoke_variant_экзосомальная_терапия_1_экзосомальная_терапия_кожи_препаратом_mp", "company": "rosh_import_demo", "message": "сколько стоит Экзосомальная терапия кожи препаратом MPC M PURE CELL (1 мл.)", "expected_service_id": "ekzosomalnaya_terapiya_bbbd0116"}

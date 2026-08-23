@@ -213,7 +213,7 @@ async def debug_trace(
     steps: list[dict[str, Any]] = []
     session = Session(company_id=payload.company_id)
     session.messages.append(Message(role=MessageRole.USER, text=message))
-    known_services = service_classifier_payload(request, knowledge_base)
+    known_services = service_classifier_payload(request, knowledge_base, include_variants=True)
 
     local_classification = classify_and_extract(
         message,

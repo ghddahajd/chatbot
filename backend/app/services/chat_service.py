@@ -535,7 +535,7 @@ class ChatService:
             return True
         classification = classify_and_extract(
             message,
-            service_classifier_payload(self.request, knowledge_base),
+            service_classifier_payload(self.request, knowledge_base, include_variants=True),
             knowledge_base.company.city,
             knowledge_base.domain_profile,
         )
@@ -554,7 +554,7 @@ class ChatService:
 
         classification = classify_and_extract(
             message,
-            service_classifier_payload(self.request, knowledge_base),
+            service_classifier_payload(self.request, knowledge_base, include_variants=True),
             knowledge_base.company.city,
             knowledge_base.domain_profile,
         )
@@ -1161,7 +1161,7 @@ class ChatService:
         if session.status == SessionStatus.WAITING_OPERATOR:
             local_classification = classify_and_extract(
                 message,
-                service_classifier_payload(request, knowledge_base),
+                service_classifier_payload(request, knowledge_base, include_variants=True),
                 knowledge_base.company.city,
                 knowledge_base.domain_profile,
             )

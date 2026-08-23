@@ -103,7 +103,15 @@ def format_quick_actions(
 def service_classifier_payload(
     request: Request,
     knowledge_base: KnowledgeBase | None = None,
+    *,
+    include_variants: bool = False,
 ) -> list[dict[str, object]]:
+    """include_variants по умолчанию False: этот payload уходит и в промпт настоящего LLM
+    (classify_structured/classify_and_extract в resolve_classification) — добавлять сюда
+    все variants (до 351 строки по всем услугам) раздуло бы токены/стоимость КАЖДОГО
+    сообщения. True — только для мест, где payload идёт исключительно в локальный
+    (бесплатный) classify_and_extract, а не в LLM."""
+
     selected_knowledge_base = knowledge_base or request.app.state.knowledge_base
     return [
         {
@@ -111,6 +119,7 @@ def service_classifier_payload(
             "name": service.name,
             "synonyms": service.synonyms,
             "category": service.category,
+            **({"variants": service.variants} if include_variants else {}),
         }
         for service in selected_knowledge_base.services
     ]
@@ -607,9 +616,11 @@ async def resolve_classification(
 ) -> dict[str, object]:
     selected_knowledge_base = knowledge_base or request.app.state.knowledge_base
     known_services = service_classifier_payload(request, selected_knowledge_base)
+    # variants только в этот, ЛОКАЛЬНЫЙ вызов — known_services (без variants) ниже отдельно
+    # уходит в промпт настоящего LLM (classify_structured/classify_and_extract), это не трогаем.
     local_result = classify_and_extract(
         message,
-        known_services,
+        service_classifier_payload(request, selected_knowledge_base, include_variants=True),
         selected_knowledge_base.company.city,
         selected_knowledge_base.domain_profile,
     )

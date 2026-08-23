@@ -109,6 +109,31 @@ def test_typo_does_not_fuzzy_match_unrelated_bicom_service(resolver, managed_env
     assert "diagnostika_na_apparate_bicom_body_check_9bf8a621" not in matched_ids
 
 
+def test_bicom_body_check_resolves_to_itself_not_bioresonance(resolver, managed_env) -> None:
+    """Живой баг (RAG/smoke-развёртка, 2026-08-24): "Биорезонансная терапия на аппарате
+    BICOM" и "Диагностика на аппарате BICOM BODY CHECK" делят короткий синоним "bicom"/
+    "биком". _local_service_id матчил услуги по ПОРЯДКУ в списке (bioresonance раньше в
+    services.json) — короткий общий синоним побеждал даже когда сообщение содержит точное
+    название BODY CHECK целиком, и клиент получал цену ДРУГОЙ услуги. Явное упоминание
+    полного названия услуги теперь всегда резолвится в неё саму, независимо от порядка."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message in [
+        "сколько стоит Диагностика на аппарате BICOM BODY CHECK",
+        "расскажи про Диагностика на аппарате BICOM BODY CHECK",
+        "сколько стоит Полная диагностика BICOM BODY CHECK",
+        "сколько стоит Экспресс диагностика BICOM BODY CHECK",
+    ]:
+        result = _classify(message, knowledge_base)
+        assert result["service_id"] == "diagnostika_na_apparate_bicom_body_check_9bf8a621", message
+
+    # Вариант из ДРУГОЙ (bioresonance) услуги должен по-прежнему резолвиться в неё, а не в
+    # BODY CHECK — расширение на variants не должно перетягивать одеяло в обратную сторону.
+    result = _classify("сколько стоит Выявление аллергенов на аппарате BICOM", knowledge_base)
+    assert result["service_id"] == "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"
+
+
 def test_missing_article_service_map_is_empty(knowledge_base) -> None:
     assert knowledge_base.article_service_map == {}
 

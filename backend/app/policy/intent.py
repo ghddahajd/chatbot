@@ -141,6 +141,33 @@ def _local_service_id(
             if service_payload.get("id") == "facial_cleansing":
                 return "facial_cleansing"
 
+    # Живой баг (BICOM): "Биорезонансная терапия на аппарате BICOM" и "Диагностика на
+    # аппарате BICOM BODY CHECK" делят короткий синоним "bicom"/"биком" — и у первой в прайсе
+    # есть вариант "Диагностика на аппарате BICOM (до 8 лет)", ещё больше пересекающийся по
+    # словам со второй услугой целиком. Цикл ниже матчит по ПОРЯДКУ услуг в списке, а не по
+    # специфичности совпадения — короткий синоним у раньше идущей услуги побеждал, даже когда
+    # сообщение буквально содержит точное название ДРУГОЙ услуги или её варианта целиком.
+    # Отдельным проходом сначала ищем самое ДЛИННОЕ точное совпадение (name услуги или name
+    # одного из её variants — оба сильные, самодостаточные сигналы) по ВСЕМ услугам; длина —
+    # тот же принцип специфичности, что уже применяется в find_variant_matches (variants.py)
+    # для выбора между вариантами ВНУТРИ услуги. Если ничего не нашлось — откатываемся к
+    # обычному циклу name+synonyms по порядку списка, как раньше.
+    best_match: tuple[int, str] | None = None
+    for service_payload in known_services:
+        normalized_name = normalize_text(str(service_payload.get("name") or ""))
+        if normalized_name and normalized_name in normalized_message:
+            if best_match is None or len(normalized_name) > best_match[0]:
+                best_match = (len(normalized_name), str(service_payload.get("id")))
+        for variant in service_payload.get("variants") or []:
+            if not isinstance(variant, dict):
+                continue
+            normalized_variant_name = normalize_text(str(variant.get("name") or ""))
+            if normalized_variant_name and normalized_variant_name in normalized_message:
+                if best_match is None or len(normalized_variant_name) > best_match[0]:
+                    best_match = (len(normalized_variant_name), str(service_payload.get("id")))
+    if best_match is not None:
+        return best_match[1]
+
     for service_payload in known_services:
         for term in _known_service_terms(service_payload):
             normalized_term = normalize_text(term)

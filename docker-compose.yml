@@ -26,7 +26,11 @@ services:
       - ./backend/logs:/app/logs
       - ./widget:/app/widget
       - ./demo:/app/demo
-      - ./client-input:/client-input:ro
+      # НЕ :ro — на сервере (CLIENT_DATA_DEPLOY_KEY задан) docker-entrypoint.sh сам пишет сюда
+      # RAG-корпус из приватного репо (rag_corpus/* -> /client-input/*, см. entrypoint). Локально
+      # этот код не выполняется (ключ пуст, entrypoint "skipping"), так что права на запись
+      # тут ничего не портят — ./client-input и так уже реальные данные, никто их не трогает.
+      - ./client-input:/client-input
     # Дефолтный docker-логдрайвер json-file без лимита пишет access-log uvicorn на КАЖДЫЙ
     # чат-запрос в stdout без ограничения — реальный риск забить диск на 50ГБ тарифе со
     # временем (аудит §2026-08-22). max-size×max-file — общий потолок на инстанс, не на файл.

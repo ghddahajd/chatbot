@@ -50,7 +50,7 @@ fi
 # не связано с аргументами, проверено отдельно — su -c путал ИЛИ ругался "Authentication
 # failure" в зависимости от порядка аргументов, ни один вариант не завёлся). python3 —
 # он уже в образе, os.setuid/setgid — сырой syscall, PAM вообще не участвует.
-chown -R appuser:appuser /app/data /app/logs
+chown -R appuser:appuser /app/data /app/logs /client-input
 exec python3 -c '
 import os, pwd, sys
 user = pwd.getpwnam("appuser")

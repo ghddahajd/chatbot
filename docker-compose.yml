@@ -5,7 +5,21 @@ services:
       dockerfile: backend/Dockerfile
     container_name: chat-widget-backend
     restart: unless-stopped
+    # bridge локально (Docker Desktop на Mac не умеет нормально host-режим), host на реальном
+    # сервере — там Docker-мост по умолчанию IPv4-only, а Telegram Bot API частично заблокирован
+    # по IPv4 в РФ-датацентрах, тогда как у самого хоста рабочий IPv6 (живой баг, 2026-08-25:
+    # telegram_bridge стабильно ловил ConnectTimeout/"Network unreachable" именно из контейнера,
+    # хотя curl с хоста по IPv6 подключался нормально). DOCKER_NETWORK_MODE=host — задаётся
+    # только в серверном .env, не в примере/локально.
+    network_mode: ${DOCKER_NETWORK_MODE:-bridge}
+    # С host-сетью "0.0.0.0" внутри контейнера — это буквально 0.0.0.0 хоста (нет отдельного
+    # network namespace), что публикует порт 8000 на публичном IP в обход nginx — та самая
+    # дыра, которую port-mapping ниже нарочно закрывал. UVICORN_HOST=127.0.0.1 на сервере
+    # держит тот же периметр, что и раньше, просто другим способом (bind вместо port-mapping).
+    command: ["uvicorn", "app.main:app", "--host", "${UVICORN_HOST:-0.0.0.0}", "--port", "8000"]
     ports:
+      # В host-режиме этот блок Docker Compose просто игнорирует (с предупреждением) — не
+      # мешает, но и не даёт защиты сам по себе в этом режиме, см. UVICORN_HOST выше.
       # 127.0.0.1, не 0.0.0.0 (аудит §2026-08-22): без этого docker публикует порт на всех
       # интерфейсах хоста по умолчанию — обход nginx/TLS целиком (nginx у этого проекта
       # нативный на хосте, не в докере, см. deploy/nginx.chat-widget.example.conf). Origin-

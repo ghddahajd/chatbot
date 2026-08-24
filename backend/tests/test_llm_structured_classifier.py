@@ -236,6 +236,34 @@ def test_summarize_session_prompt_forbids_claiming_contact_was_provided() -> Non
     assert "уже отдельно показано в карточке" in system_message
 
 
+def test_summarize_session_prompt_asks_to_quote_both_phones_when_client_gave_two() -> None:
+    """Живой баг (Telegram-карточка, 2026-08-24): "мой телефон 89261234567 или можно на
+    89169876543" — Lead.phone (одна строка на всю модель) хранит только ПЕРВЫЙ номер
+    (extract_phone делает .search(), не .findall()), а карточка оператору не показывает
+    второй вовсе. Полная переделка модели под список телефонов — инвазивно для последнего
+    дня тестирования; вместо этого промпт саммари просит явно процитировать оба номера
+    текстом, чтобы оператору не пришлось лезть в историю переписки."""
+
+    client = _RecordingCompletionClient("Клиент оставил два номера телефона: +79261234567 и +79169876543.")
+    session = Session(company_id="rosh_import_demo")
+    session.messages.append(
+        Message(role=MessageRole.USER, text="мой телефон 89261234567 или можно на 89169876543, как удобнее")
+    )
+    lead = Lead(
+        company_id="rosh_import_demo",
+        session_id="s1",
+        name="Не указано",
+        phone="+79261234567",
+        summary="оставил контакт",
+        reason="commercial_interest",
+    )
+
+    asyncio.run(client.summarize_session(session, lead))
+
+    system_message = client.last_payload["messages"][0]["content"]
+    assert "процитируй оба номера" in system_message
+
+
 def test_openai_structured_classifier_returns_none_on_invalid_schema() -> None:
     client = _RecordingOpenAIClient(
         {

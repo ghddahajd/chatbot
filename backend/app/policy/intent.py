@@ -293,4 +293,14 @@ def classify_and_extract(
         and fuzzy_contains(normalized_message, SMALL_TALK_KEYWORDS)
     ):
         return {"intent": "small_talk", "service_id": None, "confidence": 0.76}
+    # Живой баг (длинный диалог, демо-тестирование, 2026-08-24): "спасибо большое, вы очень
+    # помогли" (5 слов) — благодарность/прощание, но word-count-лимит выше (<=2 слова) не даёт
+    # её распознать как small_talk, а реальный LLM в конце длинного диалога классифицировал
+    # это как off_topic ("это не по моей части") — жёстко звучит в ответ на "спасибо". Раз мы
+    # дошли ДО СЮДА, все остальные более содержательные ветки (цена/запись/услуга/медицина/
+    # список услуг и т.д.) уже проверены и не совпали — значит бонус-риск, что "спасибо"
+    # прячет внутри забытый настоящий вопрос, здесь уже отсутствует. contains_keyword — без
+    # ограничения на длину сообщения, в отличие от fuzzy-варианта выше.
+    if contains_keyword(normalized_message, {"спасибо", "благодарю"}):
+        return {"intent": "small_talk", "service_id": None, "confidence": 0.8}
     return {"intent": "service_mention", "service_id": None, "confidence": 0.0}

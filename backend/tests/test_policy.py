@@ -1485,6 +1485,34 @@ def test_formal_greeting_zdravstvuyte_is_small_talk(policy_session, knowledge_ba
     assert result.reason == PolicyReason.SMALL_TALK
 
 
+def test_longer_gratitude_phrase_is_small_talk_not_off_topic(policy_session, knowledge_base) -> None:
+    """Живой баг (длинный диалог, демо-тестирование, 2026-08-24): "спасибо большое, вы очень
+    помогли" (5 слов) — благодарность/прощание, но word-count-лимит small_talk-fuzzy-проверки
+    (<=2 слова) её не ловил, и реальный LLM в конце длинного диалога классифицировал это как
+    off_topic ("это не по моей части") — резко звучит в ответ на благодарность."""
+
+    for message in [
+        "спасибо большое, вы очень помогли",
+        "большое спасибо за подробный ответ, было полезно",
+        "благодарю вас за информацию",
+    ]:
+        result = _analyze(message, policy_session, knowledge_base)
+        assert result.action == PolicyAction.SMALL_TALK, message
+        assert result.reason == PolicyReason.SMALL_TALK, message
+
+
+def test_gratitude_mixed_with_real_question_does_not_get_swallowed_as_small_talk(
+    policy_session, knowledge_base
+) -> None:
+    """Регресс-проверка: "спасибо, а сколько стоит..." не должно тонуть в small_talk — цена
+    внутри сообщения обязана победить (competing substantive signal), иначе реальный вопрос
+    потеряется. Новый фолбэк-чек в конце classify_and_extract срабатывает, только если
+    ничего содержательнее раньше не совпало."""
+
+    result = _analyze("спасибо, а сколько стоит чистка лица", policy_session, knowledge_base)
+    assert result.reason != PolicyReason.SMALL_TALK
+
+
 def test_fuzzy_price_and_short_service_typo(policy_session, knowledge_base) -> None:
     result = _analyze("сколко стоит чиска", policy_session, knowledge_base)
 

@@ -57,6 +57,7 @@ class PolicyReason(str, Enum):
     OBJECTION_HANDLED = "objection_handled"
     OBJECTION_BACKOFF = "objection_backoff"
     COMPLAINT = "complaint"
+    SELF_HARM_CRISIS = "self_harm_crisis"
 
 
 class PendingAction(str, Enum):

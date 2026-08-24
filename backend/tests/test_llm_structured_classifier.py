@@ -9,7 +9,7 @@ from typing import Any
 from app.llm import MockLLMClient
 from app.llm.openai_compatible import OpenAIClient
 from app.llm.prompts import build_system_prompt
-from app.models import Message, MessageRole
+from app.models import Lead, Message, MessageRole, Session
 
 
 KNOWN_SERVICES = [
@@ -207,6 +207,33 @@ def test_openai_complete_sends_history_as_chat_turns_not_system_json() -> None:
     assert messages[-1]["role"] == "user"
     assert client.last_payload["max_tokens"] == 320
     assert "Тип ответа: цена" in system_message
+
+
+def test_summarize_session_prompt_forbids_claiming_contact_was_provided() -> None:
+    """Живой баг (Telegram-карточка, 2026-08-24): "Тест Тестов +79999999999" — деторминированный
+    extract_name отверг "Тест Тестов" как не настоящее имя (lead.name="Не указано"), но LLM-
+    саммари, видя сырой текст сообщения, независимо написало "предоставил имя и телефон" —
+    карточка оператору противоречила сама себе. Промпт теперь явно просит не описывать факт
+    предоставления контактов (это уже отдельные поля карточки)."""
+
+    client = _RecordingCompletionClient("Клиент хочет записаться на чистку лица.")
+    session = Session(company_id="rosh_import_demo")
+    session.messages.append(Message(role=MessageRole.USER, text="хочу записаться на чистку лица"))
+    session.messages.append(Message(role=MessageRole.USER, text="Тест Тестов +79999999999"))
+    lead = Lead(
+        company_id="rosh_import_demo",
+        session_id="s1",
+        name="Не указано",
+        phone="+79999999999",
+        summary="хочу записаться на чистку лица",
+        reason="booking",
+    )
+
+    asyncio.run(client.summarize_session(session, lead))
+
+    system_message = client.last_payload["messages"][0]["content"]
+    assert "предоставил ли клиент имя и телефон" in system_message
+    assert "уже отдельно показано в карточке" in system_message
 
 
 def test_openai_structured_classifier_returns_none_on_invalid_schema() -> None:

@@ -46,6 +46,7 @@ from .constants import (
     PRICE_FUZZY_EXCLUDE_TOKENS,
     PRICE_KEYWORDS,
     PRODUCTS_FACT_KEYWORDS,
+    SELF_HARM_KEYWORDS,
     TELEGRAM_KEYWORDS,
     VISIT_KEYWORDS,
     WEBSITE_KEYWORDS,
@@ -2047,6 +2048,28 @@ def _analyze_message_core(
     intent = str(classification["intent"])
     classifier_confidence = float(classification["confidence"])
     normalized_message = normalize_text(message)
+
+    # Живой баг (демо-тестирование, 2026-08-24): domain_profile.hard_block_topics содержит
+    # "self_harm", но это было чисто декларативное поле — ни одного детерминированного
+    # ключевого слова про суицид/самоповреждение нигде в коде, только упоминание в промпте
+    # настоящему LLM как подсказка. "Я не хочу больше жить"/"думаю о суициде" получали ОБЩИЙ
+    # шаблон regulated_advice ("подключить менеджера?"), неотличимый от рутинного медицинского
+    # вопроса — самая критичная по безопасности категория целиком зависела от суждения LLM без
+    # гарантированного бэкапа. Проверяем ПЕРВЫМ, до вообще любой другой классификации/веток —
+    # не зависит от того, что решил классификатор (local ИЛИ модель).
+    if contains_keyword(normalized_message, SELF_HARM_KEYWORDS):
+        return PolicyResult(
+            action=PolicyAction.TRANSFER_OPERATOR,
+            reason=PolicyReason.SELF_HARM_CRISIS,
+            confidence=0.98,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": _phrase(knowledge_base, "self_harm_crisis"),
+                "handoff_message": _phrase(knowledge_base, "self_harm_crisis"),
+            },
+            quick_actions=[],
+        )
+
     service = knowledge_base.find_service_by_id(classification.get("service_id"))
     if intent == "price_question" and normalized_message in GENERIC_PRICE_MESSAGES:
         service = None

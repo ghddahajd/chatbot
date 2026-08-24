@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 from app.knowledge import KnowledgeBaseResolver, _token_prefix_match
-from app.models import Message, MessageRole, PolicyAction
+from app.models import Message, MessageRole, PolicyAction, PolicyReason
 from app.policy import analyze_message
 from app.policy.intent import classify_and_extract
 
@@ -282,6 +282,55 @@ def test_unknown_service_uses_article_trigger_phrase_on_later_message(
     assert "Биоревитализация" in answer
     assert "Филлеры" in answer
     assert "Тёмные круги могут быть связаны не только с косметологией" in answer
+
+
+def test_faq_question_ignores_curated_mapping_that_disagrees_with_known_service(
+    monkeypatch,
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой баг (BICOM smoke-test, 2026-08-24): классификация уже уверенно резолвит
+    конкретную BICOM-услугу (service уже известен), но ни у одной BICOM-услуги нет своей
+    curated-статьи в article_service_map.yaml — RAG вместо этого находит статью, привязанную
+    к СОВСЕМ ДРУГОЙ услуге ("Консультации"), и _cosmetic_article_guidance_result подменяет ей
+    верный ответ. Раньше guidance побеждала безусловно; теперь — только если её услуга
+    согласуется с уже известной, или уже известной услуги нет вовсе."""
+
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    # реальная curated-статья, привязанная ТОЛЬКО к "Консультации" — не к BICOM
+    unrelated_article_url = "https://www.medcenterrosh.ru/problems/belye-ugri-miliumy-lechenie-v-klinike-rosh"
+    monkeypatch.setattr(
+        policy_module,
+        "_retrieve_article_context_safe",
+        lambda message: [
+            {
+                "title": "Белые угри",
+                "url": unrelated_article_url,
+                "snippet": "любой текст, лишь бы совпадение было слабым сигналом",
+                "chunk_id": "fake-1",
+                "score": 12.0,
+            }
+        ],
+    )
+
+    result = analyze_message(
+        "расскажи про Биорезонансная терапия на аппарате BICOM",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "faq_question",
+            "service_id": "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07",
+            "confidence": 0.9,
+        },
+    )
+
+    assert result.action == PolicyAction.ANSWER
+    assert result.reason == PolicyReason.FAQ_QUESTION
+    assert result.safe_context["question_type"] == "faq_question"
+    assert result.safe_context.get("article_service_mapping") is None
 
 
 def test_faq_question_prefers_approved_article_mapping_over_free_answer(

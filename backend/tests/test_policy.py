@@ -1935,6 +1935,34 @@ def test_faq_question_uses_article_context(
     assert result.quick_actions[0]["type"] == "link"
 
 
+def test_faq_question_ignores_single_generic_word_even_if_it_would_score(
+    policy_session,
+    knowledge_base,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-24): "что делает" реальный LLM
+    классифицировал как faq_question (confidence 0.5) — единственное значимое слово "делает"
+    зацепило случайную статью про мужскую эпиляцию (обход правила rag_search "2+ совпадения").
+    Гард живёт в _retrieve_article_context_safe (единая точка входа), но именно ЭТА ветка —
+    место, где баг реально проявился live, поэтому регресс закрыт отдельно и здесь."""
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    result = analyze_message(
+        "кольпоскопия",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.5},
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.reason == PolicyReason.FAQ_QUESTION
+    assert not result.safe_context.get("article_context")
+
+
 def test_off_topic_answers_from_article_when_confident_rag_match(
     policy_session,
     knowledge_base,
@@ -1985,6 +2013,45 @@ def test_off_topic_still_declines_without_a_confident_rag_match(
 
     assert result.action == PolicyAction.OFF_TOPIC
     assert result.reason == PolicyReason.OFF_TOPIC
+
+
+def test_off_topic_ignores_single_generic_word_even_if_it_would_score(
+    policy_session,
+    knowledge_base,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-24, тот же день): "секс"/"вы
+    кто"/"что делает" зацепляли случайные статьи (ВМС, контрацептивы, эпиляция) — единственное
+    содержательное слово в сообщении обходит правило rag_search "2+ совпадения" (оно намеренно
+    снято для однословных запросов, иначе не находились бы реальные однословные темы вроде
+    "трихология"). off_topic ловит вообще любое сообщение, а не только уже тематические — для
+    него требуем 2+ значимых токена в самом сообщении, не полагаясь на послабление скорера."""
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    # "кольпоскопия" само по себе — единственное значимое слово, оно же заголовок статьи,
+    # так что при прямом обращении к RAG получило бы уверенный score (тот же обход правила).
+    bare_result = analyze_message(
+        "кольпоскопия",
+        policy_session,
+        knowledge_base,
+        {"intent": "off_topic", "service_id": None, "confidence": 0.9},
+    )
+    assert bare_result.action == PolicyAction.OFF_TOPIC
+    assert bare_result.reason == PolicyReason.OFF_TOPIC
+
+    # тот же корень слова, но 2+ токена в сообщении — RAG по-прежнему должен отвечать.
+    framed_result = analyze_message(
+        "как проходит кольпоскопия шейки матки",
+        policy_session,
+        knowledge_base,
+        {"intent": "off_topic", "service_id": None, "confidence": 0.9},
+    )
+    assert framed_result.action == PolicyAction.ANSWER
+    assert framed_result.reason == PolicyReason.FAQ_QUESTION
 
 
 def test_faq_question_can_use_article_context_for_known_service(

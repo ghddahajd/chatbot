@@ -8,7 +8,7 @@ from typing import Optional
 
 from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phrasebook_value_to_text
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
-from ..services.rag_search import STOP_WORDS, retrieve_article_context
+from ..services.rag_search import STOP_WORDS, retrieve_article_context, tokenize as rag_tokenize
 from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
@@ -211,6 +211,18 @@ def _article_quick_actions(matches: list[dict[str, object]]) -> list[object]:
 
 
 def _retrieve_article_context_safe(message: str) -> list[dict[str, object]]:
+    # Живой баг (ручное тестирование пользователем, 2026-08-24): "секс"/"вы кто"/"что делает"
+    # зацепляли случайные статьи (ВМС, контрацептивы, эпиляция для мужчин) через ЛЮБУЮ ветку,
+    # что вызывает эту функцию (off_topic, faq_question, body-topic) — единственное значимое
+    # слово в запросе обходит правило rag_search "2+ совпадения" (оно намеренно снято именно
+    # для однословных запросов, иначе не находились бы реальные однословные темы вроде
+    # "трихология"). Раньше сюда попадали только сообщения с уже подтверждённым тематическим
+    # сигналом (ключевое слово/уверенная классификация) — но "что делает" реальный LLM
+    # классифицировал как faq_question с confidence всего 0.5, и это уже было достаточно,
+    # чтобы дойти сюда. Требуем 2+ значимых токена В САМОМ ЗАПРОСЕ (не полагаясь на послабление
+    # скорера) — единая точка входа для всех вызовов ниже, а не по одной проверке на ветку.
+    if len(rag_tokenize(message)) < 2:
+        return []
     try:
         return retrieve_article_context(message)
     except FileNotFoundError:
@@ -2469,8 +2481,10 @@ def _analyze_message_core(
         # intent="off_topic" для тем, которых нет в services.json, но которые есть как СТАТЬЯ у
         # клиники (трихология, фотодинамическая терапия, конкретная модель оборудования) — бот
         # отвечал шаблонным отказом, хотя материал есть. _retrieve_article_context_safe уже
-        # фильтрует по MIN_ARTICLE_SCORE (тот же порог, что и faq_question ниже) — случайный
-        # мусорный запрос не наберёт 2+ совпадения и сюда не попадёт, останется тот же отказ.
+        # фильтрует по MIN_ARTICLE_SCORE (тот же порог, что и faq_question ниже).
+        #
+        # Однословный/малозначимый запрос уже отфильтрован внутри _retrieve_article_context_safe
+        # (см. её докстринг-комментарий) — единая точка входа для всех веток, включая эту.
         #
         # Намеренно НЕ проверяем _cosmetic_article_guidance_result здесь (в отличие от
         # faq_question/body-topic веток) — она берёт первый URL из топ-3 RAG-матчей, который
@@ -2724,7 +2738,26 @@ def _analyze_message_core(
         # единственный из 6 вызовов _cosmetic_article_guidance_result без гейта
         # _has_strong_article_overlap — слабое семантическое совпадение по RAG-скору забирало
         # ответ вместо честного faq_question ниже. Тот же гейт, что и во всех остальных ветках.
-        if guidance_result is not None and _has_strong_article_overlap(normalized_message, guidance_result):
+        #
+        # Живой баг (BICOM smoke-test, 2026-08-24): "расскажи про [конкретную BICOM-услугу]" —
+        # service уже уверенно резолвлен классификацией (проверено трейсом), но ни у одной
+        # BICOM-услуги нет своей curated-статьи, и _cosmetic_article_guidance_result вместо
+        # этого находил статью, привязанную к СОВСЕМ ДРУГОЙ услуге ("Консультации"), подменяя
+        # верный ответ на неё. Если service уже известен и curated-статья привязана к другим
+        # услугам, не включающим его, — не даём curated-подсказке перебить то, что мы уже
+        # точно знаем; падаем ниже, к обычному faq_question по article_matches.
+        mapped_service_ids: set[str] = set()
+        if guidance_result is not None:
+            mapping = guidance_result.safe_context.get("article_service_mapping") or {}
+            mapped_service_ids = set(mapping.get("service_ids") or [])
+        guidance_disagrees_with_known_service = (
+            service is not None and bool(mapped_service_ids) and service.id not in mapped_service_ids
+        )
+        if (
+            guidance_result is not None
+            and not guidance_disagrees_with_known_service
+            and _has_strong_article_overlap(normalized_message, guidance_result)
+        ):
             return guidance_result
 
         if not article_matches:

@@ -13,7 +13,7 @@ from app.models import SessionStatus
 from app.sessions import SessionStore
 
 
-def test_evict_stale_removes_closed_and_ai_active_but_keeps_operator_sessions() -> None:
+def test_evict_stale_removes_closed_and_ai_active_but_keeps_recent_operator_sessions() -> None:
     async def run() -> None:
         store = SessionStore()
         ai_session = await store.get_or_create(None, "rosh_demo")
@@ -31,13 +31,46 @@ def test_evict_stale_removes_closed_and_ai_active_but_keeps_operator_sessions() 
         waiting_session.updated_at = stale_time
         human_session.updated_at = stale_time
 
-        removed = await store.evict_stale(ttl_seconds=86400)
+        # 2 дня старее обычного 24ч ttl, но моложе страховочного operator_ttl_seconds (тут 5 дней) —
+        # оператор ещё может держать диалог у себя, эвиктить рано.
+        removed = await store.evict_stale(ttl_seconds=86400, operator_ttl_seconds=86400 * 5)
 
         assert removed == 2
         assert await store.get(ai_session.session_id) is None
         assert await store.get(closed_session.session_id) is None
         assert await store.get(waiting_session.session_id) is not None
         assert await store.get(human_session.session_id) is not None
+
+    anyio.run(run)
+
+
+def test_evict_stale_without_operator_ttl_never_touches_operator_sessions() -> None:
+    async def run() -> None:
+        store = SessionStore()
+        waiting_session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(waiting_session.session_id, SessionStatus.WAITING_OPERATOR)
+        waiting_session.updated_at = datetime.utcnow() - timedelta(days=365)
+
+        removed = await store.evict_stale(ttl_seconds=86400)
+
+        assert removed == 0
+        assert await store.get(waiting_session.session_id) is not None
+
+    anyio.run(run)
+
+
+def test_evict_stale_eventually_removes_abandoned_operator_sessions() -> None:
+    async def run() -> None:
+        store = SessionStore()
+        waiting_session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(waiting_session.session_id, SessionStatus.WAITING_OPERATOR)
+        waiting_session.updated_at = datetime.utcnow() - timedelta(days=3)
+
+        # 3 дня старше страховочного operator_ttl_seconds (2 дня) — считаем диалог заброшенным.
+        removed = await store.evict_stale(ttl_seconds=86400, operator_ttl_seconds=172800)
+
+        assert removed == 1
+        assert await store.get(waiting_session.session_id) is None
 
     anyio.run(run)
 
@@ -62,6 +95,45 @@ def test_snapshot_restore_keeps_active_non_closed_sessions(tmp_path: Path) -> No
         assert await restored_store.get(active_session.session_id) is not None
         assert await restored_store.get(waiting_session.session_id) is not None
         assert await restored_store.get(closed_session.session_id) is None
+
+    anyio.run(run)
+
+
+def test_snapshot_to_keeps_stale_operator_session_under_the_longer_operator_ttl(tmp_path: Path) -> None:
+    snapshot_file = tmp_path / "sessions.json"
+
+    async def run() -> None:
+        store = SessionStore()
+        waiting_session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(waiting_session.session_id, SessionStatus.WAITING_OPERATOR)
+        # Старее обычного 24ч session_ttl_seconds, но моложе 2-дневного operator_ttl_seconds —
+        # раньше это же условие роняло сессию из снапшота при рестарте/деплое (баг с "Сессия
+        # не найдена" в Telegram, когда карточка в очереди остаётся, а сессии за ней уже нет).
+        waiting_session.updated_at = datetime.utcnow() - timedelta(hours=30)
+
+        count = await store.snapshot_to(snapshot_file, ttl_seconds=86400, operator_ttl_seconds=172800)
+        restored_store = SessionStore()
+        restored_count = await restored_store.restore_from(snapshot_file)
+
+        assert count == 1
+        assert restored_count == 1
+        assert await restored_store.get(waiting_session.session_id) is not None
+
+    anyio.run(run)
+
+
+def test_snapshot_to_drops_operator_session_past_the_operator_ttl(tmp_path: Path) -> None:
+    snapshot_file = tmp_path / "sessions.json"
+
+    async def run() -> None:
+        store = SessionStore()
+        waiting_session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(waiting_session.session_id, SessionStatus.WAITING_OPERATOR)
+        waiting_session.updated_at = datetime.utcnow() - timedelta(days=3)
+
+        count = await store.snapshot_to(snapshot_file, ttl_seconds=86400, operator_ttl_seconds=172800)
+
+        assert count == 0
 
     anyio.run(run)
 

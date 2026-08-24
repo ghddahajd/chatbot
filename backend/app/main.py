@@ -34,15 +34,20 @@ async def _run_session_eviction_loop(
     session_store: SessionStore,
     *,
     ttl_seconds: int,
+    operator_ttl_seconds: int,
     interval_seconds: int,
     snapshot_file: Path | None,
 ) -> None:
     while True:
         try:
             await asyncio.sleep(interval_seconds)
-            await session_store.evict_stale(ttl_seconds)
+            await session_store.evict_stale(ttl_seconds, operator_ttl_seconds)
             if snapshot_file is not None:
-                await session_store.snapshot_to(snapshot_file, ttl_seconds=ttl_seconds)
+                await session_store.snapshot_to(
+                    snapshot_file,
+                    ttl_seconds=ttl_seconds,
+                    operator_ttl_seconds=operator_ttl_seconds,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -160,6 +165,7 @@ async def lifespan(app: FastAPI):
             _run_session_eviction_loop(
                 app.state.session_store,
                 ttl_seconds=settings.session_ttl_seconds,
+                operator_ttl_seconds=settings.operator_session_ttl_seconds,
                 interval_seconds=settings.session_eviction_interval_seconds,
                 snapshot_file=snapshot_file,
             )
@@ -212,7 +218,11 @@ async def lifespan(app: FastAPI):
             with contextlib.suppress(asyncio.CancelledError):
                 await analytics_prune_task
         if snapshot_file is not None:
-            await app.state.session_store.snapshot_to(snapshot_file, ttl_seconds=settings.session_ttl_seconds)
+            await app.state.session_store.snapshot_to(
+                snapshot_file,
+                ttl_seconds=settings.session_ttl_seconds,
+                operator_ttl_seconds=settings.operator_session_ttl_seconds,
+            )
 
 
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)

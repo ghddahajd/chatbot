@@ -62,32 +62,67 @@ class SessionStore:
         async with self._lock:
             return list(self._sessions.values())
 
-    async def evict_stale(self, ttl_seconds: int) -> int:
+    async def evict_stale(self, ttl_seconds: int, operator_ttl_seconds: Optional[int] = None) -> int:
         cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
-        evictable_statuses = {SessionStatus.CLOSED, SessionStatus.AI_ACTIVE}
+        operator_cutoff = (
+            datetime.utcnow() - timedelta(seconds=operator_ttl_seconds)
+            if operator_ttl_seconds is not None
+            else None
+        )
+        operator_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}
+        # Оператор держит диалог у себя, пока явно не закроет — цикл тут не "бот -> оператор ->
+        # снова бот", как в колл-центрах, поэтому не трогаем эти сессии на обычном 24ч TTL.
+        # Но полностью бессмертными их оставлять нельзя: если оператор потерял тикет насовсем,
+        # сессия висела бы в памяти вечно — отдельный, гораздо более длинный TTL (operator_ttl_seconds)
+        # служит только страховкой от заброшенных диалогов, не обычной уборкой.
         async with self._lock:
             stale_session_ids = [
                 session_id
                 for session_id, session in self._sessions.items()
-                if session.status in evictable_statuses and session.updated_at < cutoff
+                if (
+                    session.status not in operator_statuses
+                    and session.updated_at < cutoff
+                )
+                or (
+                    session.status in operator_statuses
+                    and operator_cutoff is not None
+                    and session.updated_at < operator_cutoff
+                )
             ]
             for session_id in stale_session_ids:
                 del self._sessions[session_id]
                 self._session_locks.pop(session_id, None)
             return len(stale_session_ids)
 
-    async def snapshot_to(self, path: Path, *, ttl_seconds: Optional[int] = None) -> int:
+    async def snapshot_to(
+        self,
+        path: Path,
+        *,
+        ttl_seconds: Optional[int] = None,
+        operator_ttl_seconds: Optional[int] = None,
+    ) -> int:
         cutoff = None
         if ttl_seconds is not None:
             cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
+        operator_cutoff = cutoff
+        if operator_ttl_seconds is not None:
+            operator_cutoff = datetime.utcnow() - timedelta(seconds=operator_ttl_seconds)
+
+        operator_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}
+
+        def _keep(session: Session) -> bool:
+            if session.status == SessionStatus.CLOSED:
+                return False
+            # Снапшот пишется и на плановом рестарте/деплое — здесь применяем ТОТ ЖЕ более
+            # длинный operator_ttl_seconds, что и evict_stale, а не общий 24ч cutoff: иначе
+            # ждущая оператора сессия старше суток молча пропадала бы при каждом деплое, хотя
+            # live-эвикция (evict_stale) её бы не тронула — Telegram-карточка осталась бы висеть,
+            # а привязанной сессии за ней уже не было бы ("Сессия не найдена" при попытке взять в работу).
+            active_cutoff = operator_cutoff if session.status in operator_statuses else cutoff
+            return active_cutoff is None or session.updated_at >= active_cutoff
 
         async with self._lock:
-            sessions = [
-                session
-                for session in self._sessions.values()
-                if session.status != SessionStatus.CLOSED
-                and (cutoff is None or session.updated_at >= cutoff)
-            ]
+            sessions = [session for session in self._sessions.values() if _keep(session)]
             payload = [session.model_dump(mode="json") for session in sessions]
 
         path.parent.mkdir(parents=True, exist_ok=True)

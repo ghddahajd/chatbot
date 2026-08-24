@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     delivery_retry_enabled: bool = True
     delivery_retry_interval_seconds: int = 60
     session_ttl_seconds: int = 86400
+    # Сессии WAITING_OPERATOR/HUMAN_ACTIVE не трогаем на обычном session_ttl_seconds — оператор
+    # держит диалог у себя, пока явно не закроет. Этот TTL — только страховка от диалогов,
+    # реально заброшенных (оператор потерял тикет), не обычная уборка; иначе такая сессия
+    # молча терялась бы из снапшота при каждом деплое/рестарте, хотя live-эвикция её не трогает.
+    operator_session_ttl_seconds: int = 172800
     session_eviction_interval_seconds: int = 3600
     session_eviction_enabled: bool = True
     session_snapshot_file: str = ""

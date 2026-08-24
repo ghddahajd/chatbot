@@ -40,6 +40,7 @@ from ..policy.constants import (
 from ..policy.extractors import (
     contains_exact_token,
     contains_keyword,
+    contains_keyword_word_start,
     extract_phone,
     fuzzy_contains,
     last_service_from_history,
@@ -526,7 +527,12 @@ def _bot_identity_classification(message: str) -> dict[str, object] | None:
     следует нюансированным инструкциям (не путать с "хочу оператора"), см. structured-классификатор."""
 
     normalized_message = normalize_text(message)
-    if not contains_keyword(
+    # contains_keyword матчит подстроку где угодно для ключей длиннее 3 символов — "боты"
+    # внутри BOT_IDENTITY_SIGNAL_KEYWORDS ловил "работы"/"разработы" и т.п. как "ра"+"боты"
+    # (живой баг, найден нагрузочным прогоном 2026-08-25: "какой у вас режим работы" уходило
+    # в bot_identity вместо ответа про часы работы). word_start требует, чтобы ключ начинал
+    # токен — та же защита, что уже стоит у MEDICAL_KEYWORDS/HARD_RESTRICTED_KEYWORDS.
+    if not contains_keyword_word_start(
         normalized_message, BOT_IDENTITY_SIGNAL_KEYWORDS | BOT_IDENTITY_WHO_ARE_YOU_PHRASES
     ):
         return None

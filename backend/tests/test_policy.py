@@ -544,7 +544,10 @@ def test_clinic_location_answers_without_offtopic(policy_session, resolver, mana
     assert result.reason == PolicyReason.OK
     assert result.safe_context["force_direct_answer"] is True
     assert "Часы работы" in result.safe_context["message_to_user"]
-    assert "уточнит менеджер" in result.safe_context["message_to_user"].lower()
+    # company.yaml теперь содержит реальный адрес (не плейсхолдер "уточняется оператором",
+    # см. 2026-08-24), так что _looks_like_placeholder_address больше не уводит в deferred-ветку —
+    # ответ содержит сам адрес, а не "уточнит менеджер".
+    assert "Ростовская набережная" in result.safe_context["message_to_user"]
 
 
 def test_clinic_hours_followup_phrasings_answer_without_offtopic(
@@ -1990,6 +1993,25 @@ def test_bot_identity_who_are_you_phrases_do_not_misfire_on_doctor_questions() -
 
     for message in ["кто у вас работает", "кто принимает сегодня", "кто ведёт приём"]:
         assert _bot_identity_classification(message) is None, message
+
+
+def test_bot_identity_boty_keyword_does_not_misfire_on_raboty() -> None:
+    """Живой баг (нагрузочный прогон на проде, 2026-08-25): contains_keyword матчит "боты"
+    как голую подстроку где угодно в строке — "ра" + "боты" = "работы", так что "какой у вас
+    режим работы" уходило в bot_identity вместо ответа про часы работы. Фикс — переход на
+    contains_keyword_word_start (ключ должен НАЧИНАТЬ токен)."""
+
+    from app.routes.chat_utils import _bot_identity_classification
+
+    for message in [
+        "какой у вас режим работы",
+        "какой график работы",
+        "время работы подскажите",
+        "часы работы клиники",
+    ]:
+        assert _bot_identity_classification(message) is None, message
+    # сам сигнал "боты"/"бот" отдельным словом по-прежнему должен матчить
+    assert _bot_identity_classification("вы боты что ли") is not None
 
 
 def test_general_cancelled_does_not_trigger_on_rhetorical_ili_net(

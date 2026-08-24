@@ -1965,6 +1965,33 @@ def test_bot_identity_botik_fix_does_not_misfire_on_botox() -> None:
     assert _bot_identity_classification("а ботокс у вас есть?") is None
 
 
+def test_bot_identity_recognizes_longer_who_are_you_phrasing() -> None:
+    """Живой баг (демо-тестирование, 2026-08-24): "кто ты вообще такой" не содержало ни
+    одного слова из BOT_IDENTITY_SIGNAL_KEYWORDS (бот/робот/реальный/настоящий) — уходило в
+    off_topic и ловило случайную RAG-статью. Голое "ты кто"/"кто ты" (≤2 слова) работало
+    случайно через short-message small_talk путь, не ловящий более длинные формулировки.
+    contains_keyword матчит фразу как смежную подпоследовательность где угодно в сообщении —
+    "кто ты"/"ты кто" без ограничения длины покрывает все естественные продолжения сразу."""
+
+    from app.routes.chat_utils import _bot_identity_classification
+
+    for message in ["кто ты вообще такой", "а ты вообще кто", "так, а ты кто", "ты кто вообще"]:
+        result = _bot_identity_classification(message)
+        assert result is not None, message
+        assert result["intent"] == "bot_identity", message
+
+
+def test_bot_identity_who_are_you_phrases_do_not_misfire_on_doctor_questions() -> None:
+    """Регресс-проверка: голое "кто" в вопросах про врачей не должно случайно матчить —
+    именно поэтому BOT_IDENTITY_WHO_ARE_YOU_PHRASES требует "кто"+"ты" РЯДОМ, а не голое
+    "кто" само по себе."""
+
+    from app.routes.chat_utils import _bot_identity_classification
+
+    for message in ["кто у вас работает", "кто принимает сегодня", "кто ведёт приём"]:
+        assert _bot_identity_classification(message) is None, message
+
+
 def test_general_cancelled_does_not_trigger_on_rhetorical_ili_net(
     policy_session, knowledge_base
 ) -> None:

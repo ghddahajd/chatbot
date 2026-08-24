@@ -20,6 +20,7 @@ from ..policy.constants import (
     BENIGN_MEDICAL_KEYWORDS,
     BOOKING_KEYWORDS,
     BOT_IDENTITY_SIGNAL_KEYWORDS,
+    BOT_IDENTITY_WHO_ARE_YOU_PHRASES,
     CLARIFY_SHORT_MESSAGES,
     COMPETITOR_CONTEXT_TOKENS,
     COMPETITOR_PRICE_NUMBER_PATTERN,
@@ -525,7 +526,9 @@ def _bot_identity_classification(message: str) -> dict[str, object] | None:
     следует нюансированным инструкциям (не путать с "хочу оператора"), см. structured-классификатор."""
 
     normalized_message = normalize_text(message)
-    if not contains_keyword(normalized_message, BOT_IDENTITY_SIGNAL_KEYWORDS):
+    if not contains_keyword(
+        normalized_message, BOT_IDENTITY_SIGNAL_KEYWORDS | BOT_IDENTITY_WHO_ARE_YOU_PHRASES
+    ):
         return None
     return {
         "intent": "bot_identity",

@@ -139,6 +139,33 @@
         transition: opacity .22s cubic-bezier(.16,1,.3,1), transform .22s cubic-bezier(.16,1,.3,1), visibility 0s linear .22s;
       }
       .launcher.pulse { animation: launcher-pulse 2.2s ease-in-out infinite; }
+      /* Contour draw (запрос "как контур сам себя рисует", 2026-08-24): иконка "дорисовывается"
+         — от пустого контура до готового, с паузой на пике, затем спокойно уходит и рисуется
+         заново. 9с на круг, ограничено 2.5 повторами (не мозолит глаза бесконечно) — дробное
+         число специально: 2.5 круга останавливает анимацию ровно в середине зоны "пауза на
+         пике" (34-66%), так что финальное состояние — контур ПОЛНОСТЬЮ нарисован, не пропал.
+         fill-mode: forwards держит это состояние после того, как повторы закончились.
+         Живой баг (ручная проверка, 2026-08-24): "stroke-dasharray: 95" — ОДНО число значит и
+         штрих, и ПРОБЕЛ по 95 юнитов (паттерн повторяется через 190). Реальная длина этого
+         контура заметно короче 95 — где-то в середине анимации смещение "уезжало" в зону
+         пробела раньше времени, и линия резко пропадала (дёргано, неплавно). Второе число —
+         пробел, специально с огромным запасом, чтобы паттерн ни разу не повторился в пределах
+         используемого диапазона смещений (-95…95) — тогда "пропадание" происходит только там,
+         где и задумано (полностью пустой/полностью нарисованный контур), без случайных провалов
+         посередине.
+      */
+      .launcher.pulse .launcher-icon-path {
+        stroke-dasharray: 95 999;
+        stroke-dashoffset: 95;
+        animation: launcher-draw 9s cubic-bezier(.65,0,.35,1) 2.5;
+        animation-fill-mode: forwards;
+      }
+      @keyframes launcher-draw {
+        0%   { stroke-dashoffset: 95; }
+        34%  { stroke-dashoffset: 0; }
+        66%  { stroke-dashoffset: 0; }
+        100% { stroke-dashoffset: -95; }
+      }
       @keyframes launcher-pulse {
         0%, 100% { box-shadow: var(--shadow), 0 0 0 0 rgba(8,14,13,.18); }
         50% { box-shadow: var(--shadow), 0 0 0 9px rgba(8,14,13,0); }
@@ -333,6 +360,7 @@
         cursor: pointer;
       }
       .ai-badge svg { width: 11px; height: 11px; }
+      .ai-badge .ai-badge-info { width: 12px; height: 12px; opacity: .55; }
 
       /* ── AI info modal ── */
       .ai-modal {
@@ -880,7 +908,7 @@
     <div class="shell">
       <button class="launcher" type="button" aria-label="Открыть чат">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path>
+          <path class="launcher-icon-path" d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path>
         </svg>
         <span class="unread" aria-hidden="true"></span>
       </button>
@@ -907,6 +935,7 @@
           <button class="ai-badge" type="button" aria-label="Что значит «с ИИ»">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
             с ИИ
+            <svg class="ai-badge-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
           </button>
           <button class="close-btn" type="button" aria-label="Закрыть">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

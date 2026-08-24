@@ -32,6 +32,7 @@ from .utils.jsonl import append_jsonl
 logger = logging.getLogger(__name__)
 
 CLAIM_CALLBACK_PREFIX = "claim:"
+CLOSE_CALLBACK_PREFIX = "close:"
 GET_UPDATES_TIMEOUT_SECONDS = 30
 HTTP_TIMEOUT_SECONDS = 40.0
 _MAX_RATE_LIMIT_RETRIES = 3
@@ -276,17 +277,48 @@ class TelegramBridgeService:
                 message_thread_id=topic_id,
                 text=transcript[:4000],
             )
-        await self._call(
+        # Кнопка + закреп — альтернатива набору /done руками (аудит удобства, 2026-08-24):
+        # оператору из телефона неудобно печатать команду посреди диалога, а закреп держит
+        # кнопку доступной даже в длинной переписке без прокрутки к самому началу темы.
+        pin_result = await self._call(
             "sendMessage",
             chat_id=self.group_chat_id,
             message_thread_id=topic_id,
             text=f"🟢 Взято в работу — {claimed_by}",
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "✅ Завершить диалог", "callback_data": f"{CLOSE_CALLBACK_PREFIX}{session.session_id}"}]
+                ]
+            },
         )
+        pin_message_id = pin_result.get("result", {}).get("message_id") if pin_result.get("ok") else None
+        if pin_message_id is not None:
+            await self._call(
+                "pinChatMessage",
+                chat_id=self.group_chat_id,
+                message_id=pin_message_id,
+                disable_notification=True,
+            )
         return topic_id
 
     async def _handle_callback_query(self, callback: dict[str, Any]) -> None:
         data = str(callback.get("data") or "")
         callback_id = str(callback.get("id") or "")
+
+        if data.startswith(CLOSE_CALLBACK_PREFIX):
+            session_id = data[len(CLOSE_CALLBACK_PREFIX) :]
+            session = await self.session_store.get(session_id)
+            if session is None or session.telegram_topic_id is None:
+                if callback_id:
+                    await self._call(
+                        "answerCallbackQuery", callback_query_id=callback_id, text="Сессия не найдена"
+                    )
+                return
+            await self._close_session_from_topic(session_id, session.telegram_topic_id)
+            if callback_id:
+                await self._call("answerCallbackQuery", callback_query_id=callback_id, text="Диалог завершён")
+            return
+
         if not data.startswith(CLAIM_CALLBACK_PREFIX):
             return
 

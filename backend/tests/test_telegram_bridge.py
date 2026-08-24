@@ -386,6 +386,72 @@ def test_claim_creates_topic_named_after_client_and_operator_with_transcript(mon
     assert any("Взято в работу" in call["json"]["text"] for call in send_calls)
 
 
+def test_claim_attaches_close_button_and_pins_it(monkeypatch) -> None:
+    """UX-удобство (запрос оператора, 2026-08-24): набирать /done руками неудобно, особенно
+    с телефона. "Взято в работу" теперь несёт inline-кнопку "Завершить диалог", закреплённую
+    в теме — доступна без прокрутки даже в длинной переписке."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        FakeAsyncClient.responses["sendMessage"] = {"ok": True, "result": {"message_id": 777}}
+        service = _service(store, ws_manager)
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    claimed_call = next(call for call in send_calls if "Взято в работу" in call["json"]["text"])
+    keyboard = claimed_call["json"]["reply_markup"]["inline_keyboard"]
+    assert keyboard[0][0]["text"] == "✅ Завершить диалог"
+    assert keyboard[0][0]["callback_data"] == f"close:{session_id}"
+
+    pin_calls = [call for call in FakeAsyncClient.calls if call["method"] == "pinChatMessage"]
+    assert len(pin_calls) == 1
+    assert pin_calls[0]["json"]["message_id"] == 777
+
+
+def test_close_button_callback_closes_session_same_as_slash_command(monkeypatch) -> None:
+    """Кнопка "Завершить диалог" должна переиспользовать тот же _close_session_from_topic,
+    что и /done — идентичное поведение, просто другой способ его вызвать."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42)
+        service = _service(store, ws_manager)
+        await service._handle_callback_query(
+            {"id": "cb2", "data": f"close:{session.session_id}", "from": {"username": "masha"}}
+        )
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    assert ws_manager.disconnect_operator_calls == [{"session_id": session_id, "close_session": True}]
+
+    close_calls = [call for call in FakeAsyncClient.calls if call["method"] == "closeForumTopic"]
+    assert len(close_calls) == 1
+    assert close_calls[0]["json"]["message_thread_id"] == 42
+
+    answer_calls = [call for call in FakeAsyncClient.calls if call["method"] == "answerCallbackQuery"]
+    assert any(call["json"]["callback_query_id"] == "cb2" for call in answer_calls)
+
+
 def test_claim_falls_back_to_session_id_when_no_contact_known(monkeypatch) -> None:
     _reset_fake_client(monkeypatch)
     store = SessionStore()

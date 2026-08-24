@@ -1536,6 +1536,9 @@ def test_self_harm_crisis_transfers_to_operator_with_hotline(policy_session, kno
         ("думаю о суициде, не знаю что делать", {"intent": "off_topic", "service_id": None, "confidence": 0.5}),
         ("хочу себе навредить", {"intent": "service_mention", "service_id": None, "confidence": 0.0}),
         ("незачем жить, все бессмысленно", {"intent": "small_talk", "service_id": None, "confidence": 0.6}),
+        # латинская "o" (U+006F) вместо кириллической "о" — см. test_normalize_text_folds_latin_
+        # homoglyphs_inside_mixed_script_tokens в test_knowledge_matching.py для самого фикса.
+        ("не хoчу жить", {"intent": "off_topic", "service_id": None, "confidence": 0.5}),
     ]:
         result = analyze_message(message, policy_session, knowledge_base, classification)
 

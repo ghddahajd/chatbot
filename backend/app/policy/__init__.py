@@ -346,6 +346,8 @@ def _cosmetic_article_guidance_result(
     knowledge_base: KnowledgeBase,
     article_matches: list[dict[str, object]],
     normalized_message: str = "",
+    *,
+    known_service_id: str | None = None,
 ) -> PolicyResult | None:
     approved_map = getattr(knowledge_base, "article_service_map", {}) or {}
     if not approved_map:
@@ -370,6 +372,20 @@ def _cosmetic_article_guidance_result(
             continue
         entry = approved_map.get(url)
         if entry is None:
+            continue
+
+        # Живой баг (BICOM faq_question, 2026-08-24; тем же днём позже — breastfeeding/
+        # diabetes через medical_advice/regulated_advice): RAG может найти статью, которая
+        # ЕСТЬ в approved_map, но привязана к СОВСЕМ ДРУГОЙ услуге, чем та, что классификация
+        # уже уверенно определила ("кормлю грудью, можно эпиляцию?" — классификация верно
+        # резолвит лазерную эпиляцию, но совпавшая статья "можно ли забеременеть при ГВ"
+        # привязана к гинекологии — ответ уходил про гинекологию вместо эпиляции). Если
+        # service уже известен — не даём случайному словесному совпадению перебить его. Не
+        # применяем то же к trigger_phrases выше — это уже осознанная кураторская привязка
+        # (человек буквально ввёл фразу, которую владелец бизнеса заранее одобрил), а не
+        # случайное совпадение по RAG-скору.
+        service_ids = set(getattr(entry, "service_ids", []) or [])
+        if known_service_id and service_ids and known_service_id not in service_ids:
             continue
 
         result = _article_guidance_result_from_entry(knowledge_base, entry, match=match)
@@ -2187,6 +2203,7 @@ def _analyze_message_core(
                 knowledge_base,
                 article_matches,
                 normalized_message,
+                known_service_id=service.id if service is not None else None,
             )
             # Живой баг (research.md #1): в отличие от unknown_service/off_topic/list_services,
             # эта ветка возвращала RAG-подсказку БЕЗ проверки _has_strong_article_overlap — одно
@@ -2499,6 +2516,7 @@ def _analyze_message_core(
                 knowledge_base,
                 article_matches,
                 normalized_message,
+                known_service_id=service.id if service is not None else None,
             )
             if guidance_result is not None and _has_strong_article_overlap(
                 normalized_message, guidance_result
@@ -2615,6 +2633,7 @@ def _analyze_message_core(
             knowledge_base,
             article_matches,
             normalized_message,
+            known_service_id=service.id if service is not None else None,
         )
         if guidance_result is not None and _has_strong_article_overlap(
             normalized_message, guidance_result
@@ -2728,6 +2747,7 @@ def _analyze_message_core(
             knowledge_base,
             article_matches,
             normalized_message,
+            known_service_id=service.id if service is not None else None,
         )
         if guidance_result is not None and _has_strong_article_overlap(
             normalized_message, guidance_result
@@ -2783,31 +2803,16 @@ def _analyze_message_core(
             knowledge_base,
             article_matches,
             normalized_message,
+            known_service_id=service.id if service is not None else None,
         )
         # Живой баг (2026-08-18, тот же класс, что чинили сегодня для "анализов"): это был
         # единственный из 6 вызовов _cosmetic_article_guidance_result без гейта
         # _has_strong_article_overlap — слабое семантическое совпадение по RAG-скору забирало
         # ответ вместо честного faq_question ниже. Тот же гейт, что и во всех остальных ветках.
-        #
-        # Живой баг (BICOM smoke-test, 2026-08-24): "расскажи про [конкретную BICOM-услугу]" —
-        # service уже уверенно резолвлен классификацией (проверено трейсом), но ни у одной
-        # BICOM-услуги нет своей curated-статьи, и _cosmetic_article_guidance_result вместо
-        # этого находил статью, привязанную к СОВСЕМ ДРУГОЙ услуге ("Консультации"), подменяя
-        # верный ответ на неё. Если service уже известен и curated-статья привязана к другим
-        # услугам, не включающим его, — не даём curated-подсказке перебить то, что мы уже
-        # точно знаем; падаем ниже, к обычному faq_question по article_matches.
-        mapped_service_ids: set[str] = set()
-        if guidance_result is not None:
-            mapping = guidance_result.safe_context.get("article_service_mapping") or {}
-            mapped_service_ids = set(mapping.get("service_ids") or [])
-        guidance_disagrees_with_known_service = (
-            service is not None and bool(mapped_service_ids) and service.id not in mapped_service_ids
-        )
-        if (
-            guidance_result is not None
-            and not guidance_disagrees_with_known_service
-            and _has_strong_article_overlap(normalized_message, guidance_result)
-        ):
+        # ("known_service_id уже известен и не согласуется с найденной статьёй" — тоже гейт
+        # против того же класса ложных совпадений, теперь встроен прямо в
+        # _cosmetic_article_guidance_result, см. её докстринг-комментарий.)
+        if guidance_result is not None and _has_strong_article_overlap(normalized_message, guidance_result):
             return guidance_result
 
         if not article_matches:
@@ -2864,6 +2869,7 @@ def _analyze_message_core(
             knowledge_base,
             article_matches,
             normalized_message,
+            known_service_id=service.id if service is not None else None,
         )
         if guidance_result is not None and _has_strong_article_overlap(
             normalized_message, guidance_result

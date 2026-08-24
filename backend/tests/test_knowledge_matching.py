@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from app.knowledge import KnowledgeBaseResolver, _token_prefix_match
+from app.knowledge import KnowledgeBaseResolver, _token_prefix_match, normalize_text
 from app.models import Message, MessageRole, PolicyAction, PolicyReason
 from app.policy import analyze_message
 from app.policy.intent import classify_and_extract
@@ -44,6 +44,19 @@ def _classify(message: str, knowledge_base):
         knowledge_base.company.city,
         knowledge_base.domain_profile,
     )
+
+
+def test_normalize_text_folds_latin_homoglyphs_inside_mixed_script_tokens() -> None:
+    """Живой баг (демо-тестирование, 2026-08-24): "не хoчу жить" с латинской "o" (U+006F)
+    вместо кириллической "о" (U+043E) — визуально неотличимо, но ни один keyword-список
+    (включая SELF_HARM_KEYWORDS) не матчил: строки посимвольно разные. Сворачиваем только
+    внутри токенов, где буквы реально СМЕШАНЫ — обычное слово почти всегда целиком в одном
+    алфавите, а чистая латиница (бренды/английские фразы) не должна трогаться вообще."""
+
+    assert normalize_text("не хoчу жить") == "не хочу жить"
+    assert normalize_text("BICOM body check") == "bicom body check"
+    assert normalize_text("сколько стоит botox") == "сколько стоит botox"
+    assert normalize_text("GE Logiq 7 Pro ultrasound") == "ge logiq 7 pro ultrasound"
 
 
 def test_token_prefix_does_not_merge_bioresonance_and_biorevitalization() -> None:
@@ -331,6 +344,53 @@ def test_faq_question_ignores_curated_mapping_that_disagrees_with_known_service(
     assert result.reason == PolicyReason.FAQ_QUESTION
     assert result.safe_context["question_type"] == "faq_question"
     assert result.safe_context.get("article_service_mapping") is None
+
+
+def test_medical_advice_branch_also_ignores_disagreeing_curated_mapping(
+    monkeypatch, policy_session, resolver, managed_env
+) -> None:
+    """Живой баг (демо-тестирование раунд 2, 2026-08-24, тот же день): тот же класс, что и
+    BICOM/faq_question выше, но найден в ДРУГОЙ ветке (medical_advice) — гейт был добавлен
+    только в faq_question, а _cosmetic_article_guidance_result вызывается ещё в 5 местах.
+    "кормлю грудью, можно ли мне лазерную эпиляцию" — классификация верно резолвит лазерную
+    эпиляцию, но реальная curated-статья "Можно ли забеременеть во время кормления грудью"
+    (привязана только к гинекологии) забирала ответ. Теперь гейт живёт внутри самой
+    _cosmetic_article_guidance_result (known_service_id) — общий для всех 6 вызовов."""
+
+    import app.policy as policy_module
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+    unrelated_article_url = (
+        "https://www.medcenterrosh.ru/blog/"
+        "mojno-li-zaberemenet-vo-vremya-kormleniya-grudu-beremennost-pri-grudnom-vskarmlivanii"
+    )
+    monkeypatch.setattr(
+        policy_module,
+        "_retrieve_article_context_safe",
+        lambda message: [
+            {
+                "title": "Можно ли забеременеть во время кормления грудью",
+                "url": unrelated_article_url,
+                "snippet": "любой текст, лишь бы совпадение было слабым сигналом",
+                "chunk_id": "fake-2",
+                "score": 12.0,
+            }
+        ],
+    )
+
+    result = analyze_message(
+        "кормлю грудью, можно ли мне лазерную эпиляцию",
+        policy_session,
+        knowledge_base,
+        {
+            "intent": "medical_advice",
+            "service_id": "lazernaya_epilyaciya_bc614e41",
+            "confidence": 1.0,
+        },
+    )
+
+    assert result.safe_context.get("article_service_mapping") is None
+    assert result.service_id != "ginekologiya_fd7d28b2"
 
 
 def test_faq_question_prefers_approved_article_mapping_over_free_answer(

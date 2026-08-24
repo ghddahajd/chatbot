@@ -416,12 +416,36 @@ def _domain_profile_from_payload(payload: dict[str, object]) -> dict[str, object
     return profile
 
 
+# Живой баг (демо-тестирование, 2026-08-24): "не хoчу жить" с латинской "o" (U+006F) вместо
+# кириллической "о" (U+043E) — визуально неотличимо, но ни один keyword-список (включая
+# SELF_HARM_KEYWORDS) не матчит: строки посимвольно разные. Сворачиваем ТОЛЬКО внутри токенов,
+# где буквы реально СМЕШАНЫ (кириллица+латиница в одном слове) — обычное слово почти всегда
+# целиком в одном алфавите, смесь букв внутри одного "слова" сама по себе уже подозрительна.
+# Чистые латинские токены (BICOM, botox, ultrasound, английские фразы) НЕ трогаем вообще —
+# иначе сломали бы все синонимы/бренды на латинице, уже полагающиеся на normalize_text сегодня.
+_LATIN_TO_CYRILLIC_HOMOGLYPHS = str.maketrans(
+    {"a": "а", "e": "е", "o": "о", "p": "р", "c": "с", "y": "у", "x": "х"}
+)
+
+
+def _fold_mixed_script_homoglyphs(normalized: str) -> str:
+    def fold_token(token: str) -> str:
+        has_cyrillic = any("а" <= ch <= "я" for ch in token)
+        has_latin = any("a" <= ch <= "z" for ch in token)
+        if not (has_cyrillic and has_latin):
+            return token
+        return token.translate(_LATIN_TO_CYRILLIC_HOMOGLYPHS)
+
+    return " ".join(fold_token(token) for token in normalized.split())
+
+
 def normalize_text(value: str) -> str:
     """нормализует текст для нечёткого поиска по ключевым словам."""
 
     normalized = value.lower().replace("ё", "е")
     normalized = re.sub(r"[^a-zа-я0-9\s]+", " ", normalized)
-    return re.sub(r"\s+", " ", normalized).strip()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return _fold_mixed_script_homoglyphs(normalized)
 
 
 def _tokens(value: str) -> list[str]:

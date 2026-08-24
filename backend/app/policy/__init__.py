@@ -46,6 +46,7 @@ from .constants import (
     PRICE_FUZZY_EXCLUDE_TOKENS,
     PRICE_KEYWORDS,
     PRODUCTS_FACT_KEYWORDS,
+    SELF_HARM_BENIGN_CONTEXT_EXCLUDE,
     SELF_HARM_KEYWORDS,
     TELEGRAM_KEYWORDS,
     VISIT_KEYWORDS,
@@ -2073,7 +2074,15 @@ def _analyze_message_core(
     # вопроса — самая критичная по безопасности категория целиком зависела от суждения LLM без
     # гарантированного бэкапа. Проверяем ПЕРВЫМ, до вообще любой другой классификации/веток —
     # не зависит от того, что решил классификатор (local ИЛИ модель).
-    if contains_keyword(normalized_message, SELF_HARM_KEYWORDS):
+    #
+    # Живой баг #2 (ручное демо-тестирование, тот же день): "не хочу жить в этом районе,
+    # шумно" и "лучше бы я умерла со стыда, так неудобно вышло" ложно ловились — фразы
+    # SELF_HARM_KEYWORDS не проверяют, чем продолжается сообщение. SELF_HARM_BENIGN_CONTEXT_
+    # EXCLUDE — конкретные продолжения (предлог места после "жить", идиомы "умереть со
+    # стыда/смеху/скуки"), которые превращают формальное совпадение в безобидный контекст.
+    if contains_keyword(normalized_message, SELF_HARM_KEYWORDS) and not contains_keyword(
+        normalized_message, SELF_HARM_BENIGN_CONTEXT_EXCLUDE
+    ):
         return PolicyResult(
             action=PolicyAction.TRANSFER_OPERATOR,
             reason=PolicyReason.SELF_HARM_CRISIS,

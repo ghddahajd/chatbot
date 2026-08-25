@@ -93,6 +93,15 @@ def _text_value(value: Any) -> str:
     return _escape_markdown(text) if text else "не указано"
 
 
+def _lead_short_id(session_id: str) -> str:
+    """короткий человекочитаемый хвост session_id — различать несколько лидов с одинаковым
+    именем в ленте заявок ("15 Иванов записались в один день"), не заводя отдельный id:
+    session_id и так уникален и уже есть у каждого лида, просто раньше нигде не показывался."""
+
+    cleaned = str(session_id or "").replace("-", "")
+    return cleaned[-6:] if cleaned else ""
+
+
 def _telegram_text(
     *,
     event_type: str,
@@ -100,14 +109,17 @@ def _telegram_text(
     timestamp: str,
     payload: dict[str, Any],
     service_name: str = "",
+    session_id: str = "",
 ) -> str:
+    short_id = _lead_short_id(session_id)
+    id_tag = f" · #{short_id}" if short_id else ""
     if event_type == "booking_created":
         service_line = f"\n✂️ {_text_value(service_name)}" if service_name else ""
         operator_url = _escape_markdown(str(payload.get("operator_url") or "").strip())
         dialog_line = f"\n\n🔗 Открыть диалог: {operator_url}" if operator_url else ""
         return (
             f"📅 *Запись на услугу* — {_text_value(company_name)}\n\n"
-            f"👤 {_text_value(payload.get('name'))}\n"
+            f"👤 {_text_value(payload.get('name'))}{id_tag}\n"
             f"📞 {_text_value(payload.get('phone'))}"
             f"{service_line}\n"
             f"💬 {_text_value(payload.get('summary'))}\n"
@@ -140,7 +152,7 @@ def _telegram_text(
         # "Запрос" уже несёт содержательную часть, отдельный хвост не нужен.
         return (
             f"{title} — {_text_value(company_name)}\n\n"
-            f"👤 Имя: {_text_value(payload.get('name'))}\n"
+            f"👤 Имя: {_text_value(payload.get('name'))}{id_tag}\n"
             f"📞 Телефон: {_text_value(payload.get('phone'))}\n\n"
             f"🏷 Тип: {_text_value(REASON_LABELS['unknown_service'])}\n"
             f"❓ Запрос: {_text_value(unresolved_query)}\n"
@@ -153,7 +165,7 @@ def _telegram_text(
     last_message_line = f"🗨 Последнее сообщение: {_text_value(last_message)}\n" if last_message else ""
     return (
         f"{title} — {_text_value(company_name)}\n\n"
-        f"👤 Имя: {_text_value(payload.get('name'))}\n"
+        f"👤 Имя: {_text_value(payload.get('name'))}{id_tag}\n"
         f"📞 Телефон: {_text_value(payload.get('phone'))}\n"
         f"{service_line}"
         f"🏷 Тип запроса: {reason_line}\n"
@@ -455,6 +467,7 @@ class DeliveryService:
                         timestamp=timestamp,
                         payload=payload,
                         service_name=service_name,
+                        session_id=str(record.get("session_id") or ""),
                     ),
                     "parse_mode": "Markdown",
                 }

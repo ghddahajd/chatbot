@@ -304,6 +304,85 @@ def test_telegram_formatter_uses_event_specific_text() -> None:
     assert "http://localhost:8000/operator" in operator_text
 
 
+def test_telegram_lead_text_includes_short_id_tag_from_session_id() -> None:
+    """Живой запрос пользователя (2026-08-26): "15 Иванов записались в один день" — карточки
+    лидов в Telegram неотличимы на глаз (одно и то же имя), а session_id уже уникален и уже
+    есть у каждого лида, просто раньше нигде не показывался. Короткий хвост — не отдельный
+    механизм claim/"взять в работу" (это осознанно не нужно лидам, см. фидбек пользователя),
+    просто читаемая метка, чтобы сослаться на конкретную заявку."""
+
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={"name": "Иван", "phone": "+7999", "summary": "Хочу консультацию"},
+        session_id="72a4c3df-00dd-4f2d-87bb-419f89d56777",
+    )
+
+    assert "Иван · #d56777" in text
+
+
+def test_telegram_lead_text_short_id_differs_for_different_sessions() -> None:
+    first = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={"name": "Иван", "phone": "+7999", "summary": "Хочу консультацию"},
+        session_id="72a4c3df-00dd-4f2d-87bb-419f89d56777",
+    )
+    second = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={"name": "Иван", "phone": "+7998", "summary": "Хочу консультацию"},
+        session_id="a1b2c3d4-1111-2222-3333-444455556666",
+    )
+
+    assert "#d56777" in first
+    assert "#556666" in second
+    assert first != second
+
+
+def test_telegram_booking_and_unknown_service_text_include_short_id_tag() -> None:
+    """Тег добавлен во все три ветки, где показывается имя (booking/unknown_service/generic
+    lead) — не только в generic-ветке."""
+
+    booking_text = _telegram_text(
+        event_type="booking_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={"name": "Иван", "phone": "+7999", "summary": "Хочу записаться"},
+        service_name="Чистка лица",
+        session_id="72a4c3df-00dd-4f2d-87bb-419f89d56777",
+    )
+    unknown_service_text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={
+            "name": "Иван",
+            "phone": "+7999",
+            "lead_trigger": "unknown_service",
+            "unresolved_query": "а массаж лица делаете?",
+        },
+        session_id="72a4c3df-00dd-4f2d-87bb-419f89d56777",
+    )
+
+    assert "Иван · #d56777" in booking_text
+    assert "Иван · #d56777" in unknown_service_text
+
+
+def test_telegram_text_omits_short_id_tag_without_session_id() -> None:
+    text = _telegram_text(
+        event_type="lead_created",
+        company_name="Клиника",
+        timestamp="2026-06-30T19:00:00",
+        payload={"name": "Иван", "phone": "+7999", "summary": "Хочу консультацию"},
+    )
+
+    assert "#" not in text
+
+
 def test_telegram_booking_text_includes_dialog_link_when_present() -> None:
     text = _telegram_text(
         event_type="booking_created",

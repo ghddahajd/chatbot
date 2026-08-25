@@ -514,7 +514,12 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
-        height: 108px;
+        /* Живой баг (ручное тестирование пользователем, 2026-08-26): фиксированная height
+        обрезала карточку, если заголовок/подпись переносились на 2 строки ("Записаться на
+        приём" / "Подберём удобное время") — текст вылезал за границу и наезжал на
+        следующий ряд. min-height держит одинаковую высоту в обычном случае, но даёт карточке
+        вырасти, если текст не влез. */
+        min-height: 108px;
         font: inherit;
         transition: border-color .15s, transform .12s;
       }
@@ -789,6 +794,7 @@
       }
       .send-btn:hover { transform: translateY(-1px); background: var(--accent-dark); }
       .send-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+      .send-btn-icon { display: none; }
 
       .mic-btn {
         position: absolute;
@@ -898,9 +904,24 @@
         }
         .shell.pos-left .panel { left: 0; right: 0; }
         .panel.open { transform: translateY(0); }
-        .composer { flex-direction: column; align-items: stretch; }
-        .input-wrap { width: 100%; }
-        .send-btn { width: 100%; }
+        /* Живой баг (ручное тестирование пользователем, 2026-08-26): на мобильном composer
+        стоял flex-direction: column — поле ввода и «Отправить» растягивались на всю ширину
+        каждый на своей строке, что вместе с открытой экранной клавиатурой съедало половину
+        видимой области чата. Держим их в один ряд, как на десктопе. Кнопку отправки на узком
+        экране сворачиваем в кружок с иконкой (как mic-btn) вместо текста «Отправить» — так
+        не приходится поджимать поле ввода под длинный текст в кнопке. */
+        .send-btn {
+          width: 44px;
+          height: 44px;
+          padding: 0;
+          flex-shrink: 0;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .send-btn-text { display: none; }
+        .send-btn-icon { display: block; width: 18px; height: 18px; }
       }
     </style>
 
@@ -980,7 +1001,13 @@
               </svg>
             </button>
           </div>
-          <button class="send-btn" type="button">Отправить</button>
+          <button class="send-btn" type="button" aria-label="Отправить">
+            <span class="send-btn-text">Отправить</span>
+            <svg class="send-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"></path>
+              <path d="m21.854 2.147-10.94 10.939"></path>
+            </svg>
+          </button>
         </div>
         <div class="closed-note">
           <button class="reset-btn" type="button">Начать новый диалог</button>

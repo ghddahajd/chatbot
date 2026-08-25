@@ -1097,6 +1097,48 @@ def test_post_lead_service_mention_does_not_claim_new_booking(policy_session, re
     assert "запись оформлен" not in result.safe_context["message_to_user"].lower()
 
 
+def test_post_lead_explanation_question_still_answers(policy_session, knowledge_base) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-26): "что входит в X" — реальный,
+    отвечаемый вопрос (работает в обычной сессии) — после уже отданного лида молча
+    проглатывался общим шаблоном "заявку уже передали менеджеру" вместо настоящего ответа."""
+    policy_session.lead_requested = True
+    service = next(s for s in knowledge_base.services if s.name == "Чистка лица")
+
+    result = analyze_message(
+        "что входит в чистка лица",
+        policy_session,
+        knowledge_base,
+        {"intent": "service_mention", "service_id": service.id, "confidence": 0.9},
+    )
+
+    assert result.reason != PolicyReason.CONTACT_PROVIDED
+
+
+def test_post_lead_explanation_question_does_not_leak_stale_service_name(
+    policy_session, knowledge_base
+) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-26): когда classification не
+    распознаёт услугу в ТЕКУЩЕМ сообщении (напр. "кольпоскопия" — имя варианта, а не услуги
+    верхнего уровня), service выше по коду фоллбэчился на session.last_service_id — и шаблон
+    "включая интерес к услуге X" называл пользователю СОВСЕМ ДРУГУЮ, устаревшую услугу из
+    прошлого сообщения (реальный кейс: спросили про кольпоскопию, бот заявил, что оператору
+    передали интерес к «Ботулинотерапии» — услуге из вопроса двумя сообщениями раньше)."""
+    policy_session.lead_requested = True
+    stale_service = next(s for s in knowledge_base.services if s.name == "Лазерная эпиляция")
+    policy_session.last_service_id = stale_service.id
+
+    result = analyze_message(
+        "что входит в кольпоскопия",
+        policy_session,
+        knowledge_base,
+        {"intent": "service_mention", "service_id": None, "confidence": 0.4},
+    )
+
+    message_to_user = str(result.safe_context.get("message_to_user") or "")
+    assert result.reason != PolicyReason.CONTACT_PROVIDED
+    assert "заявку уже передали" not in message_to_user.lower()
+
+
 def test_post_lead_price_question_still_answers(policy_session, resolver, managed_env) -> None:
     """Цену после лида по-прежнему называем — тут не про подтверждение записи."""
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)

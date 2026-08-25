@@ -2506,11 +2506,24 @@ def _analyze_message_core(
         lead_followup_result = _lead_followup_result(normalized_message, knowledge_base)
         if lead_followup_result is not None:
             return lead_followup_result
+        # Живой баг (ручное тестирование пользователем, 2026-08-26): после уже отданного лида
+        # "что входит в лазерный пилинг" (реальный, отвечаемый вопрос — работает в обычной
+        # сессии) молча проглатывался этой веткой вместо ответа. Хуже: когда classification
+        # НЕ распознавала услугу в самом сообщении (например "кольпоскопия" — имя варианта, а
+        # не услуги верхнего уровня), `service` выше по коду тихо подменялся на
+        # session.last_service_id (фоллбэк для explanation/duration-вопросов, см. ~2152) — и
+        # шаблон СООБЩАЛ ПОЛЬЗОВАТЕЛЮ, что оператору передан интерес к СОВСЕМ ДРУГОЙ, устаревшей
+        # услуге из прошлого сообщения (реальный пример: спросили про "кольпоскопию", бот
+        # заявил, что оператору передали интерес к "Ботулинотерапии"). Явные объясняющие
+        # вопросы — это не "просто упомянул услугу", отдаём их дальше по пайплайну на настоящий
+        # ответ вместо шаблона-заглушки с недостоверным содержанием.
         if (
             service is not None
             and intent == "service_mention"
             and not booking_requested
             and not price_requested
+            and not explanation_requested
+            and not duration_requested
             and "?" not in message
         ):
             return PolicyResult(

@@ -3251,6 +3251,80 @@ def test_list_services_uses_curated_article_match_over_generic_catalog(
     assert "Уход за кожей зимой" in str(result.safe_context.get("message_to_user"))
 
 
+def test_curated_entry_without_excerpt_falls_back_to_rag_corpus_text(
+    policy_session, knowledge_base, tmp_path: Path, monkeypatch
+) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-25): у 99 из 121 записей
+    article_service_map.yaml поле excerpt не заполнено куратором — без него
+    article_guidance_candidate оставался None, и LLM-путь _article_guidance_answer (реальный
+    ответ по содержанию статьи) никогда не срабатывал, ответ падал в безликий шаблон "у нас
+    обычно рассматривают: Х" без единого слова о том, что процедура вообще включает (реальный
+    пример — "а что входит в HALO терапию" после того, как бот уже назвал услугу). РАГ-корпус
+    уже содержит полный текст каждой статьи по её URL — используем его как отрывок, когда
+    куратор ничего не написал вручную."""
+    from app.models import ArticleServiceMapEntry
+
+    chunks_file = tmp_path / "chunks.jsonl"
+    _write_rag_chunks(chunks_file)
+    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+
+    service_id = knowledge_base.services[0].id
+    knowledge_base.article_service_map = {
+        "https://example.test/kolposkopiya": ArticleServiceMapEntry(
+            url="https://example.test/kolposkopiya",
+            title="Кольпоскопия",
+            trigger_phrases=["как проходит кольпоскопия"],
+            service_ids=[service_id],
+            excerpt="",
+        )
+    }
+
+    result = analyze_message(
+        "как проходит кольпоскопия",
+        policy_session,
+        knowledge_base,
+        {"intent": "list_services", "service_id": None, "confidence": 0.9},
+    )
+
+    candidate = result.safe_context.get("article_guidance_candidate")
+    assert candidate is not None
+    assert "кольпоскопия" in candidate["excerpt"].lower()
+    # Куратированный excerpt по-прежнему остаётся пустым в самом маппинге — фолбэк только
+    # для ответа пользователю, не подменяет данные куратора.
+    assert result.safe_context["article_service_mapping"]["excerpt_present"] is False
+
+
+def test_curated_entry_without_excerpt_and_without_rag_match_stays_on_generic_template(
+    policy_session, knowledge_base
+) -> None:
+    """Если у куратора пусто И для URL статьи нет ни одного чанка в РАГ-корпусе (например,
+    статью только что добавили и корпус ещё не пересобрали) — не должно быть ни креша, ни
+    выдуманного текста, только прежний безопасный универсальный шаблон."""
+    from app.models import ArticleServiceMapEntry
+
+    service_id = knowledge_base.services[0].id
+    knowledge_base.article_service_map = {
+        "https://example.test/no-such-article": ArticleServiceMapEntry(
+            url="https://example.test/no-such-article",
+            title="Статья без чанков",
+            trigger_phrases=["расскажи про статью без чанков"],
+            service_ids=[service_id],
+            excerpt="",
+        )
+    }
+
+    result = analyze_message(
+        "расскажи про статью без чанков",
+        policy_session,
+        knowledge_base,
+        {"intent": "list_services", "service_id": None, "confidence": 0.9},
+    )
+
+    assert result.safe_context.get("question_type") == "cosmetic_article_guidance"
+    assert result.safe_context.get("article_guidance_candidate") is None
+    assert "Статья без чанков" in str(result.safe_context.get("message_to_user"))
+
+
 def test_list_services_still_returns_full_catalog_without_curated_match(
     policy_session, knowledge_base
 ) -> None:

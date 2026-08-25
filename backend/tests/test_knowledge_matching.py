@@ -268,7 +268,9 @@ def test_unknown_service_uses_article_trigger_phrase_on_later_message(
     target_dir = managed_env["clients_dir"] / "rosh_import_demo"
     shutil.copytree(source_dir, target_dir)
     # тест намеренно проверяет поведение БЕЗ excerpt — не зависит от того, добавлен ли
-    # он у этой записи в реальных данных клиента
+    # он у этой записи в реальных данных клиента. get_opening_excerpt_for_url тоже глушим —
+    # иначе РАГ-фолбэк (2026-08-26) подставит реальный текст статьи из живого корпуса, а этот
+    # тест проверяет именно generic-шаблон/форматирование trigger_phrase-ветки, а не РАГ.
     _set_article_map_excerpt(
         managed_env["clients_dir"],
         "https://www.medcenterrosh.ru/problems/temnye-veki-i-krugi-pod-glazami",
@@ -277,6 +279,7 @@ def test_unknown_service_uses_article_trigger_phrase_on_later_message(
     knowledge_base = resolver.get("rosh_import_demo", fallback=False)
     monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
     monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "get_opening_excerpt_for_url", lambda *args, **kwargs: None)
     policy_session.messages.append(Message(role=MessageRole.ASSISTANT, text="Добрый день! Чем могу помочь?"))
 
     result = analyze_message(

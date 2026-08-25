@@ -8,7 +8,12 @@ from typing import Optional
 
 from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phrasebook_value_to_text
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
-from ..services.rag_search import STOP_WORDS, retrieve_article_context, tokenize as rag_tokenize
+from ..services.rag_search import (
+    STOP_WORDS,
+    get_opening_excerpt_for_url,
+    retrieve_article_context,
+    tokenize as rag_tokenize,
+)
 from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
@@ -273,11 +278,16 @@ def _article_guidance_result_from_entry(
     )
     excerpt = str(getattr(entry, "excerpt", "") or "").strip()
     article_guidance_candidate = None
-    if excerpt:
+    # Живой баг (2026-08-26): у 99 из 121 записей article_service_map.yaml поле excerpt пустое
+    # (не докурировали) — без него ниже остаётся только безликий шаблон "у нас обычно
+    # рассматривают: X" без единого слова о содержании. РАГ-корпус уже содержит полный текст
+    # каждой статьи по её URL — берём оттуда, раз куратор ничего не написал вручную.
+    candidate_excerpt = excerpt or (get_opening_excerpt_for_url(entry.url) or "")
+    if candidate_excerpt:
         article_guidance_candidate = {
             "title": entry.title,
             "url": entry.url,
-            "excerpt": excerpt,
+            "excerpt": candidate_excerpt,
             "service_names": service_names,
             "caution": caution,
             "fallback_message_to_user": message_to_user,

@@ -306,6 +306,47 @@ def search_rag_chunks(query: str, top_k: int = 5, path: Path | None = None) -> d
     }
 
 
+def get_opening_excerpt_for_url(
+    url: str, *, max_chars: int = 260, path: Path | None = None
+) -> str | None:
+    """Прямой (не similarity-search) поиск: берёт самый ранний по chunk_index чанк ДЛЯ ТОЧНО
+    этого URL и возвращает начало его текста как краткий отрывок. Живой баг (нагрузочный тест,
+    2026-08-26): 99 из 121 куратированных записей article_service_map.yaml не имеют заполненного
+    excerpt — без него _article_guidance_result_from_entry не может дать реальный ответ, только
+    шаблон "по теме X у нас есть Y услуг" без единого слова о содержании, хотя полный текст
+    статьи уже есть в РАГ-корпусе. Не similarity-поиск — угадывать релевантность не нужно, URL
+    уже точно известен из куратированного маппинга, это просто прямой фильтр по адресу."""
+
+    normalized_url = url.strip().rstrip("/")
+    if not normalized_url:
+        return None
+    chunks_path = path or default_rag_chunks_path()
+    try:
+        chunks, _ = _load_corpus_cached(chunks_path)
+    except FileNotFoundError:
+        return None
+    matching = [
+        chunk
+        for chunk in chunks
+        if str(chunk.get("url") or "").strip().rstrip("/") == normalized_url
+    ]
+    if not matching:
+        return None
+    matching.sort(
+        key=lambda chunk: chunk.get("chunk_index") if isinstance(chunk.get("chunk_index"), int) else 0
+    )
+    text = str(matching[0].get("text") or "").strip()
+    if not text:
+        return None
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    last_boundary = max(truncated.rfind(". "), truncated.rfind("— "))
+    if last_boundary > max_chars // 2:
+        return truncated[: last_boundary + 1].strip()
+    return truncated.rstrip() + "…"
+
+
 def retrieve_article_context(
     query: str,
     top_k: int = 3,

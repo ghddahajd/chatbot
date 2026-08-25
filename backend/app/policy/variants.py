@@ -88,6 +88,15 @@ STEM_ENDINGS = (
     "о",
 )
 
+# Живой баг (нагрузочный тест, 2026-08-25): визуально неотличимые Т/T встречаются как коды
+# зон в РАЗНЫХ услугах каталога с РАЗНЫМ алфавитом (Лазерный пилинг — кириллица "Т", Forever
+# Clear — латиница "T") — естественный кириллический ввод не матчил услуги с латинской "T" в
+# каталоге, и наоборот. Однобуквенный токен почти наверняка код зоны, не настоящее слово —
+# безопасно сворачивать в канонический (кириллический) вид. Отдельная, узкая таблица, НЕ
+# общая с knowledge.py — та секьюрити-критичная (self-harm keyword evasion) и намеренно не
+# трогает чистые латинские токены целиком, это другой, более узкий случай (только 1 буква).
+_SINGLE_LETTER_LATIN_TO_CYRILLIC = str.maketrans({"t": "т"})
+
 
 def is_variant_list_question(message: str) -> bool:
     normalized = normalize_text(message)
@@ -133,6 +142,8 @@ def variant_list_labels(service, *, limit: int = 8) -> list[str]:
 
 
 def _stem(token: str) -> str:
+    if len(token) == 1:
+        return token.translate(_SINGLE_LETTER_LATIN_TO_CYRILLIC)
     if len(token) <= 3:
         return token
     for ending in STEM_ENDINGS:
@@ -242,17 +253,30 @@ def find_variant_matches(service, message: str, *, limit: int = 5) -> list[dict[
     if not query_stems:
         return []
 
+    # Живой баг (нагрузочный тест, 2026-08-25): "хоть одно слово совпало" не умеет сужать при
+    # уточнении — "belotero balance с лидокаином" давал 4 варианта вместо 1 ("лидокаин" сам
+    # по себе пересекается с лидокаиновыми вариантами ДРУГИХ брендов), "глубокое бикини
+    # мужское" давал 5 вместо 1 (более длинное уточнение расширяло совпадения, а не сужало).
+    # Ранжируем по КОЛИЧЕСТВУ пересечённых стемов — оставляем только вариант(ы) с максимумом,
+    # не просто любой с пересечением ≥1. У точного варианта "Belotero Balance с Лидокаином"
+    # пересечётся 3 слова (бренд+линейка+лидокаин), у чужого бренда с лидокаином — только 1
+    # ("лидокаин") — 3 > 1, выигрывает точный. Ничья на максимуме (как раньше у "внешняя
+    # сторона плеча" — 1/2 зоны, оба по 3 слова, или "лицо" — оба бренда по 1 слову) по-прежнему
+    # возвращает все варианты с ничьей — уже проверенное поведение не меняется.
     common_stems = _common_variant_stems(service, variants)
-    matches: list[dict[str, Any]] = []
+    scored: list[tuple[int, dict[str, Any]]] = []
     for variant in variants:
         if not isinstance(variant, dict):
             continue
         stems = _variant_stems(service, variant, exclude=common_stems)
-        if query_stems & stems:
-            matches.append(variant)
-        if len(matches) >= limit:
-            break
-    return matches
+        overlap = len(query_stems & stems)
+        if overlap > 0:
+            scored.append((overlap, variant))
+
+    if not scored:
+        return []
+    best_score = max(score for score, _ in scored)
+    return [variant for score, variant in scored if score == best_score][:limit]
 
 
 def should_stay_in_service_context(service, message: str) -> bool:

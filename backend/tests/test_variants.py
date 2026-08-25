@@ -134,3 +134,68 @@ def test_should_not_stay_when_no_variant_matches_even_if_service_name_mentioned(
 
 def test_should_stay_returns_false_for_missing_service() -> None:
     assert should_stay_in_service_context(None, "пилинг лица") is False
+
+
+def _fillers_service() -> _FakeService:
+    # Реальный паттерн rosh_import_demo: общий префикс "Введение искусственных имплантатов
+    # в мягкие ткани" перед КАЖДЫМ брендом — сам бренд единственное различие между вариантами.
+    names = [
+        "Введение искусственных имплантатов в мягкие ткани Aesthe FillV200 ( 1 флакон )",
+        "Введение искусственных имплантатов в мягкие ткани Aliaxin FL ( 1мл. )",
+        "Введение искусственных имплантатов в мягкие ткани Belotero Balance ( 1мл. )",
+        "Введение искусственных имплантатов в мягкие ткани Belotero Balance с Лидокаином ( 1 мл. )",
+        "Введение искусственных имплантатов в мягкие ткани Aliaxin FL с Лидокаином ( 1мл. )",
+    ]
+    return _FakeService("Филлеры", "Филлеры", [_variant(name) for name in names])
+
+
+def test_more_specific_query_narrows_instead_of_widening() -> None:
+    """Живой баг (нагрузочный тест, 2026-08-25): "belotero balance с лидокаином" выдавал
+    4 варианта вместо 1 — "лидокаин" сам по себе пересекается с лидокаиновыми вариантами
+    ДРУГИХ брендов (Aliaxin FL с Лидокаином), так что более специфичный запрос расширял
+    результат вместо того, чтобы сузить его. Ранжирование по количеству пересечённых слов:
+    у точного варианта 3 общих слова (belotero+balance+лидокаин), у чужого бренда — 1."""
+
+    service = _fillers_service()
+    result = find_variant_matches(service, "belotero balance с лидокаином")
+    assert len(result) == 1
+    assert result[0]["name"] == (
+        "Введение искусственных имплантатов в мягкие ткани Belotero Balance с Лидокаином ( 1 мл. )"
+    )
+
+
+def test_brand_alone_still_returns_both_its_variants_as_a_tie() -> None:
+    """Без уточнения "с лидокаином" — belotero сам по себе одинаково (по 2 слова: brand+
+    balance) пересекается с ОБОИМИ вариантами Belotero — законная ничья, оба возвращаются."""
+
+    service = _fillers_service()
+    result = find_variant_matches(service, "belotero balance")
+    names = {v["name"] for v in result}
+    assert names == {
+        "Введение искусственных имплантатов в мягкие ткани Belotero Balance ( 1мл. )",
+        "Введение искусственных имплантатов в мягкие ткани Belotero Balance с Лидокаином ( 1 мл. )",
+    }
+
+
+def _forever_clear_service() -> _FakeService:
+    # Реальный паттерн rosh_import_demo: латинская "T зона" (не кириллическая, как у
+    # Лазерного пилинга) — тот же термин, другой алфавит в исходных данных клиники.
+    names = [
+        "Лазерная терапия Forever Clear - T зона",
+        "Лазерная терапия Forever Clear - декольте",
+        "Лазерная терапия Forever Clear - лицо",
+    ]
+    return _FakeService("Лазерная терапия Forever Clear", "Лазерная терапия Forever Clear", [_variant(name) for name in names])
+
+
+def test_cyrillic_zone_letter_matches_latin_catalog_entry() -> None:
+    """Живой баг (нагрузочный тест, 2026-08-25): у "Forever Clear" в каталоге ЛАТИНСКАЯ
+    "T зона" — естественный кириллический ввод "т зона" (с русской клавиатуры) не матчил
+    вообще, хотя у другой услуги (Лазерный пилинг, кириллица в каталоге) он же работал.
+    Однобуквенный код зоны сворачивается в канонический вид независимо от алфавита."""
+
+    service = _forever_clear_service()
+    for message in ("т зона", "T зона", "t зона", "Т-зона"):
+        result = find_variant_matches(service, message)
+        assert len(result) == 1, message
+        assert result[0]["name"] == "Лазерная терапия Forever Clear - T зона"

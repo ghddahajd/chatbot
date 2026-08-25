@@ -148,14 +148,45 @@ def _query_stems(message: str) -> set[str]:
     }
 
 
-def _variant_stems(service, variant: dict[str, Any]) -> set[str]:
-    service_stems = _service_stems(service)
+def _variant_raw_stems(service, variant: dict[str, Any]) -> set[str]:
     label = variant_label(service, variant)
     name = str(variant.get("name") or "")
     return {
         _stem(token)
         for token in _tokens(f"{label} {name}")
-        if len(token) >= 3 and _stem(token) not in service_stems and token not in QUERY_STOP_TOKENS
+        if len(token) >= 3 and token not in QUERY_STOP_TOKENS
+    }
+
+
+def _common_variant_stems(service, variants: list[dict[str, Any]]) -> set[str]:
+    """Стемы, встречающиеся у БОЛЬШИНСТВА вариантов услуги — не несут различительной силы
+    между ними. Живой баг (нагрузочный тест, 2026-08-25): "MicroLaserPeel" — бренд ВНУТРИ
+    имени каждого варианта Лазерного пилинга, не самой услуги, поэтому _service_stems его не
+    ловил. Запрос "microlaserpeel внешняя сторона плеча" из-за этого матчил ВСЕ варианты
+    (бренд пересекался с каждым), а не сужал до конкретных — без бренда та же фраза сужала
+    правильно. Порог именно "больше половины", не строгое пересечение по ВСЕМ вариантам —
+    у Лазерного пилинга реально 12 из 13 вариантов "MicroLaserPeel", один "NanoLaserPeel"
+    (другой бренд той же услуги), так что 100%-е пересечение его вообще не находило. Тут не
+    важно, откуда взялось общее слово (бренд, аппарат, что угодно повторяющееся) — если оно
+    есть почти у каждого варианта, оно не помогает различить их."""
+
+    variant_dicts = [variant for variant in variants if isinstance(variant, dict)]
+    if len(variant_dicts) < 2:
+        return set()
+    counts: dict[str, int] = {}
+    for variant in variant_dicts:
+        for stem in _variant_raw_stems(service, variant):
+            counts[stem] = counts.get(stem, 0) + 1
+    threshold = len(variant_dicts) / 2
+    return {stem for stem, count in counts.items() if count > threshold}
+
+
+def _variant_stems(service, variant: dict[str, Any], *, exclude: set[str] = frozenset()) -> set[str]:
+    service_stems = _service_stems(service)
+    return {
+        stem
+        for stem in _variant_raw_stems(service, variant)
+        if stem not in service_stems and stem not in exclude
     }
 
 
@@ -189,11 +220,12 @@ def find_variant_matches(service, message: str, *, limit: int = 5) -> list[dict[
     if not query_stems:
         return []
 
+    common_stems = _common_variant_stems(service, variants)
     matches: list[dict[str, Any]] = []
     for variant in variants:
         if not isinstance(variant, dict):
             continue
-        stems = _variant_stems(service, variant)
+        stems = _variant_stems(service, variant, exclude=common_stems)
         if query_stems & stems:
             matches.append(variant)
         if len(matches) >= limit:

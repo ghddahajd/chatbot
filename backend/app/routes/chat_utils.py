@@ -52,7 +52,11 @@ from ..policy.restricted import (
     has_medical_restricted_category,
     is_restricted_question,
 )
-from ..policy.variants import find_variant_matches, is_variant_list_question
+from ..policy.variants import (
+    find_variant_matches,
+    is_variant_list_question,
+    should_stay_in_service_context,
+)
 
 
 fallback_llm_client = MockLLMClient()
@@ -447,7 +451,13 @@ def _contextual_frame_classification(
 
     local_service_id = str(local_result.get("service_id") or "").strip()
     if local_service_id and frame.entity_id and local_service_id != frame.entity_id:
-        return local_result
+        # Живой баг (нагрузочный тест, 2026-08-25): "пилинг лица" в контексте "Лазерный
+        # пилинг" переключался на другую услугу "Пилинги" вслепую — см. подробный разбор
+        # в should_stay_in_service_context. Остаёмся в контексте ТОЛЬКО когда сообщение
+        # ещё и упоминает саму текущую услугу, не просто общее слово вроде "лицо"/"зона" —
+        # иначе сломали бы настоящие переключения темы ("а сколько чистка лица").
+        if not should_stay_in_service_context(contextual_service, message):
+            return local_result
 
     if frame.frame_type in {"service_interest", "fact_question"} and frame.entity_id:
         if local_intent == "booking_request":

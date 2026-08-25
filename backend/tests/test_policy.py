@@ -779,6 +779,28 @@ def test_generic_doctor_list_still_lists_doctors(policy_session, resolver, manag
     assert "Молотилова Ольга Юрьевна" in result.safe_context["message_to_user"]
 
 
+def test_generic_doctor_list_filters_by_requested_weekday(policy_session, resolver, managed_env) -> None:
+    """Живой баг (нагрузочный тест, 2026-08-25): "кто принимает во вторник" вообще не
+    учитывал день недели — отдавал ВСЕХ врачей без фильтра (с обрезкой до первых 5), так что
+    Молотилова (у неё Пн/Пт/Сб, без вторника) оказывалась в списке, а Сарычев (реально
+    работает по вторникам) пропадал — шестой по счёту, под срез не попадал."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("кто принимает во вторник", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ANSWER
+    message = result.safe_context["message_to_user"]
+    # Реально работают по вторникам (config.yaml rosh_import_demo):
+    assert "Хачатурян Любовь Андреевна" in message
+    assert "Рассадина Татьяна Александровна" in message
+    assert "Цветкова Инна Сергеевна" in message
+    assert "Сарычев Денис Сергеевич" in message
+    # НЕ работают по вторникам — не должны попасть в список:
+    assert "Молотилова Ольга Юрьевна" not in message
+    assert "Джалилов Руслан Акифович" not in message
+
+
 def test_clinic_facts_answer_from_config(policy_session, resolver, managed_env) -> None:
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
 

@@ -607,6 +607,40 @@ def _clinic_doctors(knowledge_base: KnowledgeBase) -> list[dict[str, str]]:
     return doctors
 
 
+# Живой баг (нагрузочный тест, 2026-08-25): "кто принимает во вторник" вообще не парсил
+# день недели — попадал в общий список ВСЕХ врачей (не отфильтрованный), да ещё с обрезкой
+# до первых 5 (см. selected_doctors[:5] ниже) — в списке оказывался врач, у которого
+# вторника в расписании НЕТ, а врач, который реально работает по вторникам, вообще
+# пропадал (шестым по счёту, не попадал под срез). Ключ — короткая форма, которая ровно
+# как в schedule-строках ("Пн, Вт, Чт, Пт 14:00–20:00"); длинные формы матчатся по
+# вхождению подстроки, что покрывает все падежи разом ("вторник"/"вторника"/"во вторник").
+DAY_NAME_TO_ABBREVIATION = {
+    "понедельник": "Пн",
+    "вторник": "Вт",
+    "среда": "Ср",
+    "среду": "Ср",
+    "четверг": "Чт",
+    "пятница": "Пт",
+    "пятницу": "Пт",
+    "суббота": "Сб",
+    "субботу": "Сб",
+    "воскресенье": "Вс",
+}
+DAY_ABBREVIATION_PATTERN = re.compile(r"\b(Пн|Вт|Ср|Чт|Пт|Сб|Вс)\b")
+
+
+def _requested_schedule_day(normalized_message: str) -> str | None:
+    for name, abbreviation in DAY_NAME_TO_ABBREVIATION.items():
+        if name in normalized_message:
+            return abbreviation
+    return None
+
+
+def _doctor_works_on_day(doctor: dict[str, str], day_abbreviation: str) -> bool:
+    schedule = doctor.get("schedule", "")
+    return day_abbreviation in DAY_ABBREVIATION_PATTERN.findall(schedule)
+
+
 _DOCTOR_SPECIALTY_QUESTION_TEMPLATES = ("как зовут {specialty}", "кто {specialty}", "кто у вас {specialty}")
 
 
@@ -1364,8 +1398,15 @@ def _clinic_info_result(
     )
     if doctor_info_requested:
         asked_generic_list = contains_keyword(normalized_message, GENERIC_DOCTOR_LIST_KEYWORDS)
+        requested_day = _requested_schedule_day(normalized_message) if asked_generic_list else None
         if matched_doctors:
             selected_doctors = matched_doctors
+        elif asked_generic_list and requested_day:
+            # см. комментарий у _requested_schedule_day — раньше день недели вообще не
+            # учитывался, "кто принимает во вторник" отдавал ВСЕХ врачей без фильтра.
+            selected_doctors = [
+                doctor for doctor in doctors if _doctor_works_on_day(doctor, requested_day)
+            ]
         elif asked_generic_list:
             selected_doctors = doctors
         else:

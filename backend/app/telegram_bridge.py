@@ -24,7 +24,7 @@ import httpx
 
 from .delivery import _escape_markdown, _iso, _utcnow
 from .leads import recent_messages_for
-from .models import MessageRole
+from .models import MessageRole, SessionStatus
 from .sessions import SessionStore
 from .utils.jsonl import append_jsonl
 
@@ -342,6 +342,14 @@ class TelegramBridgeService:
             return
 
         await self.session_store.set_telegram_bridge(session_id, claimed_by=username)
+        # Живой баг (найден нагрузочным тестом виджета, 2026-08-25): клейм через Telegram-кнопку
+        # менял только telegram_claimed_by/telegram_topic_id, но не статус сессии — в отличие
+        # от веб-панели /operator (routes/operator.py:take_session), которая правильно ставит
+        # HUMAN_ACTIVE. Сессия навсегда оставалась в WAITING_OPERATOR: каждое следующее
+        # сообщение клиента получало "Ваше сообщение получено, администратор подключается"
+        # вместо реального разговора, хотя оператор уже реально взял диалог в работу.
+        if session.status != SessionStatus.CLOSED:
+            await self.session_store.set_status(session_id, SessionStatus.HUMAN_ACTIVE)
 
         topic_id = session.telegram_topic_id
         if topic_id is None:

@@ -8,7 +8,7 @@ from typing import Any
 import anyio
 
 from app import telegram_bridge as telegram_bridge_module
-from app.models import MessageRole
+from app.models import MessageRole, SessionStatus
 from app.sessions import SessionStore
 from app.telegram_bridge import TelegramBridgeService, client_label_for_session, operator_label
 
@@ -384,6 +384,67 @@ def test_claim_creates_topic_named_after_client_and_operator_with_transcript(mon
     send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
     assert any("хочу оставить телефон" in call["json"]["text"] for call in send_calls)
     assert any("Взято в работу" in call["json"]["text"] for call in send_calls)
+
+
+def test_claim_transitions_session_to_human_active(monkeypatch) -> None:
+    """Живой баг (нагрузочный тест виджета через реальный сервер, 2026-08-25): клейм менял
+    только telegram_claimed_by/telegram_topic_id, но не статус сессии — она навсегда
+    оставалась в WAITING_OPERATOR, и каждое следующее сообщение клиента получало
+    "администратор подключается" вместо реального разговора, даже когда оператор уже
+    реально взял диалог в работу через кнопку в Telegram."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> SessionStatus:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager)
+
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        updated = await store.get(session.session_id)
+        return updated.status
+
+    status = anyio.run(run)
+    assert status == SessionStatus.HUMAN_ACTIVE
+
+
+def test_claim_does_not_reopen_already_closed_session(monkeypatch) -> None:
+    """Клик по устаревшей кнопке "Взять в работу" на уже закрытом диалоге не должен
+    воскрешать сессию в HUMAN_ACTIVE — симметрично защите в routes/operator.py:take_session."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> SessionStatus:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.CLOSED)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager)
+
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        updated = await store.get(session.session_id)
+        return updated.status
+
+    status = anyio.run(run)
+    assert status == SessionStatus.CLOSED
 
 
 def test_claim_attaches_close_button_and_pins_it(monkeypatch) -> None:

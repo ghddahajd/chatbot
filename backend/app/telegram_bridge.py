@@ -36,6 +36,14 @@ CLOSE_CALLBACK_PREFIX = "close:"
 GET_UPDATES_TIMEOUT_SECONDS = 30
 HTTP_TIMEOUT_SECONDS = 40.0
 _MAX_RATE_LIMIT_RETRIES = 3
+# Живой баг (ручное тестирование пользователем, 2026-08-26): любая ошибка КРОМЕ 429 (сетевой
+# сбой, 409 Conflict от параллельного инстанса, 5xx) раньше не ретраилась вообще — одна
+# неудачная попытка теряла карточку насовсем, узнать можно было только руками из
+# telegram_bridge_failures.jsonl. Короткий, ограниченный по времени повтор (не фоновая очередь
+# как в DeliveryService — тут именно "проверить ещё разок в течение нескольких секунд")
+# ловит как раз такие переходные сбои, не отправляя карточку с опозданием в час/день.
+_MAX_TRANSIENT_RETRIES = 2
+_TRANSIENT_RETRY_DELAY_SECONDS = 2.0
 
 
 def _telegram_retry_after(data: dict[str, Any]) -> float | None:
@@ -154,32 +162,75 @@ class TelegramBridgeService:
         Many Requests") — ожидаемый случай, не редкость. Раньше он тихо логировался и
         карточка терялась без следа (живой баг, найден нагрузочным тестом: 18 из 57 карточек
         не доходили при 10 параллельных запросах). Теперь уважаем retry_after, который сам
-        Telegram присылает в ответе, и повторяем — вместо того чтобы просто потерять."""
+        Telegram присылает в ответе, и повторяем — вместо того чтобы просто потерять.
+
+        Отдельно — короткий ретрай (несколько секунд, не фоновая очередь) на ЛЮБУЮ другую
+        неудачу: сетевой сбой (ConnectError/Timeout) или не-429 ошибка API (409 Conflict от
+        параллельного инстанса, 5xx). Раньше такое отправлялось один раз и терялось без следа."""
 
         data: dict[str, Any] = {}
-        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                response = await client.post(f"{self._api_base}/{method}", json=params)
-                data = response.json()
+        rate_limit_attempt = 0
+        transient_attempt = 0
+        while True:
+            try:
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                    response = await client.post(f"{self._api_base}/{method}", json=params)
+                    data = response.json()
+            except httpx.HTTPError as error:
+                if transient_attempt >= _MAX_TRANSIENT_RETRIES:
+                    logger.warning(
+                        "telegram_bridge network_error method=%s error=%s attempt=%s/%s",
+                        method,
+                        type(error).__name__,
+                        transient_attempt + 1,
+                        _MAX_TRANSIENT_RETRIES + 1,
+                    )
+                    return {"ok": False, "description": f"network_error:{type(error).__name__}"}
+                logger.warning(
+                    "telegram_bridge network_error_retry method=%s error=%s attempt=%s/%s",
+                    method,
+                    type(error).__name__,
+                    transient_attempt + 1,
+                    _MAX_TRANSIENT_RETRIES + 1,
+                )
+                transient_attempt += 1
+                await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
+                continue
+
             if data.get("ok"):
                 return data
+
             retry_after = _telegram_retry_after(data)
-            if retry_after is None or attempt >= _MAX_RATE_LIMIT_RETRIES:
+            if retry_after is not None and rate_limit_attempt < _MAX_RATE_LIMIT_RETRIES:
                 logger.warning(
-                    "telegram_bridge api_error method=%s description=%s",
+                    "telegram_bridge rate_limited method=%s retry_after=%ss attempt=%s/%s",
+                    method,
+                    retry_after,
+                    rate_limit_attempt + 1,
+                    _MAX_RATE_LIMIT_RETRIES,
+                )
+                rate_limit_attempt += 1
+                await asyncio.sleep(retry_after)
+                continue
+
+            if retry_after is None and transient_attempt < _MAX_TRANSIENT_RETRIES:
+                logger.warning(
+                    "telegram_bridge api_error_retry method=%s description=%s attempt=%s/%s",
                     method,
                     data.get("description"),
+                    transient_attempt + 1,
+                    _MAX_TRANSIENT_RETRIES + 1,
                 )
-                return data
+                transient_attempt += 1
+                await asyncio.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
+                continue
+
             logger.warning(
-                "telegram_bridge rate_limited method=%s retry_after=%ss attempt=%s/%s",
+                "telegram_bridge api_error method=%s description=%s",
                 method,
-                retry_after,
-                attempt + 1,
-                _MAX_RATE_LIMIT_RETRIES,
+                data.get("description"),
             )
-            await asyncio.sleep(retry_after)
-        return data
+            return data
 
     async def post_operator_queue_card(
         self,

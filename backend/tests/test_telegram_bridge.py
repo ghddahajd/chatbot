@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import httpx
 
 from app import telegram_bridge as telegram_bridge_module
 from app.models import MessageRole, SessionStatus
@@ -198,15 +199,18 @@ def test_call_gives_up_after_max_retries_on_persistent_429(monkeypatch) -> None:
     assert len(sleep_calls) == telegram_bridge_module._MAX_RATE_LIMIT_RETRIES
 
 
-def test_call_does_not_retry_on_non_rate_limit_error(monkeypatch) -> None:
-    """Ошибка не про лимит (например, невалидный chat_id) — ретраить бессмысленно, повторный
-    вызов даст тот же результат. Должен остаться прежним поведением: один вызов, лог, отдать
-    ответ как есть."""
+def test_call_retries_short_and_bounded_on_non_rate_limit_error(monkeypatch) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-26): ошибка не про лимит (409
+    Conflict от параллельного инстанса, 5xx, сетевой сбой) раньше не ретраилась вообще — одна
+    неудачная попытка теряла карточку насовсем. Теперь короткий ограниченный повтор (несколько
+    секунд, не фоновая очередь) — ловит переходные сбои, но не зависает навечно на постоянной
+    ошибке вроде неверного chat_id: попыток строго _MAX_TRANSIENT_RETRIES+1, не больше."""
 
     _reset_fake_client(monkeypatch)
+    sleep_calls: list[float] = []
 
     async def fake_sleep(seconds: float) -> None:
-        raise AssertionError("не должен спать/ретраить на не-429 ошибке")
+        sleep_calls.append(seconds)
 
     monkeypatch.setattr(telegram_bridge_module.asyncio, "sleep", fake_sleep)
     FakeAsyncClient.responses["sendMessage"] = {
@@ -230,7 +234,88 @@ def test_call_does_not_retry_on_non_rate_limit_error(monkeypatch) -> None:
     anyio.run(run)
 
     send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
-    assert len(send_calls) == 1
+    assert len(send_calls) == telegram_bridge_module._MAX_TRANSIENT_RETRIES + 1
+    assert sleep_calls == [telegram_bridge_module._TRANSIENT_RETRY_DELAY_SECONDS] * telegram_bridge_module._MAX_TRANSIENT_RETRIES
+
+
+def test_call_retries_and_recovers_on_conflict_error(monkeypatch) -> None:
+    """Живой сценарий, который реально произошёл: 409 Conflict (два инстанса опрашивают
+    getUpdates одновременно) на отправку карточки — если следующая попытка через пару секунд
+    проходит успешно, карточка должна дойти, а не потеряться."""
+
+    _reset_fake_client(monkeypatch)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(telegram_bridge_module.asyncio, "sleep", fake_sleep)
+    FakeAsyncClient.responses["sendMessage"] = [
+        {"ok": False, "error_code": 409, "description": "Conflict: terminated by other getUpdates request"},
+        {"ok": True, "result": {"message_id": 1}},
+    ]
+
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == 2
+    assert sleep_calls == [telegram_bridge_module._TRANSIENT_RETRY_DELAY_SECONDS]
+
+
+def test_call_retries_on_network_exception(monkeypatch) -> None:
+    """Сетевой сбой (ConnectError/Timeout) раньше не ловился вообще внутри _call — исключение
+    улетало наверх и терялось в generic except Exception у вызывающего кода, без единой попытки
+    повтора. Теперь тоже короткий ограниченный ретрай, как и для не-429 ошибок API."""
+
+    _reset_fake_client(monkeypatch)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(telegram_bridge_module.asyncio, "sleep", fake_sleep)
+
+    call_count = 0
+    real_post = FakeAsyncClient.post
+
+    async def flaky_post(self, url: str, json: dict) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ConnectError("boom")
+        return await real_post(self, url, json)
+
+    monkeypatch.setattr(FakeAsyncClient, "post", flaky_post)
+    FakeAsyncClient.responses["sendMessage"] = {"ok": True, "result": {"message_id": 1}}
+
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        service = _service(store, ws_manager)
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    assert call_count == 2
+    assert sleep_calls == [telegram_bridge_module._TRANSIENT_RETRY_DELAY_SECONDS]
 
 
 def test_failed_send_writes_a_durable_failure_record(monkeypatch, tmp_path) -> None:

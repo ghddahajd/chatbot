@@ -7,7 +7,7 @@ import re
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from ..delivery import _escape_markdown
+from ..delivery import _escape_markdown, _lead_short_id
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
 from ..telegram_bridge import client_label_for_session
 from ..knowledge import normalize_text, phrasebook_value_to_text
@@ -989,9 +989,17 @@ class ChatService:
                     client_label=client_label,
                 )
             else:
+                # Живой баг (ручное тестирование пользователем, 2026-08-26): короткий id
+                # добавили в delivery.py (_telegram_text), но реальные карточки лидов уходят
+                # через ЭТОТ, отдельный путь (telegram_bridge.post_client_lead_card) — outbox
+                # из delivery.py тут вообще не используется, файл delivery_outbox.jsonl даже
+                # не создаётся. Тег строился в неправильном месте — в живом Telegram он не
+                # появлялся ни разу, хотя прямой вызов _telegram_text() в тестах работал.
+                short_id = _lead_short_id(lead.session_id)
+                id_tag = f" · #{short_id}" if short_id else ""
                 card_text = (
                     f"{reason}\n\n"
-                    f"Имя: {_escape_markdown(lead.name or 'не указано')}\n"
+                    f"Имя: {_escape_markdown(lead.name or 'не указано')}{id_tag}\n"
                     f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n\n"
                     f"{_escape_markdown(lead.summary)}"
                 )

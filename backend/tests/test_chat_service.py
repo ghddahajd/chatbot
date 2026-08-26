@@ -1820,6 +1820,35 @@ def test_plain_lead_without_operator_need_posts_to_clients_topic(test_client) ->
     assert "Иван" in fake_bridge.client_cards[0]
 
 
+def test_plain_lead_card_includes_short_id_tag_from_session_id(test_client) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-26): короткий id для лидов
+    добавили в delivery.py (_telegram_text), но реальные карточки простых лидов уходят через
+    ДРУГОЙ, отдельный путь — _notify_telegram_for_lead -> telegram_bridge.post_client_lead_card
+    в chat_service.py, у него свой собственный card_text, delivery.py тут вообще не участвует.
+    Тег строился не в том месте — в живом Telegram он не появлялся ни разу."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "Хочу оставить телефон"},
+    ).json()
+    session_id = first_payload["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "Иван +79991234567",
+        },
+    )
+
+    expected_short_id = session_id.replace("-", "")[-6:]
+    assert len(fake_bridge.client_cards) == 1
+    assert f"· #{expected_short_id}" in fake_bridge.client_cards[0]
+
+
 def test_regulated_lead_with_operator_need_posts_to_general_queue(test_client) -> None:
     """Лид с needs_operator=True (регулируемый флоу) — карточка в General с клеймом, как
     прямой operator_requested: тут реально нужен живой человек, не просто лог контакта."""

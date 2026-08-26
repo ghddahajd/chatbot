@@ -1696,9 +1696,10 @@
     async confirmReset() {
       const isLive = this.state.status === STATUS.WAITING_OPERATOR || this.state.status === STATUS.HUMAN_ACTIVE;
       if (isLive && this.state.sessionId) {
-        try {
-          await fetch(API_BASE + "/api/chat/session/" + this.state.sessionId + "/cancel", { method: "POST" });
-        } catch (_) { /* всё равно стартуем локально заново */ }
+        // Не ждём ответа — /cancel внутри сам стучится в Telegram (через прокси, не мгновенно),
+        // и раньше сброс на экране клиента подвисал на этот round-trip. Уведомление в Telegram
+        // ему не критично ждать, а вот отклик на клик — да.
+        fetch(API_BASE + "/api/chat/session/" + this.state.sessionId + "/cancel", { method: "POST" }).catch(() => {});
       }
       await this.startNew();
     }

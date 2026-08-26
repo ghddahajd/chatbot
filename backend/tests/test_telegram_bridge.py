@@ -836,6 +836,50 @@ def test_claim_locks_topic_to_first_operator(monkeypatch) -> None:
     assert rename_calls == []
 
 
+def test_format_transcript_keeps_all_messages_when_under_budget() -> None:
+    store = SessionStore()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.append_message(session.session_id, MessageRole.USER, "хочу оставить телефон")
+        await store.append_message(session.session_id, MessageRole.ASSISTANT, "Хорошо, оставьте контакт")
+        session = await store.get(session.session_id)
+        return telegram_bridge_module._format_transcript(session)
+
+    transcript = anyio.run(run)
+
+    lines = transcript.splitlines()
+    assert len(lines) == 2
+    assert "хочу оставить телефон" in lines[0]
+    assert "Хорошо, оставьте контакт" in lines[1]
+
+
+def test_format_transcript_drops_oldest_messages_over_char_budget() -> None:
+    """Живой баг (ручное тестирование, 2026-08-26): жёсткий лимит в 15 СООБЩЕНИЙ в длинном
+    чате с болтливой пляской вокруг оператора съедал весь бюджет на неё, вытесняя исходные
+    содержательные вопросы клиента в начале диалога. Бюджет по символам вместо количества —
+    новые (самые релевантные для оператора) сообщения должны остаться, старые уйти."""
+
+    store = SessionStore()
+    budget = telegram_bridge_module._TELEGRAM_TRANSCRIPT_CHAR_BUDGET
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        # каждое сообщение длиннее бюджета/10 — гарантированно не влезут все разом
+        for index in range(40):
+            await store.append_message(
+                session.session_id, MessageRole.USER, f"сообщение номер {index} " + "x" * 100
+            )
+        session = await store.get(session.session_id)
+        return telegram_bridge_module._format_transcript(session)
+
+    transcript = anyio.run(run)
+
+    assert len(transcript) <= budget
+    assert "сообщение номер 39" in transcript  # самое новое — сохранилось
+    assert "сообщение номер 0 " not in transcript  # самое старое — вытеснено
+
+
 def test_close_command_closes_session_and_topic_without_relaying_as_chat_message(monkeypatch) -> None:
     _reset_fake_client(monkeypatch)
     store = SessionStore()

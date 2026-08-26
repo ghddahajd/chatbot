@@ -23,7 +23,6 @@ from typing import Any
 import httpx
 
 from .delivery import _escape_markdown, _iso, _utcnow
-from .leads import recent_messages_for
 from .models import MessageRole, SessionStatus
 from .sessions import SessionStore
 from .utils.jsonl import append_jsonl
@@ -61,6 +60,13 @@ _TELEGRAM_ROLE_LABELS = {"user": "👤 Клиент", "assistant": "🤖 Бот"
 # длинные названия справа) — жёсткий потолок на каждую часть, не только на итог, иначе одно
 # длинное поле (кривой ник оператора, длинное имя клиента) съедает всё название целиком.
 _LABEL_MAX_LENGTH = 18
+# Telegram sendMessage режет текст на 4096 символах — бюджет с запасом под остальной текст
+# сообщения. Живой баг (2026-08-26): раньше резали по фиксированному количеству сообщений
+# (15) — в чате с долгой пляской вокруг оператора (оффер → отказ → повтор) последние 15
+# сообщений съедались этой перепиской целиком, а исходные содержательные вопросы клиента в
+# начале диалога вытеснялись из сводки. Бюджет по символам вместо количества: короткие
+# сообщения не тратят лимит впустую, длинные не вылезают за потолок Telegram.
+_TELEGRAM_TRANSCRIPT_CHAR_BUDGET = 3500
 
 
 def client_label_for_session(session: Any) -> str:
@@ -90,12 +96,19 @@ def operator_label(from_user: dict[str, Any]) -> str:
 
 
 def _format_transcript(session: Any) -> str:
-    entries = recent_messages_for(session, limit=15)
-    lines = [
-        f"{_TELEGRAM_ROLE_LABELS.get(entry['role'], entry['role'])}: {entry['text']}"
-        for entry in entries
-        if entry.get("text")
-    ]
+    lines: list[str] = []
+    total_chars = 0
+    for message in reversed(session.messages):
+        text = str(getattr(message, "text", "") or "")
+        if not text:
+            continue
+        role_value = getattr(message.role, "value", message.role)
+        line = f"{_TELEGRAM_ROLE_LABELS.get(role_value, role_value)}: {text}"
+        if lines and total_chars + len(line) + 1 > _TELEGRAM_TRANSCRIPT_CHAR_BUDGET:
+            break
+        lines.append(line)
+        total_chars += len(line) + 1
+    lines.reverse()
     return "\n".join(lines)
 
 

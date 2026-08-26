@@ -31,13 +31,20 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
     session = await session_store.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.status == SessionStatus.WAITING_OPERATOR:
-        await session_store.set_status(session_id, SessionStatus.CLOSED)
-        await session_store.append_message(
-            session_id,
-            MessageRole.SYSTEM,
-            "Пользователь завершил ожидание специалиста и начал новый диалог.",
+    if session.status in (SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE):
+        # Клиент сам сбросил диалог кнопкой в виджете (в т.ч. посреди живого разговора с
+        # оператором) — закрываем сессию и уведомляем Telegram-тему, иначе оператор
+        # продолжал бы печатать в тему, не зная, что собеседник уже ушёл.
+        system_text = (
+            "Пользователь завершил диалог с оператором и начал новый."
+            if session.status == SessionStatus.HUMAN_ACTIVE
+            else "Пользователь завершил ожидание специалиста и начал новый диалог."
         )
+        await session_store.set_status(session_id, SessionStatus.CLOSED)
+        await session_store.append_message(session_id, MessageRole.SYSTEM, system_text)
+        telegram_bridge = getattr(request.app.state, "telegram_bridge_service", None)
+        if telegram_bridge is not None:
+            await telegram_bridge.notify_client_left(session_id)
     session = await session_store.get(session_id)
     return {"status": session.status.value}
 

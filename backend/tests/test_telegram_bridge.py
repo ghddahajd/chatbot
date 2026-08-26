@@ -870,6 +870,48 @@ def test_close_command_closes_session_and_topic_without_relaying_as_chat_message
     anyio.run(check_session)
 
 
+def test_notify_client_left_posts_warning_and_closes_topic(monkeypatch) -> None:
+    """Клиент сам сбросил диалог кнопкой в виджете (см. /api/chat/session/{id}/cancel) —
+    оператор должен увидеть это в теме, а не продолжать печатать в пустоту."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42)
+        service = _service(store, ws_manager)
+        await service.notify_client_left(session.session_id)
+        return session.session_id
+
+    anyio.run(run)
+
+    send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
+    assert len(send_calls) == 1
+    assert send_calls[0]["json"]["message_thread_id"] == 42
+    assert "покинул чат" in send_calls[0]["json"]["text"]
+
+    close_calls = [call for call in FakeAsyncClient.calls if call["method"] == "closeForumTopic"]
+    assert len(close_calls) == 1
+    assert close_calls[0]["json"]["message_thread_id"] == 42
+
+
+def test_notify_client_left_is_noop_without_topic(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> None:
+        session = await store.get_or_create(None, "rosh_demo")
+        service = _service(store, ws_manager)
+        await service.notify_client_left(session.session_id)
+
+    anyio.run(run)
+
+    assert FakeAsyncClient.calls == []
+
+
 def test_handle_message_routes_operator_reply_to_correct_session(monkeypatch) -> None:
     _reset_fake_client(monkeypatch)
     store = SessionStore()

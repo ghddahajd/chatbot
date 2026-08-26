@@ -313,6 +313,23 @@ class TelegramBridgeService:
             message_thread_id=session.telegram_topic_id,
         )
 
+    async def notify_client_left(self, session_id: str) -> None:
+        """Клиент сам сбросил диалог кнопкой в виджете, пока ждал оператора или уже общался
+        с ним — без этого оператор продолжал бы печатать в тему, не понимая, куда пропал
+        собеседник (симметрично тому, как _close_session_from_topic уведомляет клиента,
+        когда диалог завершает оператор)."""
+
+        session = await self.session_store.get(session_id)
+        if session is None or session.telegram_topic_id is None or not self.enabled:
+            return
+        await self._call(
+            "sendMessage",
+            chat_id=self.group_chat_id,
+            message_thread_id=session.telegram_topic_id,
+            text="⚠️ Клиент покинул чат и начал новый диалог.",
+        )
+        await self.close_topic(session_id)
+
     async def _create_session_topic(self, session: Any, *, claimed_by: str) -> int | None:
         """Создаёт тему сессии в момент клейма — имя сразу содержит и клиента, и оператора,
         не нужно отдельно переименовывать после."""

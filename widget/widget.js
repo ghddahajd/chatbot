@@ -342,6 +342,25 @@
       .close-btn svg { width: 16px; height: 16px; }
       .close-btn:hover { background: var(--border); color: var(--text); }
 
+      /* ── Reset (header) ── */
+      .reset-header-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: var(--bg-warm);
+        border: 0;
+        color: var(--text-muted);
+        font: inherit;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        transition: background .15s, color .15s;
+        line-height: 1;
+      }
+      .reset-header-btn svg { width: 15px; height: 15px; }
+      .reset-header-btn:hover { background: var(--border); color: var(--text); }
+
       /* ── AI badge ── */
       .ai-badge {
         display: inline-flex;
@@ -435,6 +454,43 @@
         font-size: 13.5px;
         font-weight: 700;
         cursor: pointer;
+      }
+
+      /* ── Reset confirm modal ── */
+      .reset-modal {
+        position: absolute;
+        inset: 0;
+        background: rgba(8,14,13,.4);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 5;
+      }
+      .reset-modal.visible { display: flex; }
+      .reset-modal-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 18px;
+      }
+      .reset-modal-cancel, .reset-modal-confirm {
+        flex: 1;
+        height: 44px;
+        border-radius: 999px;
+        font: inherit;
+        font-size: 13.5px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .reset-modal-cancel {
+        border: 1px solid var(--border);
+        background: var(--bg-warm);
+        color: var(--text-secondary);
+      }
+      .reset-modal-confirm {
+        border: 0;
+        background: var(--accent);
+        color: var(--bg);
       }
 
       /* ── Messages ── */
@@ -958,6 +1014,12 @@
             с ИИ
             <svg class="ai-badge-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
           </button>
+          <button class="reset-header-btn" type="button" aria-label="Начать новый диалог">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+              <path d="M3 4v5h5"></path>
+            </svg>
+          </button>
           <button class="close-btn" type="button" aria-label="Закрыть">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 6 6 18"></path>
@@ -977,6 +1039,23 @@
             <div class="ai-modal-title">Отвечаем с ИИ</div>
             <div class="ai-modal-body">ИИ-ассистент подсказывает по услугам, ценам и записи на основе данных клиники — это не замена приёму у врача. Если вопрос деликатный или нужен точный совет, позовите менеджера — подключим человека.</div>
             <button class="ai-modal-ok" type="button">Понятно</button>
+          </div>
+        </div>
+
+        <div class="reset-modal">
+          <div class="ai-modal-card">
+            <button class="ai-modal-close reset-modal-close" type="button" aria-label="Закрыть">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+            </button>
+            <div class="ai-modal-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path></svg>
+            </div>
+            <div class="ai-modal-title reset-modal-title">Начать новый диалог?</div>
+            <div class="ai-modal-body reset-modal-body">Текущая переписка будет очищена.</div>
+            <div class="reset-modal-actions">
+              <button class="reset-modal-cancel" type="button">Отмена</button>
+              <button class="reset-modal-confirm" type="button">Начать заново</button>
+            </div>
           </div>
         </div>
 
@@ -1067,6 +1146,13 @@
         aiModal: this.$(".ai-modal"),
         aiModalClose: this.$(".ai-modal-close"),
         aiModalOk: this.$(".ai-modal-ok"),
+        resetHeaderBtn: this.$(".reset-header-btn"),
+        resetModal: this.$(".reset-modal"),
+        resetModalClose: this.$(".reset-modal-close"),
+        resetModalTitle: this.$(".reset-modal-title"),
+        resetModalBody: this.$(".reset-modal-body"),
+        resetModalCancel: this.$(".reset-modal-cancel"),
+        resetModalConfirm: this.$(".reset-modal-confirm"),
         teaser: this.$(".teaser"),
         teaserBubble: this.$(".teaser-bubble"),
         teaserDismiss: this.$(".teaser-dismiss"),
@@ -1120,6 +1206,13 @@
       this.el.aiModalClose.addEventListener("click", closeAiModal);
       this.el.aiModalOk.addEventListener("click", closeAiModal);
       this.el.aiModal.addEventListener("click", (e) => { if (e.target === this.el.aiModal) closeAiModal(); });
+
+      const closeResetModal = () => this.el.resetModal.classList.remove("visible");
+      this.el.resetHeaderBtn.addEventListener("click", () => this.openResetConfirm());
+      this.el.resetModalClose.addEventListener("click", closeResetModal);
+      this.el.resetModalCancel.addEventListener("click", closeResetModal);
+      this.el.resetModal.addEventListener("click", (e) => { if (e.target === this.el.resetModal) closeResetModal(); });
+      this.el.resetModalConfirm.addEventListener("click", () => { closeResetModal(); this.confirmReset(); });
 
       const openFromTeaser = () => { this.dismissTeaser(); this.toggle(); };
       this.el.teaserBubble.addEventListener("click", openFromTeaser);
@@ -1589,6 +1682,25 @@
         this.state.sending = false;
         this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
       }
+    }
+
+    openResetConfirm() {
+      const isLive = this.state.status === STATUS.WAITING_OPERATOR || this.state.status === STATUS.HUMAN_ACTIVE;
+      this.el.resetModalTitle.textContent = isLive ? "Завершить диалог с оператором?" : "Начать новый диалог?";
+      this.el.resetModalBody.textContent = isLive
+        ? "Вы сейчас общаетесь с оператором — сброс завершит этот разговор, начнём с чистого листа."
+        : "Текущая переписка будет очищена.";
+      this.el.resetModal.classList.add("visible");
+    }
+
+    async confirmReset() {
+      const isLive = this.state.status === STATUS.WAITING_OPERATOR || this.state.status === STATUS.HUMAN_ACTIVE;
+      if (isLive && this.state.sessionId) {
+        try {
+          await fetch(API_BASE + "/api/chat/session/" + this.state.sessionId + "/cancel", { method: "POST" });
+        } catch (_) { /* всё равно стартуем локально заново */ }
+      }
+      await this.startNew();
     }
 
     async startNew() {

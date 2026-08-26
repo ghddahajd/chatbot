@@ -1234,6 +1234,82 @@ def test_operator_return_confirmation_flips_status_back_to_ai_active(test_client
     assert followup["answer"] != ""
 
 
+def test_cancel_session_while_waiting_operator_closes_and_notifies_telegram(test_client, monkeypatch) -> None:
+    from app.models import SessionStatus
+
+    notified: list[str] = []
+
+    async def fake_notify(session_id: str) -> None:
+        notified.append(session_id)
+
+    monkeypatch.setattr(test_client.app.state.telegram_bridge_service, "notify_client_left", fake_notify)
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+
+    response = test_client.post(f"/api/chat/session/{session_id}/cancel")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["status"] == SessionStatus.CLOSED.value
+    assert notified == [session_id]
+
+
+def test_cancel_session_while_human_active_closes_and_notifies_telegram(test_client, monkeypatch) -> None:
+    from app.models import SessionStatus
+
+    notified: list[str] = []
+
+    async def fake_notify(session_id: str) -> None:
+        notified.append(session_id)
+
+    monkeypatch.setattr(test_client.app.state.telegram_bridge_service, "notify_client_left", fake_notify)
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+    ).json()["session_id"]
+    test_client.app.state.session_store._sessions[session_id].status = SessionStatus.HUMAN_ACTIVE
+
+    response = test_client.post(f"/api/chat/session/{session_id}/cancel")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["status"] == SessionStatus.CLOSED.value
+    assert notified == [session_id]
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    assert "оператором" in stored_session.messages[-1].text
+
+
+def test_cancel_session_while_ai_active_is_noop(test_client, monkeypatch) -> None:
+    from app.models import SessionStatus
+
+    notified: list[str] = []
+
+    async def fake_notify(session_id: str) -> None:
+        notified.append(session_id)
+
+    monkeypatch.setattr(test_client.app.state.telegram_bridge_service, "notify_client_left", fake_notify)
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+    ).json()["session_id"]
+
+    response = test_client.post(f"/api/chat/session/{session_id}/cancel")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["status"] == SessionStatus.AI_ACTIVE.value
+    assert notified == []
+
+
 def test_price_and_hesitation_objections_share_backoff_end_to_end(test_client) -> None:
     """Полный цикл через реальный /api/chat/message, точные формулировки из транскрипта
     живого QA-аудита (§2026-08-22, P3_2 → P3_4 → P3_8) — не только policy-юнит с ручным

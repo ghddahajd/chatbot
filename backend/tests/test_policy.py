@@ -1489,6 +1489,39 @@ def test_operator_request_second_time_hard_transfer(policy_session, knowledge_ba
     assert result.reason == PolicyReason.OPERATOR_REQUESTED
 
 
+def test_content_free_reply_after_operator_offer_invites_question_not_off_topic(
+    policy_session, knowledge_base
+) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-26): после
+    operator_soft_offer ("опишите, что вас интересует, или соединю с менеджером") ответ
+    вроде "сначала спрошу тут" — не отказ (_has_bare_negative_signal его не ловит, там нет
+    "нет"/"не надо") и не содержательный вопрос, просто "продолжаю в чате". Раньше падал в
+    generic off_topic-шаблон ("Тут я не сориентирую..."), нелепо звучащий как ответ на
+    несуществующий вопрос."""
+
+    policy_session.pending_action = PendingAction.OFFERED_OPERATOR.value
+
+    result = _analyze("сначала спрошу тут", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.safe_context["operator_offer_declined"] is True
+    assert "не сориентирую" not in result.safe_context["message_to_user"]
+    assert result.safe_context["message_to_user"] == "Хорошо, слушаю — что вас интересует?"
+
+
+def test_real_question_after_operator_offer_still_answers_normally(
+    policy_session, knowledge_base
+) -> None:
+    """Реальный вопрос после мягкого предложения оператора не должен перехватываться новой
+    веткой — has_competing_substantive_signal должен пропустить его дальше как обычно."""
+
+    policy_session.pending_action = PendingAction.OFFERED_OPERATOR.value
+
+    result = _analyze("сколько стоит чистка лица", policy_session, knowledge_base)
+
+    assert result.safe_context.get("operator_offer_declined") is not True
+
+
 def test_geography_not_moscow(policy_session, knowledge_base) -> None:
     result = _analyze("я не из Москвы, можно к вам?", policy_session, knowledge_base)
 

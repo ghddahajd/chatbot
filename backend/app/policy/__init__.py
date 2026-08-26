@@ -2368,6 +2368,32 @@ def _analyze_message_core(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
+    # Живой баг (ручное тестирование пользователем, 2026-08-26): после мягкого предложения
+    # оператора (operator_soft_offer — "опишите, что вас интересует, или соединю с
+    # менеджером") ответ вроде "сначала спрошу тут" не отменяет вопрос ("нет" тут не
+    # подходит — _has_bare_negative_signal его не ловит) и не задаёт конкретный вопрос, а
+    # просто сигнализирует "продолжаю в чате". Раньше такой ответ проваливался в generic
+    # off_topic-шаблон ("Тут я не сориентирую..."), звучащий как отказ на несуществующий
+    # вопрос. Не требуем именно negative signal — здесь достаточно "не подтвердил оператора,
+    # не задал ничего содержательного".
+    if (
+        session.pending_action == PendingAction.OFFERED_OPERATOR.value
+        and not operator_requested
+        and not phone
+        and not has_competing_substantive_signal
+    ):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=0.85,
+            safe_context={
+                "force_direct_answer": True,
+                "operator_offer_declined": True,
+                "message_to_user": _phrase(knowledge_base, "operator_offer_declined_continue"),
+            },
+            quick_actions=["Позвать менеджера", "Посмотреть услуги"],
+        )
+
     if _has_bare_negative_signal(normalized_message) and not has_competing_substantive_signal:
         return PolicyResult(
             action=PolicyAction.CLARIFY,

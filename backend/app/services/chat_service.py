@@ -998,8 +998,8 @@ class ChatService:
                 short_id = _lead_short_id(lead.session_id)
                 id_tag = f" · #{short_id}" if short_id else ""
                 card_text = (
-                    f"{reason}\n\n"
-                    f"Имя: {_escape_markdown(lead.name or 'не указано')}{id_tag}\n"
+                    f"{reason}{id_tag}\n\n"
+                    f"Имя: {_escape_markdown(lead.name or 'не указано')}\n"
                     f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n\n"
                     f"{_escape_markdown(lead.summary)}"
                 )

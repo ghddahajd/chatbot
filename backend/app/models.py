@@ -108,6 +108,11 @@ class Session(BaseModel):
     contact_draft: dict[str, Any] = Field(default_factory=dict)
     telegram_topic_id: Optional[int] = None
     telegram_claimed_by: Optional[str] = None
+    # Живой баг (ручное тестирование пользователем, 2026-08-26): если оператор не подключился
+    # долго, клиент раньше просто застревал на "администратор подключается" без выхода. Оффер
+    # "вернуться к боту" — РОВНО один раз за сессию (не чаще), чтобы не пинг-понговать
+    # статус сессии туда-сюда и не плодить повторные карточки в очереди операторов.
+    operator_return_offered: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

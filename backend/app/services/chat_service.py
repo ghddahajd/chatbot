@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from datetime import datetime
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -508,6 +509,17 @@ class ChatService:
     async def _clear_contact_state(self, session_store, session_id: str) -> None:
         await session_store.set_pending_action(session_id, None)
         await session_store.update_contact_draft(session_id, clear=True)
+
+    def _minutes_since_handoff(self, session) -> float | None:
+        """Минут с момента передачи оператору (последнее сообщение kind="handoff") — None,
+        если такого сообщения нет (не должно случиться для WAITING_OPERATOR, но на всякий
+        случай не падаем, а просто не предлагаем оффер)."""
+
+        for item in reversed(session.messages):
+            if item.kind == "handoff":
+                delta = datetime.utcnow() - item.created_at
+                return delta.total_seconds() / 60
+        return None
 
     def _looks_like_new_question(self, message: str, knowledge_base) -> bool:
         """отличает смену темы от попытки дать имя/телефон.
@@ -1168,6 +1180,26 @@ class ChatService:
             )
 
         if session.status == SessionStatus.WAITING_OPERATOR:
+            # Живой баг (ручное тестирование пользователем, 2026-08-26): ответ на предложение
+            # operator_wait_timeout_offer ниже — проверяем ПЕРВЫМ, до полного pipeline, точно
+            # так же, как partial-phone проверка выше. Точное совпадение безопасно — value
+            # кнопки контролируем сами (см. quick_actions ниже).
+            if normalize_text(message) == normalize_text("Да, продолжить с ботом"):
+                await session_store.set_status(session.session_id, SessionStatus.AI_ACTIVE)
+                answer = self._phrase(
+                    "operator_return_confirmed", "Хорошо, продолжаем здесь. Что вас интересует?"
+                )
+                await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+                session = await session_store.get(session.session_id)
+                return ChatMessageResponse(
+                    session_id=session.session_id,
+                    status=session.status,
+                    action=PolicyAction.CLARIFY,
+                    answer=answer,
+                    lead_created=False,
+                    quick_actions=[],
+                )
+
             local_classification = classify_and_extract(
                 message,
                 service_classifier_payload(request, knowledge_base, include_variants=True),
@@ -1236,12 +1268,31 @@ class ChatService:
             # разозлённого клиента. waiting_policy_result уже посчитан выше (полный pipeline,
             # тот же COMPLAINT_ESCALATION_KEYWORDS-гейт, что и в AI_ACTIVE) — различаем жалобу
             # от остального, не просто перестаём молчать одним и тем же текстом на всё.
+            waiting_quick_actions: list = []
             if waiting_policy_result.reason == PolicyReason.COMPLAINT:
                 waiting_answer = self._phrase(
                     "waiting_operator_complaint_ack",
                     "Понимаю, ситуация неприятная. Ваше сообщение видит администратор вместе "
                     "со всей историей переписки — он ответит вам в ближайшее время.",
                 )
+            elif (
+                not session.telegram_claimed_by
+                and not session.operator_return_offered
+                and (self._minutes_since_handoff(session) or 0) >= 5
+            ):
+                # Живой баг (ручное тестирование пользователем, 2026-08-26): если оператор не
+                # подключился 5+ минут, клиент раньше просто застревал без выхода. Оффер —
+                # РОВНО один раз за сессию (operator_return_offered), не пинг-понгуем статус
+                # туда-сюда и не плодим повторные карточки в очереди операторов.
+                await session_store.set_operator_return_offered(session.session_id, True)
+                waiting_answer = self._phrase(
+                    "operator_wait_timeout_offer",
+                    "Оператор пока не подключился — хотите, чтобы пока помог я, или подождём ещё?",
+                )
+                waiting_quick_actions = [
+                    {"label": "Да, давай с ботом", "type": "message", "value": "Да, продолжить с ботом"},
+                    {"label": "Подождать ещё", "type": "message", "value": "Подожду ещё"},
+                ]
             else:
                 waiting_answer = self._phrase(
                     "waiting_operator_ack",
@@ -1254,7 +1305,7 @@ class ChatService:
                 action=PolicyAction.REJECT,
                 answer=waiting_answer,
                 lead_created=False,
-                quick_actions=[],
+                quick_actions=waiting_quick_actions,
             )
 
         if session.status == SessionStatus.HUMAN_ACTIVE:

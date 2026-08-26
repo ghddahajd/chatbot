@@ -192,6 +192,15 @@ class SessionStore:
             session.updated_at = datetime.utcnow()
             return session
 
+    async def set_operator_return_offered(self, session_id: str, value: bool = True) -> Optional[Session]:
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            session.operator_return_offered = value
+            session.updated_at = datetime.utcnow()
+            return session
+
     async def set_pending_action(self, session_id: str, action: Optional[str]) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)

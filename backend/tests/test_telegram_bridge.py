@@ -496,6 +496,7 @@ def test_claim_creates_topic_named_after_client_and_operator_with_transcript(mon
 
     async def run() -> None:
         session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         await store.update_contact_draft(session.session_id, name="Мария Петровна")
         await store.append_message(session.session_id, MessageRole.USER, "хочу оставить телефон")
         FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
@@ -582,6 +583,39 @@ def test_claim_does_not_reopen_already_closed_session(monkeypatch) -> None:
     assert status == SessionStatus.CLOSED
 
 
+def test_claim_on_ai_active_session_is_rejected_without_hijacking(monkeypatch) -> None:
+    """Клиент уже вернулся к боту (см. operator_wait_timeout_offer) до того, как оператор
+    успел нажать "Взять в работу" на устаревшей карточке — клик не должен молча выдёргивать
+    живой AI-диалог обратно в HUMAN_ACTIVE."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> tuple[SessionStatus, str | None]:
+        session = await store.get_or_create(None, "rosh_demo")
+        assert session.status == SessionStatus.AI_ACTIVE
+        service = _service(store, ws_manager)
+
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        updated = await store.get(session.session_id)
+        return updated.status, updated.telegram_claimed_by
+
+    status, claimed_by = anyio.run(run)
+    assert status == SessionStatus.AI_ACTIVE
+    assert claimed_by is None
+    answer_calls = [call for call in FakeAsyncClient.calls if call["method"] == "answerCallbackQuery"]
+    assert len(answer_calls) == 1
+    assert "вернулся к боту" in answer_calls[0]["json"]["text"]
+
+
 def test_claim_attaches_close_button_and_pins_it(monkeypatch) -> None:
     """UX-удобство (запрос оператора, 2026-08-24): набирать /done руками неудобно, особенно
     с телефона. "Взято в работу" теперь несёт inline-кнопку "Завершить диалог", закреплённую
@@ -593,6 +627,7 @@ def test_claim_attaches_close_button_and_pins_it(monkeypatch) -> None:
 
     async def run() -> str:
         session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
         FakeAsyncClient.responses["sendMessage"] = {"ok": True, "result": {"message_id": 777}}
         service = _service(store, ws_manager)
@@ -655,6 +690,7 @@ def test_claim_falls_back_to_session_id_when_no_contact_known(monkeypatch) -> No
 
     async def run() -> str:
         session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
         service = _service(store, ws_manager)
         await service._handle_callback_query(
@@ -703,6 +739,7 @@ def test_claim_adds_jump_to_topic_link_on_general_card(monkeypatch) -> None:
 
     async def run() -> None:
         session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
         service = _service(store, ws_manager, group_chat_id="-1001234567890")
         await service._handle_callback_query(
@@ -764,6 +801,7 @@ def test_claim_locks_topic_to_first_operator(monkeypatch) -> None:
 
     async def run() -> tuple[str | None, str | None]:
         session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         await store.set_telegram_bridge(session.session_id, topic_id=42)
         service = _service(store, ws_manager)
 
@@ -913,6 +951,7 @@ def test_claim_topic_name_stays_compact_with_long_username(monkeypatch) -> None:
 
     async def run() -> None:
         session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
         service = _service(store, ws_manager)
         await service._handle_callback_query(

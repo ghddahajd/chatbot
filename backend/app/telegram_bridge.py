@@ -390,6 +390,20 @@ class TelegramBridgeService:
                 await self._call("answerCallbackQuery", callback_query_id=callback_id, text="Сессия не найдена")
             return
 
+        # Живой баг (ручное тестирование пользователем, 2026-08-26): клиент мог уже сам
+        # вернуться к боту (см. operator_wait_timeout_offer в chat_service.py), пока карточка
+        # с кнопкой "Взять в работу" ещё висит непросмотренной. Без этой проверки поздний клик
+        # молча выдёргивал живой AI-диалог обратно в HUMAN_ACTIVE — бот замолкал посреди
+        # разговора, о котором клиент уже забыл попросить оператора.
+        if session.status == SessionStatus.AI_ACTIVE:
+            if callback_id:
+                await self._call(
+                    "answerCallbackQuery",
+                    callback_query_id=callback_id,
+                    text="Клиент уже вернулся к боту, помощь не нужна",
+                )
+            return
+
         if session.telegram_claimed_by:
             if callback_id:
                 await self._call(

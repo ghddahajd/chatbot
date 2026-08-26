@@ -1143,6 +1143,97 @@ def test_waiting_operator_complaint_followup_gets_distinct_acknowledgment(test_c
     assert complaint_followup["answer"] != generic_followup["answer"]
 
 
+def _age_last_message(test_client, session_id: str, minutes: float) -> None:
+    from datetime import datetime, timedelta
+
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    stored_session.messages[-1].created_at = datetime.utcnow() - timedelta(minutes=minutes)
+
+
+def test_operator_wait_timeout_offers_return_to_bot(test_client) -> None:
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+    _age_last_message(test_client, session_id, minutes=6)
+
+    followup = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "а вы ещё тут?"},
+    ).json()
+
+    assert "оператор" in followup["answer"].lower()
+    values = {action["value"] for action in followup["quick_actions"]}
+    assert "Да, продолжить с ботом" in values
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    assert stored_session.operator_return_offered is True
+
+
+def test_operator_wait_timeout_offer_fires_only_once_per_session(test_client) -> None:
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+    _age_last_message(test_client, session_id, minutes=6)
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "а вы ещё тут?"},
+    )
+
+    second_followup = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "ну что там?"},
+    ).json()
+
+    assert second_followup["quick_actions"] == []
+
+
+def test_operator_return_confirmation_flips_status_back_to_ai_active(test_client) -> None:
+    from app.models import SessionStatus
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+    _age_last_message(test_client, session_id, minutes=6)
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "а вы ещё тут?"},
+    )
+
+    confirm = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "Да, продолжить с ботом",
+        },
+    ).json()
+
+    assert confirm["status"] == SessionStatus.AI_ACTIVE.value
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    assert stored_session.status == SessionStatus.AI_ACTIVE
+
+    followup = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "сколько стоит чистка лица?"},
+    ).json()
+    assert followup["status"] == SessionStatus.AI_ACTIVE.value
+    assert followup["answer"] != ""
+
+
 def test_price_and_hesitation_objections_share_backoff_end_to_end(test_client) -> None:
     """Полный цикл через реальный /api/chat/message, точные формулировки из транскрипта
     живого QA-аудита (§2026-08-22, P3_2 → P3_4 → P3_8) — не только policy-юнит с ручным

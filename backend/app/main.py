@@ -248,7 +248,7 @@ app.include_router(ws.router)
 app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), name="static")
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def healthcheck() -> JSONResponse:
     """Проверяет уже загруженное состояние компонентов — без сети и без чтения тяжёлых
     файлов повторно (внешний мониторинг типа Timeweb дёргает это раз в 1-5 минут).

@@ -18,6 +18,17 @@ def test_health_degraded_when_llm_is_mock(test_client) -> None:
     assert payload["checks"]["llm_provider"]["provider"] == "mock"
 
 
+def test_health_accepts_head_request(test_client) -> None:
+    """Живой баг (UptimeRobot, 2026-08-26): FastAPI не добавляет HEAD в GET-роут
+    автоматически — внешние мониторинги (UptimeRobot на бесплатном тарифе, и не только он)
+    по умолчанию бьют HEAD, не GET. Без явной регистрации HEAD получали 405 и ложную тревогу
+    "сайт упал", хотя GET /health отвечал нормально всё это время."""
+
+    response = test_client.head("/health")
+
+    assert response.status_code in (200, 207)
+
+
 def test_health_reports_configured_clients(test_client) -> None:
     response = test_client.get("/health")
 

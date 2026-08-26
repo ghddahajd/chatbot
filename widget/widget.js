@@ -1211,7 +1211,11 @@
             <div class="welcome-card-sub">${c.sub}</div>
           </div>
         `;
-        btn.addEventListener("click", () => this.sendText(c.value));
+        btn.addEventListener("click", () => {
+          if (this.el.inp.disabled) return;
+          this.el.inp.value = c.value;
+          this.el.inp.focus();
+        });
         grid.appendChild(btn);
       }
       d.appendChild(grid);

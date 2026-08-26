@@ -152,6 +152,7 @@ async def lifespan(app: FastAPI):
         ws_manager=app.state.ws_manager,
         clients_topic_id=settings.telegram_clients_topic_id,
         failures_file=settings.telegram_bridge_failures_file,
+        proxy_url=settings.telegram_proxy_url,
     )
 
     retry_task = None

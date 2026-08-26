@@ -118,6 +118,7 @@ class TelegramBridgeService:
         ws_manager: Any,
         clients_topic_id: str = "",
         failures_file: Path | None = None,
+        proxy_url: str = "",
     ) -> None:
         self.bot_token = bot_token
         self.group_chat_id = group_chat_id
@@ -125,6 +126,12 @@ class TelegramBridgeService:
         self.ws_manager = ws_manager
         self.clients_topic_id = clients_topic_id
         self.failures_file = failures_file
+        # Живой баг (2026-08-26): исходящий TCP по IPv6 с сервера не работает вообще, а по
+        # IPv4 избирательно заблокирован именно диапазон адресов Telegram (149.154.x.x) —
+        # подтверждено raw TCP тестами в обход MTU/DNS. HTTP-прокси (не SOCKS5 — не тянем
+        # лишнюю зависимость socksio) снаружи этой сети чинит именно эту точку, ничего
+        # больше не трогая.
+        self.proxy_url = proxy_url or None
         self._api_base = f"https://api.telegram.org/bot{bot_token}"
         self._offset = 0
 
@@ -173,7 +180,7 @@ class TelegramBridgeService:
         transient_attempt = 0
         while True:
             try:
-                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, proxy=self.proxy_url) as client:
                     response = await client.post(f"{self._api_base}/{method}", json=params)
                     data = response.json()
             except httpx.HTTPError as error:

@@ -26,9 +26,11 @@ class FakeResponse:
 class FakeAsyncClient:
     calls: list[dict[str, Any]] = []
     responses: dict[str, dict[str, Any]] = {}
+    init_kwargs: list[dict[str, Any]] = []
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        FakeAsyncClient.init_kwargs.append(kwargs)
 
     async def __aenter__(self) -> "FakeAsyncClient":
         return self
@@ -64,6 +66,7 @@ class FakeWsManager:
 def _reset_fake_client(monkeypatch) -> None:
     FakeAsyncClient.calls = []
     FakeAsyncClient.responses = {}
+    FakeAsyncClient.init_kwargs = []
     monkeypatch.setattr(telegram_bridge_module.httpx, "AsyncClient", FakeAsyncClient)
 
 
@@ -74,6 +77,7 @@ def _service(
     group_chat_id: str = "-100123",
     clients_topic_id: str = "",
     failures_file: Path | None = None,
+    proxy_url: str = "",
 ) -> TelegramBridgeService:
     return TelegramBridgeService(
         bot_token="token",
@@ -82,6 +86,7 @@ def _service(
         ws_manager=ws_manager,
         clients_topic_id=clients_topic_id,
         failures_file=failures_file,
+        proxy_url=proxy_url,
     )
 
 
@@ -93,6 +98,51 @@ def test_disabled_without_group_id(monkeypatch) -> None:
     assert service.enabled is False
     anyio.run(service.run_polling_loop)
     assert FakeAsyncClient.calls == []
+
+
+def test_proxy_url_is_passed_to_httpx_client(monkeypatch) -> None:
+    """Живой баг (2026-08-26): исходящий TCP по IPv6 с сервера не работает вообще, а по IPv4
+    избирательно заблокирован диапазон адресов Telegram — единственный рабочий обход прямо
+    сейчас — HTTP-прокси. Проверяем, что proxy_url реально доходит до httpx.AsyncClient, а
+    не теряется по дороге."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    service = _service(
+        store, FakeWsManager(), proxy_url="http://user:pass@196.19.122.75:8000"
+    )
+
+    async def run() -> None:
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    assert FakeAsyncClient.init_kwargs
+    assert FakeAsyncClient.init_kwargs[-1]["proxy"] == "http://user:pass@196.19.122.75:8000"
+
+
+def test_no_proxy_by_default(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    service = _service(store, FakeWsManager())
+
+    async def run() -> None:
+        await service.post_operator_queue_card(
+            session_id="sess-1",
+            reason="⚡️ Запросил оператора",
+            last_message="хочу к менеджеру",
+            client_label="Иван",
+        )
+
+    anyio.run(run)
+
+    assert FakeAsyncClient.init_kwargs
+    assert FakeAsyncClient.init_kwargs[-1]["proxy"] is None
 
 
 def test_post_operator_queue_card_sends_claim_button_to_general(monkeypatch) -> None:

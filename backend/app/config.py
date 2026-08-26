@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     # обход тем в группе — тумблер, чтобы включить дублирование в личку по желанию, не по умолчанию.
     telegram_dm_enabled: bool = False
     telegram_bridge_enabled: bool = True
+    # Живой баг (2026-08-26): исходящий TCP по IPv6 с сервера не работает вообще, а по IPv4
+    # избирательно заблокирован именно диапазон адресов Telegram — HTTP-прокси (формат
+    # http://user:pass@host:port) чинит именно эту точку. Пусто — прокси не используется,
+    # как раньше.
+    telegram_proxy_url: str = ""
     delivery_retry_enabled: bool = True
     delivery_retry_interval_seconds: int = 60
     session_ttl_seconds: int = 86400

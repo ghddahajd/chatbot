@@ -63,9 +63,33 @@ def _within_days(
 class AnalyticsService:
     """пишет lightweight события и строит отчёт без БД."""
 
-    def __init__(self, analytics_file: Path, leads_file: Path) -> None:
+    def __init__(
+        self,
+        analytics_file: Path,
+        leads_file: Path,
+        rollup_file: Optional[Path] = None,
+        leads_archive_file: Optional[Path] = None,
+    ) -> None:
         self.analytics_file = analytics_file
         self.leads_file = leads_file
+        # Оба опциональны (None в части тестов, которые их не касаются) — нужны только для
+        # трендов, переживающих ретеншн: rollup_file хранит дневные+часовые счётчики после
+        # того, как сырые message_answered/widget_impression/chat_opened уже удалены (см.
+        # archive_old_analytics_events), leads_archive_file — лиды старше 90 дней, унесённые
+        # из "горячего" файла (см. archive_old_leads в leads.py), но не удалённые.
+        self.rollup_file = rollup_file
+        self.leads_archive_file = leads_archive_file
+
+    def _all_leads(self) -> list[dict[str, Any]]:
+        """Горячий файл + архив вместе — иначе любой лидовый агрегат (по месяцам, по услуге,
+        по типу) молча теряет всё старше leads_retention_days (90 дней по умолчанию), как
+        только archive_old_leads реально начинает что-то переносить (живой баг, 2026-08-27:
+        замечен на графике "Лиды по месяцам", когда система проработает полгода)."""
+
+        leads = read_jsonl(self.leads_file)
+        if self.leads_archive_file is not None:
+            leads = leads + read_jsonl(self.leads_archive_file)
+        return leads
 
     async def track_event(
         self,
@@ -162,7 +186,7 @@ class AnalyticsService:
         ]
         leads = [
             lead
-            for lead in read_jsonl(self.leads_file)
+            for lead in self._all_leads()
             if company_id is None or lead.get("company_id") == company_id
         ]
         events = [
@@ -235,7 +259,7 @@ class AnalyticsService:
         for event in closes:
             close_by_session[str(event.get("session_id"))] = event
 
-        leads = _within_days(read_jsonl(self.leads_file), days=days, company_id=company_id)
+        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
         operator_by_session: dict[str, str] = {
             str(claim.get("session_id")): str((claim.get("metadata") or {}).get("claimed_by") or "unknown")
             for claim in claims
@@ -284,7 +308,7 @@ class AnalyticsService:
 
         leads = [
             lead
-            for lead in read_jsonl(self.leads_file)
+            for lead in self._all_leads()
             if company_id is None or lead.get("company_id") == company_id
         ]
         counts: Counter[str] = Counter()
@@ -310,7 +334,7 @@ class AnalyticsService:
         """Топ услуг по числу лидов — service_id без человекочитаемого имени (аналитика не
         знает о KnowledgeBase намеренно, имя резолвит вызывающий route, у которого он есть)."""
 
-        leads = _within_days(read_jsonl(self.leads_file), days=days, company_id=company_id)
+        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
         counts: Counter[str] = Counter()
         for lead in leads:
             service_id = lead.get("service_id")
@@ -323,7 +347,7 @@ class AnalyticsService:
         см. classify_lead_reason в leads.py) — уже есть на каждом Lead, новых полей не надо,
         для донат-чарта "какие лиды приходят"."""
 
-        leads = _within_days(read_jsonl(self.leads_file), days=days, company_id=company_id)
+        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
         counts: Counter[str] = Counter(str(lead.get("reason") or "commercial_interest") for lead in leads)
         return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
 
@@ -347,9 +371,32 @@ class AnalyticsService:
             result.append({"date": day, "count": counts.get(day, 0)})
         return result
 
+    def _rollup_message_answered_rows(
+        self, company_id: Optional[str], days: Optional[int]
+    ) -> list[dict[str, Any]]:
+        """rollup_file строками "дата+час" для message_answered — переживает ретеншн
+        analytics_file (2026-08-27). event_type пишется явно с сегодняшнего дня; строка без
+        него (гипотетический старый формат, до этого изменения ничего, кроме message_answered,
+        в rollup не попадало) по умолчанию тоже считается message_answered."""
+
+        if self.rollup_file is None:
+            return []
+        cutoff_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d") if days is not None else None
+        rows = []
+        for row in read_jsonl(self.rollup_file):
+            if row.get("event_type", "message_answered") != "message_answered":
+                continue
+            if company_id is not None and row.get("company_id") != company_id:
+                continue
+            if cutoff_date is not None and str(row.get("date") or "") < cutoff_date:
+                continue
+            rows.append(row)
+        return rows
+
     def activity_by_hour(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
         """Сколько сообщений приходит в каждый час суток (UTC) — для планирования смен
-        операторов. message_answered — самый частый сигнал реальной активности."""
+        операторов. Сырые message_answered (недавние) + rollup (то, что уже сжато под
+        ретеншном) — иначе окно дальше 60 дней молча показывало бы неполную картину."""
 
         events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
         counts: Counter[int] = Counter()
@@ -361,10 +408,18 @@ class AnalyticsService:
             except (TypeError, ValueError):
                 continue
             counts[hour] += 1
+        for row in self._rollup_message_answered_rows(company_id, days):
+            try:
+                hour = int(str(row.get("hour") or ""))
+            except ValueError:
+                continue
+            counts[hour] += int(row.get("count") or 0)
         return [{"hour": hour, "count": counts.get(hour, 0)} for hour in range(24)]
 
     def activity_by_weekday(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
-        """Та же идея, но по дню недели (0=Пн ... 6=Вс) — на пару с activity_by_hour."""
+        """Та же идея, но по дню недели (0=Пн ... 6=Вс) — на пару с activity_by_hour. День
+        недели не хранится отдельно ни в сырых событиях, ни в rollup — всегда вычисляется из
+        даты, это чистая функция, дублировать в схеме незачем."""
 
         events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
         counts: Counter[int] = Counter()
@@ -376,6 +431,12 @@ class AnalyticsService:
             except (TypeError, ValueError):
                 continue
             counts[weekday] += 1
+        for row in self._rollup_message_answered_rows(company_id, days):
+            try:
+                weekday = datetime.strptime(str(row.get("date")), "%Y-%m-%d").weekday()
+            except (TypeError, ValueError):
+                continue
+            counts[weekday] += int(row.get("count") or 0)
         return [
             {"weekday": weekday, "label": WEEKDAY_LABELS[weekday], "count": counts.get(weekday, 0)}
             for weekday in range(7)
@@ -390,7 +451,7 @@ class AnalyticsService:
         would only duplicate data already collected."""
 
         events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
-        leads = _within_days(read_jsonl(self.leads_file), days=days, company_id=company_id)
+        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
 
         impressions = sum(1 for event in events if event.get("event_type") == "widget_impression")
         chat_opened = sum(1 for event in events if event.get("event_type") == "chat_opened")
@@ -450,23 +511,37 @@ def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retent
     if not stale:
         return 0
 
-    rollup_counts: dict[tuple[str, str, str], int] = defaultdict(int)
+    rollup_counts: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
     for entry in stale:
-        day = str(entry.get("timestamp") or "")[:10] or "unknown"
+        timestamp_str = str(entry.get("timestamp") or "")
+        day = timestamp_str[:10] or "unknown"
+        # Час — единственное измерение, которое стоило добавить в rollup сейчас (2026-08-27):
+        # день недели однозначно вычисляется из даты при чтении, а вот час суток без него
+        # теряется навсегда, как только сырые message_answered/widget_impression/chat_opened
+        # уходят под ретеншн — activity_by_hour молча деградирует на длинных окнах.
+        hour = timestamp_str[11:13] or "00"
         company_id = str(entry.get("company_id") or "unknown")
         # message_answered всегда несёт metadata.action (см. track_answer) — поведение для
-        # него не меняется. widget_impression/chat_opened (2026-08-27) метаданных action не
+        # него не меняется. widget_impression/chat_opened (2026-08-26) метаданных action не
         # имеют — раньше оба схлопнулись бы в один и тот же "unknown" рядом с message_answered
         # без action, теряя различимость; используем event_type как запасной ключ.
-        action = str((entry.get("metadata") or {}).get("action") or entry.get("event_type") or "unknown")
-        rollup_counts[(day, company_id, action)] += 1
+        event_type = str(entry.get("event_type") or "unknown")
+        action = str((entry.get("metadata") or {}).get("action") or event_type or "unknown")
+        rollup_counts[(day, hour, company_id, event_type, action)] += 1
 
     rollup_file.parent.mkdir(parents=True, exist_ok=True)
     with rollup_file.open("a", encoding="utf-8") as handle:
-        for (day, company_id, action), count in sorted(rollup_counts.items()):
+        for (day, hour, company_id, event_type, action), count in sorted(rollup_counts.items()):
             handle.write(
                 _dump_jsonl_line(
-                    {"date": day, "company_id": company_id, "action": action, "count": count}
+                    {
+                        "date": day,
+                        "hour": hour,
+                        "company_id": company_id,
+                        "event_type": event_type,
+                        "action": action,
+                        "count": count,
+                    }
                 )
             )
 

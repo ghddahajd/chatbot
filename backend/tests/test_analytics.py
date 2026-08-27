@@ -473,3 +473,97 @@ def test_activity_by_weekday_labels_and_counts(tmp_path) -> None:
     assert len(result) == 7
     assert by_label["Пн"] == 1
     assert by_label["Вт"] == 0
+
+
+def test_archive_rollup_rows_carry_hour_and_event_type(tmp_path) -> None:
+    """2026-08-27: rollup раньше терял час навсегда и не различал event_type от action —
+    без этого activity_by_hour/weekday не смогли бы честно продолжить тренд за ретеншном."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    rollup_file = tmp_path / "rollup.jsonl"
+    stale_day = datetime(2026, 1, 5, 14, 30, 0)
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=stale_day, action="answer"))
+    append_jsonl(analytics_file, _impression(timestamp=stale_day))
+
+    removed = archive_old_analytics_events(analytics_file, rollup_file, retention_days=60)
+
+    assert removed == 2
+    rows = read_jsonl(rollup_file)
+    message_row = next(r for r in rows if r["event_type"] == "message_answered")
+    impression_row = next(r for r in rows if r["event_type"] == "widget_impression")
+    assert message_row["hour"] == "14"
+    assert message_row["action"] == "answer"
+    assert impression_row["hour"] == "14"
+    assert impression_row["action"] == "widget_impression"
+
+
+def test_activity_by_hour_falls_back_to_rollup_past_retention(tmp_path) -> None:
+    """Живой сценарий, который чинили (2026-08-27): message_answered старше ретеншна уже
+    удалён из analytics_file, но activity_by_hour должен всё равно его увидеть через rollup."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    rollup_file = tmp_path / "rollup.jsonl"
+    append_jsonl(
+        rollup_file,
+        {
+            "date": "2026-01-05", "hour": "09", "company_id": "rosh_import_demo",
+            "event_type": "message_answered", "action": "answer", "count": 7,
+        },
+    )
+    # событие другого типа в том же часе не должно приплюсоваться
+    append_jsonl(
+        rollup_file,
+        {
+            "date": "2026-01-05", "hour": "09", "company_id": "rosh_import_demo",
+            "event_type": "widget_impression", "action": "widget_impression", "count": 100,
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file, rollup_file=rollup_file)
+    result = service.activity_by_hour(company_id="rosh_import_demo", days=3650)
+
+    by_hour = {entry["hour"]: entry["count"] for entry in result}
+    assert by_hour[9] == 7
+
+
+def test_activity_by_weekday_falls_back_to_rollup_past_retention(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    rollup_file = tmp_path / "rollup.jsonl"
+    append_jsonl(
+        rollup_file,
+        {
+            "date": "2026-01-05", "hour": "09", "company_id": "rosh_import_demo",  # понедельник
+            "event_type": "message_answered", "action": "answer", "count": 4,
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file, rollup_file=rollup_file)
+    result = service.activity_by_weekday(company_id="rosh_import_demo", days=3650)
+
+    by_label = {entry["label"]: entry["count"] for entry in result}
+    assert by_label["Пн"] == 4
+
+
+def test_all_leads_merges_hot_file_and_archive(tmp_path) -> None:
+    """2026-08-27: лиды-агрегаты (по месяцам/услуге/типу) раньше молча теряли всё старше
+    leads_retention_days, как только archive_old_leads реально переносил записи в архив."""
+
+    leads_file = tmp_path / "leads.jsonl"
+    archive_file = tmp_path / "leads_archive.jsonl"
+    append_jsonl(leads_file, _lead(session_id="hot-1"))
+    append_jsonl(
+        archive_file,
+        {
+            "timestamp": datetime(2025, 1, 1).isoformat(), "company_id": "rosh_import_demo",
+            "session_id": "archived-1", "name": "Старый", "phone": "+79990000000",
+            "summary": "", "reason": "booking",
+        },
+    )
+
+    service = AnalyticsService(analytics_file=tmp_path / "a.jsonl", leads_file=leads_file, leads_archive_file=archive_file)
+    result = service.leads_by_reason()
+
+    total = sum(entry["count"] for entry in result)
+    assert total == 2

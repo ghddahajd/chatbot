@@ -110,12 +110,12 @@ async def analytics_dashboard(
     analytics_service = request.app.state.analytics_service
     sessions = await request.app.state.session_store.list_all()
 
-    # message_answered/widget_impression/chat_opened сворачиваются через 60 дней (см.
-    # MESSAGE_RETENTION_EVENT_TYPES в analytics.py) — эти метрики читают сырые записи, так
-    # что "всё время" на них физически не может показать больше, чем осталось в живом логе.
-    # Клампим отдельно, не ограничивая тем же потолком лиды/операторов (у тех своя, более
-    # долгая история).
-    retention_bound_days = min(days, 55)
+    # Воронка джойнит widget_impression/chat_opened/message_answered по session_id — это
+    # принципиально теряется, как только событие уходит под ретеншн в rollup (там уже
+    # только счётчики, id стёрт), поэтому воронку клампим отдельно, короче ретеншна.
+    # activity_by_hour/weekday после сегодняшнего фикса это ограничение больше не касается —
+    # они сами дочитывают rollup_file (дата+час, без id) на то, что уже вышло за сырое окно.
+    funnel_days = min(days, 55)
 
     top_services = [
         {
@@ -134,8 +134,8 @@ async def analytics_dashboard(
         "leads_by_month": analytics_service.leads_by_month(company_id=company_id),
         "leads_by_reason": analytics_service.leads_by_reason(company_id=company_id, days=days),
         "top_services": top_services,
-        "funnel": analytics_service.conversion_funnel(company_id=company_id, days=retention_bound_days),
+        "funnel": analytics_service.conversion_funnel(company_id=company_id, days=funnel_days),
         "unanswered_trend": analytics_service.unanswered_trend(company_id=company_id, days=min(days, 30)),
-        "activity_by_hour": analytics_service.activity_by_hour(company_id=company_id, days=retention_bound_days),
-        "activity_by_weekday": analytics_service.activity_by_weekday(company_id=company_id, days=retention_bound_days),
+        "activity_by_hour": analytics_service.activity_by_hour(company_id=company_id, days=days),
+        "activity_by_weekday": analytics_service.activity_by_weekday(company_id=company_id, days=days),
     }

@@ -3,11 +3,34 @@
 а не торчит в адресной строке (утекает в историю браузера/логи сервера/случайный скриншот).
 Токен на человека — отдельный, более поздний шаг, не этот."""
 
+import html
+
+
+def sanitize_next_path(value: str, *, default: str = "/analytics") -> str:
+    """Живой баг (код-ревью, 2026-08-27): "next" гулял от GET query до POST-редиректа без
+    проверки — "/login?next=https://evil.com" после успешного логина уводил оператора на
+    чужой домен (open redirect). Разрешаем только локальный путь: начинается с одного "/",
+    не "//" и не "/\\" (protocol-relative — браузер трактует как схему, ведёт на чужой
+    хост), без переносов строк (защита от header injection через Location)."""
+
+    candidate = (value or "").strip()
+    if not candidate or "\n" in candidate or "\r" in candidate:
+        return default
+    if not candidate.startswith("/") or candidate.startswith("//") or candidate.startswith("/\\"):
+        return default
+    return candidate
+
 
 def render_login_page(*, error: bool = False, next_path: str = "/analytics") -> str:
     error_block = (
         '<p class="error-text">Неверный пароль</p>' if error else ""
     )
+    # Живой баг (код-ревью, 2026-08-27): next_path раньше шёл в атрибут value="" сырым
+    # f-string'ом без экранирования — "/login?next="><script>..." закрывал атрибут и
+    # выполнял произвольный JS в браузере оператора (reflected XSS). html.escape — поверх
+    # sanitize_next_path (та валидирует ПУТЬ, эта — экранирует ЛЮБОЙ текст для HTML-атрибута,
+    # разные уровни защиты, оба нужны).
+    safe_next_path = html.escape(sanitize_next_path(next_path), quote=True)
     return f"""
 <!doctype html>
 <html lang="ru">
@@ -87,7 +110,7 @@ def render_login_page(*, error: bool = False, next_path: str = "/analytics") -> 
     {error_block}
     <label for="password">Пароль</label>
     <input id="password" name="password" type="password" autofocus required />
-    <input type="hidden" name="next" value="{next_path}" />
+    <input type="hidden" name="next" value="{safe_next_path}" />
     <button type="submit">Войти</button>
   </form>
 </body>

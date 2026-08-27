@@ -15,7 +15,7 @@ from .analytics import AnalyticsService, archive_old_analytics_events
 from .analytics_panel import render_analytics_panel
 from .auth import OPERATOR_COOKIE_NAME, verify_operator_token
 from .config import get_settings
-from .login_panel import render_login_page
+from .login_panel import render_login_page, sanitize_next_path
 from .delivery import DeliveryService
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService, archive_old_leads
@@ -40,11 +40,18 @@ async def _run_session_eviction_loop(
     operator_ttl_seconds: int,
     interval_seconds: int,
     snapshot_file: Path | None,
+    telegram_bridge_service: TelegramBridgeService | None = None,
 ) -> None:
     while True:
         try:
             await asyncio.sleep(interval_seconds)
-            await session_store.evict_stale(ttl_seconds, operator_ttl_seconds)
+            evicted_sessions = await session_store.evict_stale(ttl_seconds, operator_ttl_seconds)
+            # Код-ревью 2026-08-27: без этого сессии, брошенные оператором без /done, тихо
+            # эвиктятся по TTL и никогда не получают operator_closed — see
+            # TelegramBridgeService.track_session_evicted.
+            if telegram_bridge_service is not None:
+                for session in evicted_sessions:
+                    await telegram_bridge_service.track_session_evicted(session)
             if snapshot_file is not None:
                 await session_store.snapshot_to(
                     snapshot_file,
@@ -175,6 +182,7 @@ async def lifespan(app: FastAPI):
                 operator_ttl_seconds=settings.operator_session_ttl_seconds,
                 interval_seconds=settings.session_eviction_interval_seconds,
                 snapshot_file=snapshot_file,
+                telegram_bridge_service=app.state.telegram_bridge_service,
             )
         )
     telegram_bridge_task = None
@@ -332,7 +340,7 @@ async def analytics_page(request: Request):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request) -> str:
-    next_path = request.query_params.get("next") or "/analytics"
+    next_path = sanitize_next_path(request.query_params.get("next") or "/analytics")
     return render_login_page(next_path=next_path)
 
 
@@ -340,7 +348,7 @@ async def login_page(request: Request) -> str:
 async def login_submit(request: Request):
     form = await request.form()
     password = str(form.get("password") or "")
-    next_path = str(form.get("next") or "/analytics")
+    next_path = sanitize_next_path(str(form.get("next") or "/analytics"))
     if password != settings.operator_token:
         return HTMLResponse(render_login_page(error=True, next_path=next_path), status_code=401)
 

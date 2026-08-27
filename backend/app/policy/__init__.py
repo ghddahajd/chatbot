@@ -807,11 +807,21 @@ def _has_unknown_booking_target(normalized_message: str) -> bool:
     return False
 
 
+_DURATION_UNIT_WORDS_AFTER_SKOLKO = {
+    "дней", "дня", "день",
+    "недель", "недели", "неделю",
+    "часов", "часа", "час",
+    "месяцев", "месяца", "месяц",
+    "суток", "минут", "минуты", "минуту",
+}
+
+
 def _looks_like_bare_price_question(normalized_message: str) -> bool:
     tokens = normalized_message.split()
     if "сколько" not in tokens:
         return False
-    if tokens.index("сколько") >= len(tokens) - 1:
+    skolko_index = tokens.index("сколько")
+    if skolko_index >= len(tokens) - 1:
         return False
     if contains_keyword(normalized_message, DURATION_KEYWORDS):
         return False
@@ -823,6 +833,13 @@ def _looks_like_bare_price_question(normalized_message: str) -> bool:
     # т.п., не сама конструкция "через сколько"). Ложно взводило price_requested, из-за чего
     # faq_question-ветка (там, где это сообщение реально должно отвечаться) пропускалась целиком.
     if "через сколько" in normalized_message:
+        return False
+    # Живой баг (смоук-тест, 2026-08-28): "сколько дней нельзя загорать после пилинга" — тот же
+    # класс бага, что и "через сколько" выше, просто непокрытая словоформа. "Сколько" сразу
+    # перед единицей времени (дней/недель/часов/...) спрашивает про СРОК ограничения после
+    # процедуры, а не про цену — настоящий ценовой вопрос никогда не звучит как "сколько
+    # дней/недель/часов", только "сколько стоит"/"сколько будет"/голое "сколько это".
+    if tokens[skolko_index + 1] in _DURATION_UNIT_WORDS_AFTER_SKOLKO:
         return False
     return True
 

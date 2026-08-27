@@ -35,7 +35,7 @@ def test_evict_stale_removes_closed_and_ai_active_but_keeps_recent_operator_sess
         # оператор ещё может держать диалог у себя, эвиктить рано.
         removed = await store.evict_stale(ttl_seconds=86400, operator_ttl_seconds=86400 * 5)
 
-        assert removed == 2
+        assert len(removed) == 2
         assert await store.get(ai_session.session_id) is None
         assert await store.get(closed_session.session_id) is None
         assert await store.get(waiting_session.session_id) is not None
@@ -53,7 +53,7 @@ def test_evict_stale_without_operator_ttl_never_touches_operator_sessions() -> N
 
         removed = await store.evict_stale(ttl_seconds=86400)
 
-        assert removed == 0
+        assert removed == []
         assert await store.get(waiting_session.session_id) is not None
 
     anyio.run(run)
@@ -69,7 +69,7 @@ def test_evict_stale_eventually_removes_abandoned_operator_sessions() -> None:
         # 3 дня старше страховочного operator_ttl_seconds (2 дня) — считаем диалог заброшенным.
         removed = await store.evict_stale(ttl_seconds=86400, operator_ttl_seconds=172800)
 
-        assert removed == 1
+        assert len(removed) == 1
         assert await store.get(waiting_session.session_id) is None
 
     anyio.run(run)

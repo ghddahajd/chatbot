@@ -146,9 +146,9 @@ def _closed_event(*, session_id: str, claimed_by: str, timestamp: datetime, comp
     }
 
 
-def _lead(*, session_id: str, company_id: str = "rosh_import_demo") -> dict:
+def _lead(*, session_id: str, company_id: str = "rosh_import_demo", timestamp: datetime | None = None) -> dict:
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": (timestamp or datetime.utcnow()).isoformat(),
         "company_id": company_id,
         "session_id": session_id,
         "name": "Иван",
@@ -188,6 +188,30 @@ def test_operator_summary_attributes_leads_to_claiming_operator(tmp_path) -> Non
     service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
     result = service.operator_summary()
 
+    assert result["operators"]["masha"]["leads"] == 1
+
+
+def test_operator_summary_days_filter_still_attributes_lead_and_close_outside_window(tmp_path) -> None:
+    """Живой баг (код-ревью, 2026-08-27): claim внутри days-окна, но лид/закрытие той же
+    сессии легли СНАРУЖИ окна (нормальная ситуация на границе — claim под конец окна, лид/
+    close чуть позже) — раньше молча терялись из "лидов"/"закрыто", хотя claim честно
+    посчитан. Джойн по session_id должен работать независимо от того, где именно во времени
+    легли сами лид/закрытие — days фильтрует только то, какие claim'ы вообще "в отчёте"."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    now = datetime.utcnow()
+    claimed_at = now - timedelta(days=2)  # внутри days=7
+    closed_at = now - timedelta(days=10)  # СНАРУЖИ days=7 (часы сдвинулись, редкий, но возможный случай)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=claimed_at))
+    append_jsonl(analytics_file, _closed_event(session_id="s-1", claimed_by="masha", timestamp=closed_at))
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=now - timedelta(days=9)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary(days=7)
+
+    assert result["operators"]["masha"]["claimed"] == 1
+    assert result["operators"]["masha"]["closed"] == 1
     assert result["operators"]["masha"]["leads"] == 1
 
 
@@ -544,6 +568,41 @@ def test_activity_by_weekday_falls_back_to_rollup_past_retention(tmp_path) -> No
 
     by_label = {entry["label"]: entry["count"] for entry in result}
     assert by_label["Пн"] == 4
+
+
+def test_activity_by_hour_and_weekday_skip_malformed_rollup_count_instead_of_crashing(tmp_path) -> None:
+    """Живой баг (код-ревью, 2026-08-27): int(row["count"]) раньше жил вне try/except —
+    одна битая строка (не число) в rollup валила весь /api/analytics/dashboard вместо того,
+    чтобы просто быть пропущенной. Валидная строка рядом должна досчитаться как обычно."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    rollup_file = tmp_path / "rollup.jsonl"
+    append_jsonl(
+        rollup_file,
+        {
+            "date": "2026-01-05", "hour": "09", "company_id": "rosh_import_demo",
+            "event_type": "message_answered", "action": "answer", "count": "не число",
+        },
+    )
+    append_jsonl(
+        rollup_file,
+        {
+            "date": "2026-01-05", "hour": "09", "company_id": "rosh_import_demo",
+            "event_type": "message_answered", "action": "answer", "count": 5,
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file, rollup_file=rollup_file)
+
+    by_hour = {entry["hour"]: entry["count"] for entry in service.activity_by_hour(company_id="rosh_import_demo", days=3650)}
+    assert by_hour[9] == 5
+
+    by_label = {
+        entry["label"]: entry["count"]
+        for entry in service.activity_by_weekday(company_id="rosh_import_demo", days=3650)
+    }
+    assert by_label["Пн"] == 5
 
 
 def test_all_leads_merges_hot_file_and_archive(tmp_path) -> None:

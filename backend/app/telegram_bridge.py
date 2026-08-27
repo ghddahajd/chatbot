@@ -203,6 +203,22 @@ class TelegramBridgeService:
                 type(error).__name__,
             )
 
+    async def track_session_evicted(self, session: Any) -> None:
+        """Живой баг (код-ревью, 2026-08-27): сессия дошла до TTL-эвикции, пока была в
+        работе у оператора (WAITING_OPERATOR/HUMAN_ACTIVE), и никто не закрыл её явным
+        /done или клиентским уходом — единственный шанс записать operator_closed для неё,
+        иначе telegram_claimed_by стирается вместе с сессией и operator_summary навсегда
+        теряет этот диалог из числа "закрыто" (claimed > closed без объяснения, среднее
+        время диалога считается только по благополучным случаям)."""
+
+        operator_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}
+        if getattr(session, "status", None) not in operator_statuses:
+            return
+        claimed_by = getattr(session, "telegram_claimed_by", None)
+        if not claimed_by:
+            return
+        await self._track_operator_event(event_type="operator_closed", session=session, claimed_by=claimed_by)
+
     @property
     def enabled(self) -> bool:
         return bool(self.bot_token and self.group_chat_id)

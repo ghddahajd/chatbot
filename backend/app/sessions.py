@@ -62,7 +62,7 @@ class SessionStore:
         async with self._lock:
             return list(self._sessions.values())
 
-    async def evict_stale(self, ttl_seconds: int, operator_ttl_seconds: Optional[int] = None) -> int:
+    async def evict_stale(self, ttl_seconds: int, operator_ttl_seconds: Optional[int] = None) -> list[Session]:
         cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
         operator_cutoff = (
             datetime.utcnow() - timedelta(seconds=operator_ttl_seconds)
@@ -89,10 +89,16 @@ class SessionStore:
                     and session.updated_at < operator_cutoff
                 )
             ]
+            # Возвращаем сами сессии (не только счётчик) — код-ревью 2026-08-27: вызывающая
+            # сторона (эвикшн-луп в main.py) должна успеть записать operator_closed для тех,
+            # что были в работе у оператора, ДО того как session.telegram_claimed_by исчезнет
+            # безвозвратно вместе с сессией — иначе такие диалоги никогда не попадают в
+            # operator_summary как закрытые.
+            evicted = [self._sessions[session_id] for session_id in stale_session_ids]
             for session_id in stale_session_ids:
                 del self._sessions[session_id]
                 self._session_locks.pop(session_id, None)
-            return len(stale_session_ids)
+            return evicted
 
     async def snapshot_to(
         self,

@@ -1310,6 +1310,27 @@ def test_cherez_skolko_is_not_treated_as_price_question(policy_session, resolver
     assert result.safe_context.get("question_type") == "cosmetic_article_guidance"
 
 
+def test_skolko_dney_aftercare_question_is_not_treated_as_price_question(
+    policy_session, resolver, managed_env
+) -> None:
+    """Живой баг (смоук-тест, 2026-08-28): "сколько дней нельзя загорать после пилинга" — тот
+    же класс бага, что и test_cherez_skolko_is_not_treated_as_price_question, просто непокрытая
+    словоформа. "Сколько" сразу перед единицей времени (дней/недель/часов/...) спрашивает про
+    срок ограничения после процедуры, а не про цену — раньше уходило в ответ ценой вместо
+    честного ответа/эскалации по реальному вопросу."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = analyze_message(
+        "Сколько дней нельзя загорать после пилинга?",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": "pilingi_8dde1279", "confidence": 1.0},
+    )
+
+    assert result.reason != PolicyReason.PRICE_QUESTION
+
+
 def test_skolko_duration_does_not_become_price(policy_session, knowledge_base) -> None:
     result = _analyze("сколько длится чистка лица?", policy_session, knowledge_base)
 

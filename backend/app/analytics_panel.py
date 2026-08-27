@@ -265,7 +265,6 @@ def render_analytics_panel() -> str:
   </main>
 
   <script>
-    const token = new URLSearchParams(window.location.search).get("token") || "";
     const seriesColors = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
 
     function escapeHtml(value) {
@@ -283,13 +282,15 @@ def render_analytics_panel() -> str:
     }
 
     async function fetchDashboard(companyId, days) {
+      // Живой баг (код-ревью, 2026-08-27): токен раньше читался из ?token= в URL и
+      // подставлялся в каждый запрос — та самая утечка (nginx-логи/история браузера),
+      // ради ухода от которой и делался cookie-логин. Страница уже прошла проверку
+      // verify_operator_token на сервере (иначе редирект на /login), а cookie — HttpOnly и
+      // отправляется браузером сама на same-origin fetch, отдельно передавать больше нечего.
       const params = new URLSearchParams();
       if (companyId) params.set("company_id", companyId);
       params.set("days", days);
-      params.set("token", token);
-      const res = await fetch(`/api/analytics/dashboard?${params.toString()}`, {
-        headers: { "x-operator-token": token },
-      });
+      const res = await fetch(`/api/analytics/dashboard?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     }
@@ -309,19 +310,19 @@ def render_analytics_panel() -> str:
       const totalLeads = data.summary.leads.total;
       const thisMonth = data.leads_by_month[data.leads_by_month.length - 1];
       const operatorsCount = Object.keys(data.operators).length;
-      // "Всего сессий"/"Конверсия" раньше брались из session_store.list_all() — это ЖИВЫЕ
-      // сессии в памяти (TTL 24-48ч), а не история. С лидами за всё время в числителе это
-      // рисовало абсурдные проценты (3300%+). Берём знаменатель из той же воронки (стадия
-      // "Есть переписка", 30-дневное окно) — оба числа из одного и того же честного окна.
-      const conversationsStage = data.funnel.stages.find((s) => s.label === "Есть переписка");
-      const conversations = conversationsStage ? conversationsStage.count : 0;
-      const leadStage = data.funnel.stages[data.funnel.stages.length - 1];
-      const conversion = leadStage.percent_of_previous != null ? leadStage.percent_of_previous : 0;
 
-      // Дельта — текущий выбранный период vs такой же по длине предыдущий (period_comparison,
-      // отдельный от воронки расчёт — той нельзя доверять дальше её safety-окна)
+      // "Диалогов"/"Конверсия" И их дельты — всё из period_comparison (current и previous
+      // одним расчётом, одно и то же окно по обе стороны). Живой баг (код-ревью,
+      // 2026-08-27): раньше "текущее" брали из воронки (окно до 55 дней), а "предыдущее" —
+      // отдельно из period_comparison (безопасно зажато до 30 дней ретеншном) — два разных
+      // окна сравнивались друг с другом как одно, дельта могла быть технически неверной.
       const pc = data.period_comparison;
+      const windowDays = pc.conversations_days != null ? pc.conversations_days : pc.days;
+      const conversations = pc.conversations.current;
       const conversationsDelta = deltaBadge(pc.conversations.current, pc.conversations.previous);
+      const conversion = pc.conversations.current > 0
+        ? Math.round((pc.leads.current / pc.conversations.current) * 1000) / 10
+        : 0;
       const prevConversion = pc.conversations.previous > 0 ? (pc.leads.previous / pc.conversations.previous) * 100 : 0;
       const conversionDelta = deltaBadge(conversion, prevConversion);
 
@@ -331,8 +332,8 @@ def render_analytics_panel() -> str:
         <div class="tiles">
           <div class="tile"><div class="tile-label">Всего лидов</div><div class="tile-value">${fmt(totalLeads)}</div></div>
           <div class="tile"><div class="tile-label">Лидов за месяц</div><div class="tile-value accent">${fmt(thisMonth ? thisMonth.count : 0)}</div></div>
-          <div class="tile"><div class="tile-label">Диалогов (${data.funnel.days} дн.)</div><div class="tile-value">${fmt(conversations)}${conversationsDelta}</div></div>
-          <div class="tile"><div class="tile-label">Конверсия (${data.funnel.days} дн.)</div><div class="tile-value">${conversion}%${conversionDelta}</div></div>
+          <div class="tile"><div class="tile-label">Диалогов (${windowDays} дн.)</div><div class="tile-value">${fmt(conversations)}${conversationsDelta}</div></div>
+          <div class="tile"><div class="tile-label">Конверсия (${windowDays} дн.)</div><div class="tile-value">${conversion}%${conversionDelta}</div></div>
           <div class="tile"><div class="tile-label">Ожидание оператора</div><div class="tile-value">${waitMinutes != null ? waitMinutes + " мин" : "—"}</div></div>
           <div class="tile"><div class="tile-label">Операторов</div><div class="tile-value">${fmt(operatorsCount)}</div></div>
         </div>

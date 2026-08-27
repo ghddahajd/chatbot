@@ -691,6 +691,56 @@ def test_close_skips_operator_closed_event_when_never_claimed(monkeypatch) -> No
     assert analytics.events == []
 
 
+def test_track_session_evicted_records_operator_closed_for_claimed_session(monkeypatch) -> None:
+    """Живой баг (код-ревью, 2026-08-27): оператор взял диалог и забыл про него — сессия
+    дошла до TTL-эвикции (session_store.evict_stale) без явного /done. Раньше telegram_claimed_by
+    просто стирался вместе с сессией, operator_closed никогда не записывался, и такой диалог
+    навсегда пропадал из operator_summary как "закрыто"."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    analytics = FakeAnalyticsService()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42, claimed_by="masha")
+        await store.set_status(session.session_id, SessionStatus.HUMAN_ACTIVE)
+        service = _service(store, ws_manager, analytics_service=analytics)
+        evicted_session = await store.get(session.session_id)
+        await service.track_session_evicted(evicted_session)
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    closed_events = [e for e in analytics.events if e["event_type"] == "operator_closed"]
+    assert len(closed_events) == 1
+    assert closed_events[0]["session_id"] == session_id
+    assert closed_events[0]["metadata"]["claimed_by"] == "masha"
+
+
+def test_track_session_evicted_skips_unclaimed_or_non_operator_session(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    analytics = FakeAnalyticsService()
+
+    async def run() -> None:
+        service = _service(store, ws_manager, analytics_service=analytics)
+
+        never_claimed = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(never_claimed.session_id, SessionStatus.WAITING_OPERATOR)
+        await service.track_session_evicted(await store.get(never_claimed.session_id))
+
+        ai_active = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(ai_active.session_id, topic_id=7, claimed_by="masha")
+        await service.track_session_evicted(await store.get(ai_active.session_id))
+
+    anyio.run(run)
+
+    assert analytics.events == []
+
+
 def test_claim_does_not_reopen_already_closed_session(monkeypatch) -> None:
     """Клик по устаревшей кнопке "Взять в работу" на уже закрытом диалоге не должен
     воскрешать сессию в HUMAN_ACTIVE — симметрично защите в routes/operator.py:take_session."""

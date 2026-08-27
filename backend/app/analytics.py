@@ -250,22 +250,34 @@ class AnalyticsService:
         связи в другую сторону в данных нет — джойним тут, на чтении, не на записи).
         days — общий date-range фильтр дашборда (None = за всё время)."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        all_events = read_jsonl(self.analytics_file)
+        events = _within_days(all_events, days=days, company_id=company_id)
         claims = [event for event in events if event.get("event_type") == "operator_claimed"]
-        closes = [event for event in events if event.get("event_type") == "operator_closed"]
-        # последнее закрытие на сессию — на случай повторных /done (не должно случаться в
-        # норме, но не даёт задвоить duration, если всё-таки прилетело)
+        # closes/leads: живой баг (код-ревью, 2026-08-27) — раньше closes и leads фильтровались
+        # ПО ОТДЕЛЬНОСТИ тем же days-окном, что и claims. Клейм внутри окна, чьё закрытие или
+        # лид легли СНАРУЖИ окна (обычное дело у границы — сессию заклеймили под конец окна,
+        # закрыли/лид создался чуть позже), молча терялся из "закрыто"/"лидов" оператора, хотя
+        # сам claim честно посчитан. Джойн по session_id — это связь по факту, не по совпадению
+        # дат: closes/leads берём из ПОЛНОЙ истории, а какие session_id вообще "в работе в этом
+        # окне" решают только claims (единственное, что реально должно фильтроваться по days).
         close_by_session: dict[str, dict[str, Any]] = {}
-        for event in closes:
+        for event in all_events:
+            if event.get("event_type") != "operator_closed":
+                continue
+            if company_id is not None and event.get("company_id") != company_id:
+                continue
+            # последнее закрытие на сессию — на случай повторных /done (не должно случаться в
+            # норме, но не даёт задвоить duration, если всё-таки прилетело)
             close_by_session[str(event.get("session_id"))] = event
 
-        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
         operator_by_session: dict[str, str] = {
             str(claim.get("session_id")): str((claim.get("metadata") or {}).get("claimed_by") or "unknown")
             for claim in claims
         }
         leads_by_operator: Counter[str] = Counter()
-        for lead in leads:
+        for lead in self._all_leads():
+            if company_id is not None and lead.get("company_id") != company_id:
+                continue
             operator = operator_by_session.get(str(lead.get("session_id")))
             if operator:
                 leads_by_operator[operator] += 1
@@ -410,10 +422,15 @@ class AnalyticsService:
             counts[hour] += 1
         for row in self._rollup_message_answered_rows(company_id, days):
             try:
+                # Живой баг (код-ревью, 2026-08-27): int(count) раньше жил СНАРУЖИ этого
+                # try/except (тот ловил только парсинг часа) — битое/нецелое значение count
+                # в rollup-строке падало необработанным ValueError и валило весь
+                # /api/analytics/dashboard, а не просто пропускало одну плохую строку.
                 hour = int(str(row.get("hour") or ""))
+                count = int(row.get("count") or 0)
             except ValueError:
                 continue
-            counts[hour] += int(row.get("count") or 0)
+            counts[hour] += count
         return [{"hour": hour, "count": counts.get(hour, 0)} for hour in range(24)]
 
     def activity_by_weekday(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
@@ -433,10 +450,13 @@ class AnalyticsService:
             counts[weekday] += 1
         for row in self._rollup_message_answered_rows(company_id, days):
             try:
+                # Живой баг (код-ревью, 2026-08-27): та же дыра, что в activity_by_hour —
+                # int(count) вне try/except мог уронить весь дашборд на одной плохой строке.
                 weekday = datetime.strptime(str(row.get("date")), "%Y-%m-%d").weekday()
+                count = int(row.get("count") or 0)
             except (TypeError, ValueError):
                 continue
-            counts[weekday] += int(row.get("count") or 0)
+            counts[weekday] += count
         return [
             {"weekday": weekday, "label": WEEKDAY_LABELS[weekday], "count": counts.get(weekday, 0)}
             for weekday in range(7)
@@ -497,6 +517,15 @@ class AnalyticsService:
         now = datetime.utcnow()
         current_start = now - timedelta(days=days)
         previous_start = now - timedelta(days=days * 2)
+        # Живой баг (код-ревью, 2026-08-27): conversations джойнит message_answered по
+        # session_id — тот же ограничение, что у conversion_funnel (см. её докстринг):
+        # сырые данные переживают только FUNNEL_WINDOW_DAYS. На большом `days` previous-окно
+        # (days*2 назад) молча упирается в уже заархивированные (rollup, без session_id)
+        # события и читает оттуда 0 — дельта на дашборде показывает ложный огромный "+X%".
+        # Лидов это не касается — _all_leads() уже читает архив за любой период.
+        conversation_days = min(days, FUNNEL_WINDOW_DAYS)
+        conversation_current_start = now - timedelta(days=conversation_days)
+        conversation_previous_start = now - timedelta(days=conversation_days * 2)
 
         def _in_range(entries: list[dict[str, Any]], start: datetime, end: datetime) -> list[dict[str, Any]]:
             result = []
@@ -523,13 +552,18 @@ class AnalyticsService:
         all_events = read_jsonl(self.analytics_file)
         all_leads = self._all_leads()
 
-        current_conversations = _conversations(_in_range(all_events, current_start, now))
-        previous_conversations = _conversations(_in_range(all_events, previous_start, current_start))
+        current_conversations = _conversations(_in_range(all_events, conversation_current_start, now))
+        previous_conversations = _conversations(
+            _in_range(all_events, conversation_previous_start, conversation_current_start)
+        )
         current_leads = len(_in_range(all_leads, current_start, now))
         previous_leads = len(_in_range(all_leads, previous_start, current_start))
 
         return {
             "days": days,
+            # Реально применённое окно для conversations (после safety-зажима выше) — отдаём
+            # честно, чтобы фронт не подписывал дельту неверным "(N дн.)", если N зажали.
+            "conversations_days": conversation_days,
             "conversations": {"current": current_conversations, "previous": previous_conversations},
             "leads": {"current": current_leads, "previous": previous_leads},
         }
@@ -564,11 +598,16 @@ class AnalyticsService:
         ]
         # шаг-к-шагу конверсия (эта стадия / предыдущая), не от общего — так и читается
         # воронка визуально: "сколько из открывших чат реально написали"
+        #
+        # Живой баг (код-ревью, 2026-08-27): первая стадия раньше безусловно получала 100.0%
+        # (ей не с чем сравнивать), даже когда impressions == 0 (трекинг показов только что
+        # включили) — дашборд рисовал "0 (100.0%)" вместо честного "нет данных".
         for index, stage in enumerate(stages):
-            previous = stages[index - 1]["count"] if index > 0 else None
-            stage["percent_of_previous"] = (
-                round(stage["count"] / previous * 100, 1) if previous else (100.0 if index == 0 else None)
-            )
+            if index == 0:
+                stage["percent_of_previous"] = 100.0 if stage["count"] else None
+                continue
+            previous = stages[index - 1]["count"]
+            stage["percent_of_previous"] = round(stage["count"] / previous * 100, 1) if previous else None
 
         return {"company_id": company_id, "days": days, "stages": stages}
 

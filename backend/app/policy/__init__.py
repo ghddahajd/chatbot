@@ -2007,7 +2007,22 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
             # включая явный вопрос о цене. Сама защита бренда не смягчается — просто не
             # оставляем ценовой вопрос совсем без ответа.
             if fuzzy_contains(normalized_message, PRICE_KEYWORDS, exclude_tokens=PRICE_FUZZY_EXCLUDE_TOKENS):
-                message_to_user += " Точную стоимость по разрешённым вариантам подскажет менеджер."
+                # Живой баг (ручное тестирование, 2026-08-27): "сколько стоит ботокс?" верно
+                # поправляло бренд на Ксеомин/Миотокс, но цена на эту же услугу уже лежит в
+                # prices.json — просто не читалась, ответ безусловно уходил в "менеджер
+                # подскажет", хотя дать реальную цену можно сразу.
+                price_text = None
+                if service is not None:
+                    price = knowledge_base.get_service_context(service).get("price")
+                    if price:
+                        price_text = str(price.get("price_text") or "").strip() or None
+                if price_text:
+                    message_to_user += (
+                        f" Ориентировочная цена по разрешённым вариантам: {price_text} —"
+                        " точную сумму подтвердит специалист."
+                    )
+                else:
+                    message_to_user += " Точную стоимость по разрешённым вариантам подскажет менеджер."
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.UNKNOWN_SERVICE,

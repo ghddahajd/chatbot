@@ -506,7 +506,7 @@ def render_analytics_panel() -> str:
                 <span class="month-bar-value">${fmt(d.count)}</span>
               </div>
             </div>
-            ${trend.length <= 16 ? `<span class="month-label">${label}</span>` : ""}
+            <span class="month-label">${trend.length <= 16 ? label : "&nbsp;"}</span>
           </div>
         `;
       }).join("");
@@ -528,7 +528,7 @@ def render_analytics_panel() -> str:
               <span class="month-bar-value">${fmt(h.count)}</span>
             </div>
           </div>
-          ${h.hour % 3 === 0 ? `<span class="month-label">${h.hour}</span>` : ""}
+          <span class="month-label">${h.hour % 3 === 0 ? h.hour : "&nbsp;"}</span>
         </div>
       `).join("");
       return `

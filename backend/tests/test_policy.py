@@ -2455,7 +2455,35 @@ def test_fact_guard_acknowledges_bundled_price_question(
 
     assert "fact_guard" in result.safe_context
     message = str(result.safe_context.get("message_to_user") or "")
-    assert "стоимост" in message.lower()
+    # 2026-08-27: раньше тут был безусловный "менеджер подскажет стоимость" — теперь, раз
+    # цена на услугу реально есть в prices.json, отвечаем ей сразу, не откладывая на менеджера
+    assert "цена" in message.lower() or "стоимост" in message.lower()
+
+
+def test_fact_guard_price_question_includes_real_price_when_available(
+    policy_session,
+    resolver,
+    managed_env,
+) -> None:
+    """Живой репро (ручное тестирование, 2026-08-27): "сколько стоит ботокс?" верно поправляло
+    бренд на Ксеомин/Миотокс, но цена на эту же услугу уже лежит в prices.json — раньше не
+    читалась, ответ безусловно уходил в "менеджер подскажет"."""
+
+    source_dir = Path("backend/data/clients/rosh_import_demo")
+    shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
+    knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+
+    result = analyze_message(
+        "сколько стоит ботокс?",
+        policy_session,
+        knowledge_base,
+        {"intent": "faq_question", "service_id": None, "confidence": 0.9},
+    )
+
+    message = str(result.safe_context.get("message_to_user") or "")
+    assert "Ксеомин" in message  # бренд по-прежнему поправлен
+    assert "490" in message or "450" in message  # и реальная цена из prices.json тоже дана
+    assert "менеджер подскажет" not in message.lower()  # не откладываем на менеджера, раз цена есть
 
 
 def test_fact_guard_ignores_negated_blocked_value(

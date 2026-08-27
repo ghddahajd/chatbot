@@ -78,6 +78,7 @@ def _service(
     clients_topic_id: str = "",
     failures_file: Path | None = None,
     proxy_url: str = "",
+    analytics_service: Any = None,
 ) -> TelegramBridgeService:
     return TelegramBridgeService(
         bot_token="token",
@@ -87,7 +88,35 @@ def _service(
         clients_topic_id=clients_topic_id,
         failures_file=failures_file,
         proxy_url=proxy_url,
+        analytics_service=analytics_service,
     )
+
+
+class FakeAnalyticsService:
+    """Спай вместо реального AnalyticsService — фиксирует track_event-вызовы без записи на
+    диск, чтобы проверить именно факт и содержимое operator_claimed/operator_closed событий."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    async def track_event(
+        self,
+        *,
+        company_id: str,
+        session_id: str,
+        event_type: str,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.events.append(
+            {
+                "company_id": company_id,
+                "session_id": session_id,
+                "event_type": event_type,
+                "message": message,
+                "metadata": metadata or {},
+            }
+        )
 
 
 def test_disabled_without_group_id(monkeypatch) -> None:
@@ -552,6 +581,114 @@ def test_claim_transitions_session_to_human_active(monkeypatch) -> None:
 
     status = anyio.run(run)
     assert status == SessionStatus.HUMAN_ACTIVE
+
+
+def test_claim_tracks_operator_claimed_analytics_event(monkeypatch) -> None:
+    """Аналитика "по манагерам" (в разработке, 2026-08-27) без этого события не имеет
+    источника данных — session.telegram_claimed_by живёт только в памяти и стирается
+    вместе с TTL-эвикцией сессии."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    analytics = FakeAnalyticsService()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager, analytics_service=analytics)
+
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    claimed_events = [e for e in analytics.events if e["event_type"] == "operator_claimed"]
+    assert len(claimed_events) == 1
+    assert claimed_events[0]["session_id"] == session_id
+    assert claimed_events[0]["company_id"] == "rosh_demo"
+    assert claimed_events[0]["metadata"]["claimed_by"] == "masha"
+
+
+def test_claim_without_analytics_service_does_not_crash(monkeypatch) -> None:
+    """analytics_service опционален (None в проде, если не передали) — клейм не должен
+    падать без него, старое поведение остаётся рабочим."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> SessionStatus:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager)  # analytics_service не передан — None по умолчанию
+
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        updated = await store.get(session.session_id)
+        return updated.status
+
+    status = anyio.run(run)
+    assert status == SessionStatus.HUMAN_ACTIVE
+
+
+def test_close_tracks_operator_closed_event_with_claimed_by(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    analytics = FakeAnalyticsService()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42, claimed_by="masha")
+        await store.set_status(session.session_id, SessionStatus.HUMAN_ACTIVE)
+        service = _service(store, ws_manager, analytics_service=analytics)
+
+        await service._close_session_from_topic(session.session_id, 42)
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    closed_events = [e for e in analytics.events if e["event_type"] == "operator_closed"]
+    assert len(closed_events) == 1
+    assert closed_events[0]["session_id"] == session_id
+    assert closed_events[0]["metadata"]["claimed_by"] == "masha"
+
+
+def test_close_skips_operator_closed_event_when_never_claimed(monkeypatch) -> None:
+    """Диалог мог закрыться, не будучи ни разу взятым в работу (например, клиент сам ушёл) —
+    не должно быть operator_closed без соответствующего operator_claimed, иначе аналитика
+    "по манагерам" считает несуществующего оператора."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    analytics = FakeAnalyticsService()
+
+    async def run() -> None:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42)
+        service = _service(store, ws_manager, analytics_service=analytics)
+        await service._close_session_from_topic(session.session_id, 42)
+
+    anyio.run(run)
+
+    assert analytics.events == []
 
 
 def test_claim_does_not_reopen_already_closed_session(monkeypatch) -> None:

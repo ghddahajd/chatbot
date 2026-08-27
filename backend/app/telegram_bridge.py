@@ -132,6 +132,7 @@ class TelegramBridgeService:
         clients_topic_id: str = "",
         failures_file: Path | None = None,
         proxy_url: str = "",
+        analytics_service: Any = None,
     ) -> None:
         self.bot_token = bot_token
         self.group_chat_id = group_chat_id
@@ -139,6 +140,11 @@ class TelegramBridgeService:
         self.ws_manager = ws_manager
         self.clients_topic_id = clients_topic_id
         self.failures_file = failures_file
+        # Опционально (None в части тестов) — используется для operator_claimed/operator_closed
+        # событий, см. _track_operator_event. Аналитика "по манагерам" (в разработке,
+        # 2026-08-27) без этого не имеет источника данных — до сих пор telegram_claimed_by жил
+        # только в оперативной памяти сессии и стирался вместе с её TTL-эвикцией.
+        self.analytics_service = analytics_service
         # Живой баг (2026-08-26): исходящий TCP по IPv6 с сервера не работает вообще, а по
         # IPv4 избирательно заблокирован именно диапазон адресов Telegram (149.154.x.x) —
         # подтверждено raw TCP тестами в обход MTU/DNS. HTTP-прокси (не SOCKS5 — не тянем
@@ -171,6 +177,31 @@ class TelegramBridgeService:
             )
         except OSError as error:
             logger.warning("telegram_bridge failure_log_write_error error=%s", type(error).__name__)
+
+    async def _track_operator_event(
+        self, *, event_type: str, session: Any, claimed_by: str
+    ) -> None:
+        """operator_claimed/operator_closed — единственный durable источник "кто из
+        операторов что обработал" (2026-08-27, аналитика "по манагерам" в разработке).
+        session.telegram_claimed_by живёт только в памяти и стирается вместе с TTL-эвикцией
+        сессии — без этого события история навсегда теряется через сутки-двое."""
+
+        if self.analytics_service is None:
+            return
+        try:
+            await self.analytics_service.track_event(
+                company_id=session.company_id,
+                session_id=session.session_id,
+                event_type=event_type,
+                metadata={"claimed_by": claimed_by},
+            )
+        except Exception as error:
+            logger.warning(
+                "telegram_bridge operator_event_track_failed event_type=%s session_id=%s error=%s",
+                event_type,
+                session.session_id,
+                type(error).__name__,
+            )
 
     @property
     def enabled(self) -> bool:
@@ -444,6 +475,9 @@ class TelegramBridgeService:
             return
 
         await self.session_store.set_telegram_bridge(session_id, claimed_by=username)
+        await self._track_operator_event(
+            event_type="operator_claimed", session=session, claimed_by=username
+        )
         # Живой баг (найден нагрузочным тестом виджета, 2026-08-25): клейм через Telegram-кнопку
         # менял только telegram_claimed_by/telegram_topic_id, но не статус сессии — в отличие
         # от веб-панели /operator (routes/operator.py:take_session), которая правильно ставит
@@ -501,6 +535,11 @@ class TelegramBridgeService:
         тот же путь закрытия, что и веб-панель оператора (disconnect_operator), плюс
         закрывает саму тему."""
 
+        session = await self.session_store.get(session_id)
+        if session is not None and session.telegram_claimed_by:
+            await self._track_operator_event(
+                event_type="operator_closed", session=session, claimed_by=session.telegram_claimed_by
+            )
         await self.ws_manager.disconnect_operator(session_id, close_session=True)
         # Сообщение — до закрытия темы: Telegram не даёт постить в уже закрытую тему.
         await self._call(

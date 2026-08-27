@@ -6,13 +6,16 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analytics import AnalyticsService, archive_old_analytics_events
+from .analytics_panel import render_analytics_panel
+from .auth import OPERATOR_COOKIE_NAME, verify_operator_token
 from .config import get_settings
+from .login_panel import render_login_page
 from .delivery import DeliveryService
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService, archive_old_leads
@@ -153,6 +156,7 @@ async def lifespan(app: FastAPI):
         clients_topic_id=settings.telegram_clients_topic_id,
         failures_file=settings.telegram_bridge_failures_file,
         proxy_url=settings.telegram_proxy_url,
+        analytics_service=app.state.analytics_service,
     )
 
     retry_task = None
@@ -309,6 +313,54 @@ async def healthcheck() -> JSONResponse:
         overall, http_status = "ok", 200
 
     return JSONResponse(status_code=http_status, content={"status": overall, "checks": checks})
+
+
+@app.get("/analytics")
+async def analytics_page(request: Request):
+    # Раньше жёстко требовал token в query (403 без него) — теперь при отсутствии валидной
+    # куки/токена просто уводим на /login, а не отдаём голую JSON-ошибку на попытку открыть
+    # страницу в браузере. verify_operator_token по-прежнему принимает header/query для
+    # прямых API-вызовов — тут просто не даём ей кинуть исключение наружу.
+    try:
+        verify_operator_token(request, None)
+    except Exception:
+        return RedirectResponse(url=f"/login?next={request.url.path}")
+    return HTMLResponse(render_analytics_panel())
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request) -> str:
+    next_path = request.query_params.get("next") or "/analytics"
+    return render_login_page(next_path=next_path)
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    password = str(form.get("password") or "")
+    next_path = str(form.get("next") or "/analytics")
+    if password != settings.operator_token:
+        return HTMLResponse(render_login_page(error=True, next_path=next_path), status_code=401)
+
+    response = RedirectResponse(url=next_path, status_code=303)
+    response.set_cookie(
+        key=OPERATOR_COOKIE_NAME,
+        value=settings.operator_token,
+        httponly=True,
+        samesite="lax",
+        # secure только когда реально пришли по https (прод за nginx) — иначе локальный http
+        # тест (localhost:8000) браузер бы просто тихо не принял куку, залогиниться нельзя.
+        secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout_submit() -> RedirectResponse:
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(OPERATOR_COOKIE_NAME)
+    return response
 
 
 @app.get("/demo/demo.html")

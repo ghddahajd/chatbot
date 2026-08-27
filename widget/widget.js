@@ -1329,6 +1329,7 @@
         const data = await res.json();
         this.state.companyId = data.company_id || EMBED_COMPANY_ID;
         if (!this.state.companyId) throw new Error("company not resolved");
+        this.trackEvent("impression"); // воронка конверсии — верхняя стадия, "виджет загружен"
         this.applyConfig(data.widget_config || {});
         this.setupConsent(typeof data.privacy_policy_url === "string" ? data.privacy_policy_url.trim() : "");
         this.state.greetingText = typeof data.greeting === "string" ? data.greeting.trim() : "";
@@ -1498,7 +1499,28 @@
       this.el.panel.classList.toggle("open", this.state.open);
       this.el.launcher.classList.toggle("hidden", this.state.open);
       this.el.unread.classList.remove("visible");
-      if (this.state.open) { this.scrollBottom(); this.el.inp.focus(); }
+      if (this.state.open) {
+        this.scrollBottom();
+        this.el.inp.focus();
+        // воронка конверсии (2026-08-27): один раз за загрузку страницы, не на каждый
+        // повторный клик открыть/закрыть — иначе "чат открыт" считает клики, не людей
+        if (!this._chatOpenedTracked) {
+          this._chatOpenedTracked = true;
+          this.trackEvent("chat-opened");
+        }
+      }
+    }
+
+    // маячок для воронки конверсии — fire-and-forget, отклик виджета не должен ждать сеть
+    trackEvent(kind) {
+      if (!this.state.companyId) return;
+      try {
+        fetch(API_BASE + "/api/analytics/track/" + kind, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ company_id: this.state.companyId, session_id: this.state.sessionId || "" }),
+        }).catch(() => {});
+      } catch (_) { /* не критично для работы чата */ }
     }
 
     addMsg(role, text, silent) {

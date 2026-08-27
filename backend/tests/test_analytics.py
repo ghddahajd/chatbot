@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from app.analytics import archive_old_analytics_events
+from app.analytics import AnalyticsService, archive_old_analytics_events
 from app.utils.jsonl import append_jsonl, read_jsonl
 
 
@@ -122,3 +122,354 @@ def test_archive_keeps_message_answered_with_unparseable_timestamp(tmp_path) -> 
 
     assert removed == 0
     assert len(read_jsonl(analytics_file)) == 1
+
+
+def _claim_event(*, session_id: str, claimed_by: str, timestamp: datetime, company_id: str = "rosh_import_demo") -> dict:
+    return {
+        "timestamp": timestamp.isoformat(),
+        "company_id": company_id,
+        "session_id": session_id,
+        "event_type": "operator_claimed",
+        "message": None,
+        "metadata": {"claimed_by": claimed_by},
+    }
+
+
+def _closed_event(*, session_id: str, claimed_by: str, timestamp: datetime, company_id: str = "rosh_import_demo") -> dict:
+    return {
+        "timestamp": timestamp.isoformat(),
+        "company_id": company_id,
+        "session_id": session_id,
+        "event_type": "operator_closed",
+        "message": None,
+        "metadata": {"claimed_by": claimed_by},
+    }
+
+
+def _lead(*, session_id: str, company_id: str = "rosh_import_demo") -> dict:
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "company_id": company_id,
+        "session_id": session_id,
+        "name": "Иван",
+        "phone": "+79990000000",
+        "summary": "",
+        "service_id": None,
+    }
+
+
+def test_operator_summary_counts_claims_closes_and_avg_duration(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0))
+    append_jsonl(analytics_file, _closed_event(session_id="s-1", claimed_by="masha", timestamp=t0 + timedelta(minutes=10)))
+    append_jsonl(analytics_file, _claim_event(session_id="s-2", claimed_by="masha", timestamp=t0))
+    append_jsonl(analytics_file, _closed_event(session_id="s-2", claimed_by="masha", timestamp=t0 + timedelta(minutes=20)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["masha"]["claimed"] == 2
+    assert result["operators"]["masha"]["closed"] == 2
+    assert result["operators"]["masha"]["avg_dialog_minutes"] == 15.0
+
+
+def test_operator_summary_attributes_leads_to_claiming_operator(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0))
+    append_jsonl(leads_file, _lead(session_id="s-1"))
+    # лид без клейма (бот сам собрал контакт, оператор не подключался) — не должен никому
+    # приписаться
+    append_jsonl(leads_file, _lead(session_id="s-unclaimed"))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["masha"]["leads"] == 1
+
+
+def test_operator_summary_claim_without_close_has_no_avg_duration(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="petya", timestamp=datetime.utcnow()))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["petya"]["claimed"] == 1
+    assert result["operators"]["petya"]["closed"] == 0
+    assert result["operators"]["petya"]["avg_dialog_minutes"] is None
+
+
+def test_operator_summary_ignores_close_before_claim_for_duration(tmp_path) -> None:
+    """Не должно случаться в норме (сессию нельзя переклеймить, не закрыв), но если в данных
+    почему-то оказалась пара claim/close с closed_at РАНЬШЕ claimed_at — не должны рисовать
+    отрицательное "среднее время диалога", это разрушает доверие к дашборду."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="petya", timestamp=t0))
+    append_jsonl(analytics_file, _closed_event(session_id="s-1", claimed_by="petya", timestamp=t0 - timedelta(minutes=30)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["petya"]["closed"] == 1  # закрытие само по себе честно посчитано
+    assert result["operators"]["petya"]["avg_dialog_minutes"] is None  # но не отрицательное среднее
+
+
+def test_operator_summary_filters_by_company_id(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime.utcnow()
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0, company_id="rosh_import_demo"))
+    append_jsonl(analytics_file, _claim_event(session_id="s-2", claimed_by="petya", timestamp=t0, company_id="other_company"))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary(company_id="rosh_import_demo")
+
+    assert list(result["operators"].keys()) == ["masha"]
+
+
+def test_leads_by_month_includes_empty_months_and_is_chronological(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    now = datetime.utcnow()
+    append_jsonl(leads_file, _lead(session_id="s-1"))  # текущий месяц (timestamp = now по умолчанию)
+    two_months_ago = now.replace(day=1) - timedelta(days=40)
+    append_jsonl(
+        leads_file,
+        {
+            "timestamp": two_months_ago.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-2",
+            "name": "Пётр",
+            "phone": "+79990000001",
+            "summary": "",
+            "service_id": None,
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.leads_by_month(months=3)
+
+    assert len(result) == 3
+    months_in_order = [entry["month"] for entry in result]
+    assert months_in_order == sorted(months_in_order)  # хронологически, старое -> новое
+    assert result[-1]["count"] == 1  # текущий месяц — s-1
+    assert result[0]["count"] == 1  # 2 месяца назад — s-2 (месяц-в-середине — пустой, 0)
+    assert result[1]["count"] == 0
+
+
+def test_top_services_counts_and_sorts_by_lead_count(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    for service_id in ("chistki_e744e513", "chistki_e744e513", "fillery_f2df3e74"):
+        append_jsonl(
+            leads_file,
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "company_id": "rosh_import_demo",
+                "session_id": f"s-{service_id}-{hash(service_id)}",
+                "name": "Иван",
+                "phone": "+79990000000",
+                "summary": "",
+                "service_id": service_id,
+            },
+        )
+    # лид без service_id (например, задан вопрос без привязки к конкретной услуге) — не должен
+    # попасть в топ как "None"
+    append_jsonl(
+        leads_file,
+        {
+            "timestamp": datetime.utcnow().isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-no-service",
+            "name": "Ольга",
+            "phone": "+79990000002",
+            "summary": "",
+            "service_id": None,
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.top_services()
+
+    assert result[0] == {"service_id": "chistki_e744e513", "count": 2}
+    assert {"service_id": "fillery_f2df3e74", "count": 1} in result
+    assert all(entry["service_id"] != "None" for entry in result)
+    assert len(result) == 2
+
+
+
+def _impression(*, timestamp: datetime, company_id: str = "rosh_import_demo") -> dict:
+    return {
+        "timestamp": timestamp.isoformat(),
+        "company_id": company_id,
+        "session_id": "",
+        "event_type": "widget_impression",
+        "message": None,
+        "metadata": {},
+    }
+
+
+def _chat_opened(*, timestamp: datetime, company_id: str = "rosh_import_demo") -> dict:
+    return {
+        "timestamp": timestamp.isoformat(),
+        "company_id": company_id,
+        "session_id": "",
+        "event_type": "chat_opened",
+        "message": None,
+        "metadata": {},
+    }
+
+
+def test_leads_by_reason_counts_each_reason(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    for reason in ("booking", "booking", "price_question"):
+        append_jsonl(
+            leads_file,
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "company_id": "rosh_import_demo",
+                "session_id": f"s-{reason}-{hash(reason)}",
+                "name": "Иван",
+                "phone": "+79990000000",
+                "summary": "",
+                "reason": reason,
+            },
+        )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.leads_by_reason()
+
+    assert {"reason": "booking", "count": 2} in result
+    assert {"reason": "price_question", "count": 1} in result
+
+
+def test_conversion_funnel_counts_each_stage_and_step_percent(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    now = datetime.utcnow()
+
+    for _ in range(100):
+        append_jsonl(analytics_file, _impression(timestamp=now))
+    for _ in range(20):
+        append_jsonl(analytics_file, _chat_opened(timestamp=now))
+    for i in range(5):
+        append_jsonl(
+            analytics_file,
+            _event(event_type="message_answered", timestamp=now, action="answer") | {"session_id": f"s-{i}"},
+        )
+    # второе сообщение той же сессии не должно задваивать "разговоры" (уникальные session_id)
+    append_jsonl(
+        analytics_file, _event(event_type="message_answered", timestamp=now, action="answer") | {"session_id": "s-0"}
+    )
+    append_jsonl(
+        leads_file,
+        {
+            "timestamp": now.isoformat(), "company_id": "rosh_import_demo", "session_id": "s-0",
+            "name": "Иван", "phone": "+79990000000", "summary": "",
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.conversion_funnel()
+
+    stages = {stage["label"]: stage for stage in result["stages"]}
+    assert stages["Виджет загружен"]["count"] == 100
+    assert stages["Виджет загружен"]["percent_of_previous"] == 100.0
+    assert stages["Чат открыт"]["count"] == 20
+    assert stages["Чат открыт"]["percent_of_previous"] == 20.0
+    assert stages["Есть переписка"]["count"] == 5
+    assert stages["Стал лидом"]["count"] == 1
+    assert stages["Стал лидом"]["percent_of_previous"] == 20.0
+
+
+def test_conversion_funnel_excludes_entries_outside_window(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    old = datetime.utcnow() - timedelta(days=45)
+    append_jsonl(analytics_file, _impression(timestamp=old))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.conversion_funnel(days=30)
+
+    assert result["stages"][0]["count"] == 0
+
+
+def test_archive_rolls_up_widget_impression_and_chat_opened_without_colliding_as_unknown(tmp_path) -> None:
+    """Живой баг, найден до попадания в прод (2026-08-27): widget_impression/chat_opened не
+    несут metadata.action — раньше оба схлопнулись бы в один rollup-счётчик "unknown" вместе с
+    любым бездействийным message_answered, теряя различимость типов."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    rollup_file = tmp_path / "analytics_daily_rollup.jsonl"
+    stale_day = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _impression(timestamp=stale_day))
+    append_jsonl(analytics_file, _impression(timestamp=stale_day))
+    append_jsonl(analytics_file, _chat_opened(timestamp=stale_day))
+
+    removed = archive_old_analytics_events(analytics_file, rollup_file, retention_days=60)
+
+    assert removed == 3
+    rollup_entries = read_jsonl(rollup_file)
+    by_action = {entry["action"]: entry["count"] for entry in rollup_entries}
+    assert by_action == {"widget_impression": 2, "chat_opened": 1}
+
+
+def test_unanswered_trend_includes_empty_days_and_counts_only_unknown_question(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    now = datetime.utcnow()
+    append_jsonl(analytics_file, _event(event_type="unknown_question", timestamp=now, action=None))
+    append_jsonl(analytics_file, _event(event_type="unknown_question", timestamp=now, action=None))
+    # другой тип в тот же день не должен попасть в счёт
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=now))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.unanswered_trend(days=5)
+
+    assert len(result) == 5
+    assert result[-1]["date"] == now.strftime("%Y-%m-%d")
+    assert result[-1]["count"] == 2
+    assert result[0]["count"] == 0
+
+
+def test_activity_by_hour_counts_message_answered_at_correct_hour(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    morning = datetime(2026, 1, 5, 9, 30, 0)
+    evening = datetime(2026, 1, 5, 21, 15, 0)
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=morning))
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=morning))
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=evening))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.activity_by_hour()
+
+    by_hour = {entry["hour"]: entry["count"] for entry in result}
+    assert len(result) == 24
+    assert by_hour[9] == 2
+    assert by_hour[21] == 1
+    assert by_hour[0] == 0
+
+
+def test_activity_by_weekday_labels_and_counts(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    monday = datetime(2026, 1, 5, 12, 0, 0)  # 2026-01-05 — понедельник
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=monday))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.activity_by_weekday()
+
+    by_label = {entry["label"]: entry["count"] for entry in result}
+    assert len(result) == 7
+    assert by_label["Пн"] == 1
+    assert by_label["Вт"] == 0

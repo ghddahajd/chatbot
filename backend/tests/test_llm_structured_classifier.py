@@ -261,7 +261,30 @@ def test_summarize_session_prompt_asks_to_quote_both_phones_when_client_gave_two
     asyncio.run(client.summarize_session(session, lead))
 
     system_message = client.last_payload["messages"][0]["content"]
-    assert "процитируй оба номера" in system_message
+    assert "процитируй все такие номера" in system_message
+
+
+def test_summarize_session_prompt_excludes_phone_bot_rejected_as_incomplete() -> None:
+    """Живой баг (2026-08-27): "леха 8999343453" (10 цифр, неполный) бот отклонил
+    ("Похоже, номер неполный..."), клиент прислал второй, валидный, номер — а LLM-саммари
+    всё равно процитировала оба, включая отклонённый ("телефоны: +7 (999) 343-45-3 и
+    +7 (495) 000-00-00"), хотя дозвониться по первому нельзя. Промпт теперь явно требует
+    не считать отклонённый ботом номер валидным контактом."""
+
+    client = _RecordingCompletionClient("Клиент оставил номер +74950000000.")
+    lead = Lead(
+        company_id="rosh_import_demo",
+        session_id="s1",
+        name="Леха",
+        phone="+74950000000",
+        summary="оставил контакт",
+        reason="commercial_interest",
+    )
+    asyncio.run(client.summarize_session(Session(company_id="rosh_import_demo"), lead))
+
+    system_message = client.last_payload["messages"][0]["content"]
+    assert "неполный" in system_message or "некорректный" in system_message
+    assert "не указывай его" in system_message
 
 
 def test_openai_structured_classifier_returns_none_on_invalid_schema() -> None:

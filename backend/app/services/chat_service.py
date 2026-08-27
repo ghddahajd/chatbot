@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from ..delivery import _escape_markdown, _lead_short_id
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
 from ..telegram_bridge import client_label_for_session
-from ..knowledge import normalize_text, phrasebook_value_to_text
+from ..knowledge import is_consultation_only_service, normalize_text, phrasebook_value_to_text
 from ..models import (
     ChatMessageResponse,
     ContextFrame,
@@ -745,8 +745,11 @@ class ChatService:
         )
 
         if is_booking_request:
+            booked_service = knowledge_base.find_service_by_id(lead.service_id)
             answer = self._phrase(
-                "booking_success",
+                "booking_success_no_consultation"
+                if is_consultation_only_service(booked_service)
+                else "booking_success",
                 "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
             )
         else:
@@ -1416,8 +1419,11 @@ class ChatService:
                     reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
                 )
                 if is_booking_request:
+                    booked_service = knowledge_base.find_service_by_id(lead.service_id)
                     answer = self._phrase(
-                        "booking_success",
+                        "booking_success_no_consultation"
+                        if is_consultation_only_service(booked_service)
+                        else "booking_success",
                         "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
                     )
                 else:

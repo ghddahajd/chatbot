@@ -6,7 +6,13 @@ import logging
 import re
 from typing import Optional
 
-from ..knowledge import KnowledgeBase, _token_prefix_match, normalize_text, phrasebook_value_to_text
+from ..knowledge import (
+    KnowledgeBase,
+    _token_prefix_match,
+    is_consultation_only_service,
+    normalize_text,
+    phrasebook_value_to_text,
+)
 from ..models import PendingAction, PolicyAction, PolicyReason, PolicyResult, Session
 from ..services.rag_search import (
     STOP_WORDS,
@@ -46,6 +52,7 @@ from .constants import (
     MEDICAL_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
+    OFF_TOPIC_KEYWORDS,
     OMS_FACT_KEYWORDS,
     OPERATOR_REQUEST_KEYWORDS,
     PRICE_FUZZY_EXCLUDE_TOKENS,
@@ -442,6 +449,12 @@ _WEAK_OVERLAP_EXACT_WORDS = {
     "день", "дней", "дни", "дню", "днём", "дням", "днями", "днях",
     "такой", "такая", "такое", "такие", "таком", "такую", "такими", "таких", "такого", "такому",
     "зона", "зоне", "зоны", "зону", "зоной", "зонах", "зонами",
+    # Живой баг (2026-08-27): "Какие услуги у вас есть и сколько стоят?" (list_services)
+    # пересёкся со статьёй про IV-терапию по этим же словам — там текст оформлен как FAQ
+    # ("Какие компоненты входят...", "сколько процедур входит в курс?"), и вопросительные
+    # обороты совпали с ЛЮБЫМ FAQ-оформленным материалом, а не по смыслу вопроса.
+    "какой", "какая", "какое", "какие", "какого", "какую", "каком", "какому", "какими", "каких",
+    "есть", "сколько", "нужно", "можно",
 }
 
 
@@ -2461,6 +2474,9 @@ def _analyze_message_core(
         and not operator_requested
         and not looks_like_new_question
     ):
+        pending_service = service or knowledge_base.find_service_by_id(
+            session.last_service_id or last_service_from_history(session, knowledge_base)
+        )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.BOOKING_REQUEST,
@@ -2468,7 +2484,12 @@ def _analyze_message_core(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
+                "message_to_user": _phrase(
+                    knowledge_base,
+                    "booking_contact_prompt_no_consultation"
+                    if is_consultation_only_service(pending_service)
+                    else "booking_contact_prompt",
+                ),
             },
             quick_actions=["Утром", "Вечером", "Оставить телефон", "Позвать менеджера"],
         )
@@ -2675,20 +2696,29 @@ def _analyze_message_core(
         # (score 38.5), но она не привязана ни к одной услуге; в куратированной карте оказалась
         # 2-я по score статья "Ведение беременности" — и ответ ушёл про неё вместо аппарата.
         # Прямой ответ по лучшему article_matches[0] этой ошибки не совершает.
-        article_matches = _retrieve_article_context_safe(message)
-        if article_matches:
-            return PolicyResult(
-                action=PolicyAction.ANSWER,
-                reason=PolicyReason.FAQ_QUESTION,
-                confidence=classifier_confidence or 0.8,
-                safe_context={
-                    "article_context": article_matches,
-                    "question_type": "faq_question",
-                    "domain_profile": knowledge_base.domain_profile,
-                    "phrasebook": getattr(knowledge_base, "phrasebook", {}),
-                },
-                quick_actions=_article_quick_actions(article_matches),
-            )
+        # Живой баг (2026-08-27): "какая погода сегодня в москве" (бесспорный оффтоп,
+        # OFF_TOPIC_KEYWORDS матчит "погода") прошёл этот RAG-фолбэк и ответил статьёй про
+        # мезотерапию — совпало по "москве" (шаблонное "...в Москве" почти в каждой статье) и
+        # "сегодня" (обычное связочное слово, не в STOP_WORDS у rag_search). Оба слова
+        # формально прошли защиту "2+ совпадения" в _score_chunk, но ни одно не про смысл
+        # вопроса. Слова из OFF_TOPIC_KEYWORDS — заведомо однозначный оффтоп (велосипед, пицца,
+        # погода...), спасать тут нечего: в отличие от "трихология" (нет в услугах, но есть
+        # статья), тут не бывает легитимной статьи по теме — пропускаем RAG-спасалку целиком.
+        if not contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
+            article_matches = _retrieve_article_context_safe(message)
+            if article_matches:
+                return PolicyResult(
+                    action=PolicyAction.ANSWER,
+                    reason=PolicyReason.FAQ_QUESTION,
+                    confidence=classifier_confidence or 0.8,
+                    safe_context={
+                        "article_context": article_matches,
+                        "question_type": "faq_question",
+                        "domain_profile": knowledge_base.domain_profile,
+                        "phrasebook": getattr(knowledge_base, "phrasebook", {}),
+                    },
+                    quick_actions=_article_quick_actions(article_matches),
+                )
 
         return PolicyResult(
             action=PolicyAction.OFF_TOPIC,
@@ -3155,7 +3185,12 @@ def _analyze_message_core(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": _phrase(knowledge_base, "booking_contact_prompt"),
+                "message_to_user": _phrase(
+                    knowledge_base,
+                    "booking_contact_prompt_no_consultation"
+                    if is_consultation_only_service(service)
+                    else "booking_contact_prompt",
+                ),
             },
             quick_actions=["Утром", "Вечером", "Оставить телефон", "Позвать менеджера"],
         )

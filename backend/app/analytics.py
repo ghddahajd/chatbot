@@ -442,6 +442,98 @@ class AnalyticsService:
             for weekday in range(7)
         ]
 
+    def queue_wait_stats(self, company_id: Optional[str] = None, days: Optional[int] = None) -> dict[str, Any]:
+        """Сколько реально ждут оператора — от operator_requested (клиент попросил) до
+        operator_claimed (кто-то взял в работу). Не путать с avg_dialog_minutes в
+        operator_summary — та мерит claimed→closed, время самого разговора, не очереди.
+        Оба события хранятся вечно (не в MESSAGE_RETENTION_EVENT_TYPES), так что это честно
+        работает на любом окне, включая "всё время" (days=None)."""
+
+        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+
+        requested_at_by_session: dict[str, datetime] = {}
+        for event in events:
+            if event.get("event_type") != "operator_requested":
+                continue
+            session_id = str(event.get("session_id") or "")
+            if not session_id:
+                continue
+            try:
+                timestamp = datetime.fromisoformat(str(event.get("timestamp")))
+            except (TypeError, ValueError):
+                continue
+            # если клиент просил несколько раз подряд — считаем от первой просьбы, это
+            # реальное время, которое он провёл в ожидании
+            existing = requested_at_by_session.get(session_id)
+            if existing is None or timestamp < existing:
+                requested_at_by_session[session_id] = timestamp
+
+        waits_minutes: list[float] = []
+        for event in events:
+            if event.get("event_type") != "operator_claimed":
+                continue
+            requested_at = requested_at_by_session.get(str(event.get("session_id") or ""))
+            if requested_at is None:
+                continue
+            try:
+                claimed_at = datetime.fromisoformat(str(event.get("timestamp")))
+            except (TypeError, ValueError):
+                continue
+            delta_minutes = (claimed_at - requested_at).total_seconds() / 60
+            if delta_minutes >= 0:
+                waits_minutes.append(delta_minutes)
+
+        return {
+            "avg_wait_minutes": round(sum(waits_minutes) / len(waits_minutes), 1) if waits_minutes else None,
+            "sample_size": len(waits_minutes),
+        }
+
+    def period_comparison(self, company_id: Optional[str] = None, days: int = 30) -> dict[str, Any]:
+        """Текущий период vs такой же по длине предыдущий — для дельт на плитках ("+12% к
+        прошлому периоду"). Не про воронку и не ограничено её более коротким safety-окном —
+        conversations/leads тут те же самые, что даёт conversion_funnel, посчитанные дважды
+        на два смежных отрезка."""
+
+        now = datetime.utcnow()
+        current_start = now - timedelta(days=days)
+        previous_start = now - timedelta(days=days * 2)
+
+        def _in_range(entries: list[dict[str, Any]], start: datetime, end: datetime) -> list[dict[str, Any]]:
+            result = []
+            for entry in entries:
+                if company_id is not None and entry.get("company_id") != company_id:
+                    continue
+                try:
+                    timestamp = datetime.fromisoformat(str(entry.get("timestamp")))
+                except (TypeError, ValueError):
+                    continue
+                if start <= timestamp < end:
+                    result.append(entry)
+            return result
+
+        def _conversations(entries: list[dict[str, Any]]) -> int:
+            return len(
+                {
+                    entry.get("session_id")
+                    for entry in entries
+                    if entry.get("event_type") == "message_answered" and entry.get("session_id")
+                }
+            )
+
+        all_events = read_jsonl(self.analytics_file)
+        all_leads = self._all_leads()
+
+        current_conversations = _conversations(_in_range(all_events, current_start, now))
+        previous_conversations = _conversations(_in_range(all_events, previous_start, current_start))
+        current_leads = len(_in_range(all_leads, current_start, now))
+        previous_leads = len(_in_range(all_leads, previous_start, current_start))
+
+        return {
+            "days": days,
+            "conversations": {"current": current_conversations, "previous": previous_conversations},
+            "leads": {"current": current_leads, "previous": previous_leads},
+        }
+
     def conversion_funnel(self, company_id: Optional[str] = None, days: int = FUNNEL_WINDOW_DAYS) -> dict[str, Any]:
         """Воронка виджет-загружен → чат-открыт → есть-переписка → лид, за последние `days`
         дней (см. FUNNEL_WINDOW_DAYS — специально короче ретеншна widget_impression/

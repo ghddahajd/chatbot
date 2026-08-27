@@ -567,3 +567,82 @@ def test_all_leads_merges_hot_file_and_archive(tmp_path) -> None:
 
     total = sum(entry["count"] for entry in result)
     assert total == 2
+
+
+def _requested_event(*, session_id: str, timestamp: datetime, company_id: str = "rosh_import_demo") -> dict:
+    return {
+        "timestamp": timestamp.isoformat(),
+        "company_id": company_id,
+        "session_id": session_id,
+        "event_type": "operator_requested",
+        "message": "хочу оператора",
+        "metadata": {},
+    }
+
+
+def test_queue_wait_stats_computes_average_from_request_to_claim(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _requested_event(session_id="s-1", timestamp=t0))
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0 + timedelta(minutes=4)))
+    append_jsonl(analytics_file, _requested_event(session_id="s-2", timestamp=t0))
+    append_jsonl(analytics_file, _claim_event(session_id="s-2", claimed_by="petya", timestamp=t0 + timedelta(minutes=8)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.queue_wait_stats()
+
+    assert result["avg_wait_minutes"] == 6.0
+    assert result["sample_size"] == 2
+
+
+def test_queue_wait_stats_uses_earliest_request_when_client_asked_twice(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _requested_event(session_id="s-1", timestamp=t0))
+    append_jsonl(analytics_file, _requested_event(session_id="s-1", timestamp=t0 + timedelta(minutes=5)))
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0 + timedelta(minutes=10)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.queue_wait_stats()
+
+    assert result["avg_wait_minutes"] == 10.0  # от первой просьбы, не от второй
+
+
+def test_queue_wait_stats_ignores_claim_without_matching_request(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=datetime.utcnow()))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.queue_wait_stats()
+
+    assert result["avg_wait_minutes"] is None
+    assert result["sample_size"] == 0
+
+
+def test_period_comparison_splits_current_and_previous_equal_windows(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    now = datetime.utcnow()
+
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=now - timedelta(days=2)) | {"session_id": "s-current"})
+    append_jsonl(
+        analytics_file,
+        _event(event_type="message_answered", timestamp=now - timedelta(days=15)) | {"session_id": "s-previous-1"},
+    )
+    append_jsonl(
+        analytics_file,
+        _event(event_type="message_answered", timestamp=now - timedelta(days=16)) | {"session_id": "s-previous-2"},
+    )
+    append_jsonl(leads_file, _lead(session_id="lead-current"))
+    old_lead = _lead(session_id="lead-previous")
+    old_lead["timestamp"] = (now - timedelta(days=15)).isoformat()
+    append_jsonl(leads_file, old_lead)
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.period_comparison(days=10)
+
+    assert result["conversations"] == {"current": 1, "previous": 2}
+    assert result["leads"] == {"current": 1, "previous": 1}

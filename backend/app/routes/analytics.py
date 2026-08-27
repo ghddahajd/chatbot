@@ -138,4 +138,6 @@ async def analytics_dashboard(
         "unanswered_trend": analytics_service.unanswered_trend(company_id=company_id, days=min(days, 30)),
         "activity_by_hour": analytics_service.activity_by_hour(company_id=company_id, days=days),
         "activity_by_weekday": analytics_service.activity_by_weekday(company_id=company_id, days=days),
+        "queue_wait": analytics_service.queue_wait_stats(company_id=company_id, days=days),
+        "period_comparison": analytics_service.period_comparison(company_id=company_id, days=days),
     }

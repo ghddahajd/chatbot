@@ -226,6 +226,7 @@ def test_analytics_dashboard_resolves_service_name_and_shape(test_client) -> Non
     assert set(result.keys()) == {
         "company_id", "days", "summary", "operators", "leads_by_month", "leads_by_reason", "top_services",
         "funnel", "unanswered_trend", "activity_by_hour", "activity_by_weekday",
+        "queue_wait", "period_comparison",
     }
     assert result["summary"]["leads"]["total"] >= 1
     assert len(result["leads_by_month"]) == 6

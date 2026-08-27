@@ -102,6 +102,16 @@ def render_analytics_panel() -> str:
       font-variant-numeric: proportional-nums;
     }
     .tile-value.accent { color: var(--accent-deep); }
+    .tile-delta {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      vertical-align: middle;
+    }
+    .tile-delta.up { color: var(--accent-deep); }
+    .tile-delta.down { color: #b3261e; }
+    .tile-delta.flat { color: var(--text-muted); }
 
     .grid-2 {
       display: grid;
@@ -284,6 +294,17 @@ def render_analytics_panel() -> str:
       return res.json();
     }
 
+    // signed % от previous->current; null, когда сравнивать не с чем (previous=0) — тогда
+    // просто не показываем бейдж, а не рисуем деление на ноль как "+Infinity%"
+    function deltaBadge(current, previous) {
+      if (!previous) return "";
+      const pct = Math.round(((current - previous) / previous) * 100);
+      if (pct === 0) return `<span class="tile-delta flat">±0%</span>`;
+      const cls = pct > 0 ? "up" : "down";
+      const sign = pct > 0 ? "+" : "";
+      return `<span class="tile-delta ${cls}">${sign}${pct}%</span>`;
+    }
+
     function renderTiles(data) {
       const totalLeads = data.summary.leads.total;
       const thisMonth = data.leads_by_month[data.leads_by_month.length - 1];
@@ -297,12 +318,22 @@ def render_analytics_panel() -> str:
       const leadStage = data.funnel.stages[data.funnel.stages.length - 1];
       const conversion = leadStage.percent_of_previous != null ? leadStage.percent_of_previous : 0;
 
+      // Дельта — текущий выбранный период vs такой же по длине предыдущий (period_comparison,
+      // отдельный от воронки расчёт — той нельзя доверять дальше её safety-окна)
+      const pc = data.period_comparison;
+      const conversationsDelta = deltaBadge(pc.conversations.current, pc.conversations.previous);
+      const prevConversion = pc.conversations.previous > 0 ? (pc.leads.previous / pc.conversations.previous) * 100 : 0;
+      const conversionDelta = deltaBadge(conversion, prevConversion);
+
+      const waitMinutes = data.queue_wait.avg_wait_minutes;
+
       return `
         <div class="tiles">
           <div class="tile"><div class="tile-label">Всего лидов</div><div class="tile-value">${fmt(totalLeads)}</div></div>
           <div class="tile"><div class="tile-label">Лидов за месяц</div><div class="tile-value accent">${fmt(thisMonth ? thisMonth.count : 0)}</div></div>
-          <div class="tile"><div class="tile-label">Диалогов (${data.funnel.days} дн.)</div><div class="tile-value">${fmt(conversations)}</div></div>
-          <div class="tile"><div class="tile-label">Конверсия (${data.funnel.days} дн.)</div><div class="tile-value">${conversion}%</div></div>
+          <div class="tile"><div class="tile-label">Диалогов (${data.funnel.days} дн.)</div><div class="tile-value">${fmt(conversations)}${conversationsDelta}</div></div>
+          <div class="tile"><div class="tile-label">Конверсия (${data.funnel.days} дн.)</div><div class="tile-value">${conversion}%${conversionDelta}</div></div>
+          <div class="tile"><div class="tile-label">Ожидание оператора</div><div class="tile-value">${waitMinutes != null ? waitMinutes + " мин" : "—"}</div></div>
           <div class="tile"><div class="tile-label">Операторов</div><div class="tile-value">${fmt(operatorsCount)}</div></div>
         </div>
       `;

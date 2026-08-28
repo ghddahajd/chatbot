@@ -1528,6 +1528,57 @@ def test_operator_request_second_time_hard_transfer(policy_session, knowledge_ba
     assert result.reason == PolicyReason.OPERATOR_REQUESTED
 
 
+def test_operator_request_after_hours_asks_for_contact_instead_of_soft_offer(
+    policy_session, knowledge_base
+) -> None:
+    """Требование клиента (TSK-02, 2026-08-28): вне рабочих часов не делаем вид, что оператор
+    вот-вот подключится — ни через soft-offer. Закрыто каждый день (детерминированно, не
+    зависит от реального времени запуска теста)."""
+
+    knowledge_base.company.working_hours_schedule = {day: None for day in
+        ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+
+    result = _analyze("хочу оператора", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ASK_CONTACT
+    assert result.reason == PolicyReason.OPERATOR_REQUESTED
+    message = str(result.safe_context.get("message_to_user"))
+    assert "недоступен" in message
+    assert "нерабочее время" in message
+
+
+def test_operator_request_after_hours_skips_transfer_even_when_already_confirmed(
+    policy_session, knowledge_base
+) -> None:
+    """Тот же кейс, но уже после подтверждения ("Да, менеджера") — раньше уходил бы в
+    TRANSFER_OPERATOR (реальная передача, WAITING_OPERATOR), теперь всё равно ASK_CONTACT."""
+
+    knowledge_base.company.working_hours_schedule = {day: None for day in
+        ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    policy_session.pending_action = PendingAction.OFFERED_OPERATOR.value
+
+    result = _analyze("хочу оператора", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ASK_CONTACT
+    assert result.action != PolicyAction.TRANSFER_OPERATOR
+
+
+def test_operator_request_with_phone_already_given_ignores_hours_check(
+    policy_session, knowledge_base
+) -> None:
+    """Если телефон уже в этом же сообщении — отвечаем как обычно (контакт зафиксирован),
+    часы работы тут ни при чём, это не обещание "скоро свяжется", это просто подтверждение
+    приёма контакта."""
+
+    knowledge_base.company.working_hours_schedule = {day: None for day in
+        ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+
+    result = _analyze("хочу оператора, вот номер +79991234567", policy_session, knowledge_base)
+
+    assert result.action == PolicyAction.ASK_CONTACT
+    assert result.reason == PolicyReason.CONTACT_PROVIDED
+
+
 def test_content_free_reply_after_operator_offer_invites_question_not_off_topic(
     policy_session, knowledge_base
 ) -> None:

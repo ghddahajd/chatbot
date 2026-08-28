@@ -166,11 +166,25 @@ class Service(BaseModel):
     variants: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class DaySchedule(BaseModel):
+    """Часы работы одного дня недели — "HH:MM" строками, простой формат специально под
+    будущую форму в админке (7 строк, открыто-с/до), не крон-выражения."""
+
+    open: str
+    close: str
+
+
 class CompanyConfig(BaseModel):
     company_id: str
     company_name: str
     city: str
     working_hours: str
+    # working_hours — свободный текст для фраз (как раньше). working_hours_schedule — то же
+    # самое, но структурировано, для проверки "открыто сейчас или нет" (2026-08-28). Пустой
+    # словарь (дефолт, ничего не настроено) — ведёт себя как "открыто всегда", то есть ни один
+    # существующий клиент без этого поля не меняет поведение.
+    working_hours_schedule: dict[str, Optional[DaySchedule]] = Field(default_factory=dict)
+    timezone: str = "Europe/Moscow"
     phone: str
     address: Optional[str] = None
     website_url: Optional[str] = None

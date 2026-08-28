@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Optional
 
+from ..hours import is_currently_open
 from ..knowledge import (
     KnowledgeBase,
     _token_prefix_match,
@@ -3114,6 +3115,35 @@ def _analyze_message_core(
                 confidence=0.95,
                 safe_context=_contact_safe_context(message, phone, service, knowledge_base.services),
             )
+        # Требование клиента (TSK-02, 2026-08-28): ночью/в нерабочие часы не делаем вид, что
+        # оператор вот-вот подключится — ни через soft-offer ("Или сразу соединю с
+        # менеджером"), ни через обычный хэндофф ("свяжется в ближайшее время"), это враньё,
+        # когда физически некому ответить. Сразу честно просим контакт, ASK_CONTACT — тот же
+        # путь, что и everywhere: chat_service.py сам подхватит pending_action=COLLECT_CONTACT
+        # и создаст лид, если клиент ответит телефоном. Статус сессии не меняется — бот
+        # продолжает отвечать на обычные вопросы как обычно, эта ветка только про хэндофф
+        # оператору. needs_operator у итогового лида останется False (session.operator_requested
+        # тут ещё не выставлялся) — карточка уйдёт тихо в "Клиенты", без "Взять в работу" по
+        # ночам. Кризисные/жалобные TRANSFER_OPERATOR-ветки (см. self_harm_crisis,
+        # complaint_escalation выше по файлу) этот хук не трогают — там честность про часы
+        # работы неуместна, они звучат одинаково срочно в любое время.
+        if not is_currently_open(
+            knowledge_base.company.working_hours_schedule, knowledge_base.company.timezone
+        ):
+            return PolicyResult(
+                action=PolicyAction.ASK_CONTACT,
+                reason=PolicyReason.OPERATOR_REQUESTED,
+                service_id=service.id if service else None,
+                confidence=0.95,
+                safe_context={
+                    "message_to_user": _format_phrase(
+                        knowledge_base,
+                        "operator_after_hours",
+                        working_hours=knowledge_base.company.working_hours,
+                    )
+                },
+            )
+
         # Кнопка "Передать администратору" из engagement-offer напоминания — уже явное
         # подтверждение (пользователь отвечает на прямой вопрос "подключить
         # администратора?"), а не первое двусмысленное упоминание оператора. Без этой

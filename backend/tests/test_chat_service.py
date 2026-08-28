@@ -2196,3 +2196,158 @@ def test_human_active_session_without_contact_does_not_create_lead(test_client) 
     assert fake_bridge.client_cards == []
     stored_session = test_client.app.state.session_store._sessions[session_id]
     assert stored_session.lead_requested is False
+
+
+def test_operator_request_after_hours_end_to_end_asks_for_contact_not_wait(
+    test_client, monkeypatch
+) -> None:
+    """Полный прогон через /api/chat/message (TSK-02, 2026-08-28): вне часов работы "хочу
+    оператора" не переводит в WAITING_OPERATOR — статус остаётся AI_ACTIVE, бот сразу честно
+    просит контакт. Давший телефон клиент получает тихий лид (needs_operator=False — карточка
+    в "Клиенты", не в очередь General с кнопкой "Взять в работу")."""
+
+    monkeypatch.setattr("app.policy.is_currently_open", lambda *a, **k: False)
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу оператора"},
+    ).json()
+
+    assert first_payload["status"] == "AI_ACTIVE"
+    assert "недоступен" in first_payload["answer"]
+    assert "нерабочее время" in first_payload["answer"]
+
+    session_id = first_payload["session_id"]
+    second_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Леха, 89991234567"},
+    ).json()
+
+    assert second_payload["status"] == "AI_ACTIVE"
+    assert second_payload["lead_created"] is True
+    assert fake_bridge.queue_cards == []
+    assert len(fake_bridge.client_cards) == 1
+    assert "Леха" in fake_bridge.client_cards[0]
+
+    # Бот не "выключается" ночью — обычный вопрос сразу после этого отвечается как всегда.
+    third_payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "сколько стоит консультация?",
+        },
+    ).json()
+    assert third_payload["status"] == "AI_ACTIVE"
+    assert third_payload["answer"]
+
+
+def test_operator_request_business_hours_full_flow_on_real_client_schedule(
+    test_client, managed_env, monkeypatch
+) -> None:
+    """Регрессия на РЕАЛЬНОМ расписании rosh_import_demo (10:00-21:00 каждый день), не на
+    синтетическом. Замоканное время внутри часов работы — весь старый флоу (soft-offer ->
+    подтверждение -> TRANSFER_OPERATOR -> WAITING_OPERATOR -> карточка в очередь -> лид с
+    needs_operator=True при контакте) должен работать один в один как до фичи с часами."""
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.hours import is_currently_open as real_is_currently_open
+    from .test_quick_faq import _copy_rosh_import_demo
+
+    _copy_rosh_import_demo(test_client, managed_env)
+    business_hours_now = datetime(2026, 8, 26, 15, 0, tzinfo=ZoneInfo("Europe/Moscow"))  # среда, 15:00
+
+    def fake_is_currently_open(schedule, timezone_name, now=None):
+        return real_is_currently_open(schedule, timezone_name, now=business_hours_now)
+
+    monkeypatch.setattr("app.policy.is_currently_open", fake_is_currently_open)
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_import_demo", "session_id": None, "message": "хочу оператора"},
+    ).json()
+    assert first_payload["action"] == "clarify"
+    assert "недоступен" not in first_payload["answer"]
+
+    session_id = first_payload["session_id"]
+    second_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_import_demo", "session_id": session_id, "message": "Да, менеджера"},
+    ).json()
+    assert second_payload["status"] == "WAITING_OPERATOR"
+    assert len(fake_bridge.queue_cards) == 1
+    assert fake_bridge.queue_cards[0]["reason"] == "⚡️ Запросил оператора"
+
+    third_payload = test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_import_demo",
+            "session_id": session_id,
+            "message": "Леха, 89991234567",
+        },
+    ).json()
+    assert third_payload["lead_created"] is True
+    leads_file = managed_env["temp_dir"] / "leads.jsonl"
+    tail = json.loads(leads_file.read_text(encoding="utf-8").splitlines()[-1])
+    assert tail["needs_operator"] is True
+    assert tail["session_id"] == session_id
+
+
+def test_operator_request_after_hours_on_real_client_schedule(
+    test_client, managed_env, monkeypatch
+) -> None:
+    """То же самое, но с реальным расписанием и временем вне часов (3 ночи) — проверяет
+    настоящее сравнение времени (open_time <= now < close_time), а не только ветку "весь день
+    закрыт (None)", которую уже покрывает синтетический тест в test_policy.py."""
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.hours import is_currently_open as real_is_currently_open
+    from .test_quick_faq import _copy_rosh_import_demo
+
+    _copy_rosh_import_demo(test_client, managed_env)
+    night_now = datetime(2026, 8, 26, 3, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    def fake_is_currently_open(schedule, timezone_name, now=None):
+        return real_is_currently_open(schedule, timezone_name, now=night_now)
+
+    monkeypatch.setattr("app.policy.is_currently_open", fake_is_currently_open)
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_import_demo", "session_id": None, "message": "хочу оператора"},
+    ).json()
+
+    assert payload["status"] == "AI_ACTIVE"
+    assert "недоступен" in payload["answer"]
+    assert fake_bridge.queue_cards == []
+
+
+def test_operator_request_during_business_hours_is_unaffected(test_client) -> None:
+    """Регрессия: без настроенного расписания (пустой дефолт, как у всех текущих клиентов)
+    поведение вообще не меняется — обычный soft-offer -> TRANSFER_OPERATOR, как раньше."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "хочу оператора"},
+    ).json()
+    session_id = first_payload["session_id"]
+    second_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    ).json()
+
+    assert second_payload["status"] == "WAITING_OPERATOR"
+    assert len(fake_bridge.queue_cards) == 1

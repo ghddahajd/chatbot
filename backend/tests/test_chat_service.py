@@ -1947,6 +1947,10 @@ class _FakeTelegramBridge:
     def __init__(self) -> None:
         self.queue_cards: list[dict] = []
         self.client_cards: list[str] = []
+        self.forwarded: list[tuple[str, str]] = []
+
+    async def forward_client_message(self, session_id: str, text: str) -> None:
+        self.forwarded.append((session_id, text))
 
     async def post_operator_queue_card(self, *, session_id, reason, last_message, client_label):
         self.queue_cards.append(
@@ -2061,3 +2065,134 @@ def test_direct_operator_request_posts_to_general_queue(test_client) -> None:
     assert len(fake_bridge.queue_cards) == 1
     assert fake_bridge.queue_cards[0]["reason"] == "⚡️ Запросил оператора"
     assert fake_bridge.client_cards == []
+
+
+def test_waiting_operator_contact_downgrades_to_clients_card_instead_of_duplicating_queue_card(
+    test_client,
+) -> None:
+    """Живой баг (ручное тестирование пользователем, 2026-08-28): "Хочу оператора" уже шлёт
+    карточку "⚡️ Запросил оператора" в General — задолго до появления telegram_topic_id (тема
+    появляется только при клейме). Если клиент, пока ждёт, диктует телефон — раньше летела
+    ВТОРАЯ карточка "🔔 Новый лид" с ещё одной кнопкой "Взять в работу" для той же сессии.
+    operator_requested теперь считается таким же "карточка уже в очереди" сигналом — новый
+    клейм не дублируем, но контакт всё равно не теряем: он уходит простой карточкой в
+    "Клиенты", как обычный лид (уточнено по вопросу пользователя, 2026-08-28 — молчать про
+    новый контакт совсем не годится)."""
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    first_payload = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "оператор"},
+    ).json()
+    session_id = first_payload["session_id"]
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Да, оператора"},
+    )
+    assert len(fake_bridge.queue_cards) == 1
+
+    test_client.post(
+        "/api/chat/message",
+        json={
+            "company_id": "rosh_demo",
+            "session_id": session_id,
+            "message": "Иван +7 999 123-45-67",
+        },
+    )
+
+    assert len(fake_bridge.queue_cards) == 1
+    assert len(fake_bridge.client_cards) == 1
+    assert "Иван" in fake_bridge.client_cards[0]
+
+
+def test_human_active_session_silently_creates_lead_from_contact(test_client) -> None:
+    """Сценарий клиента (2026-08-28): оператор уже ведёт чат живьём, клиент диктует телефон —
+    ответ бота клиенту не меняется (canned "ждите оператора"), но лид фиксируется тем же путём,
+    что и везде (extract_phone/build_lead_from_contact/суммаризатор), БЕЗ кнопки "Взять в
+    работу" — оператор уже в чате, никого звать не нужно."""
+
+    from app.models import SessionStatus
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+    ).json()["session_id"]
+    test_client.app.state.session_store._sessions[session_id].status = SessionStatus.HUMAN_ACTIVE
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Леха, 89991234567"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert "менеджеру" in payload["answer"]
+    assert payload["lead_created"] is False
+    assert payload["status"] == SessionStatus.HUMAN_ACTIVE.value
+
+    assert fake_bridge.queue_cards == []
+    assert len(fake_bridge.client_cards) == 1
+    assert "Леха" in fake_bridge.client_cards[0]
+
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    assert stored_session.lead_requested is True
+    assert stored_session.status == SessionStatus.HUMAN_ACTIVE
+
+
+def test_human_active_session_does_not_duplicate_lead_on_repeated_contact(test_client) -> None:
+    """Дедуп: если клиент повторит номер ещё раз в том же живом чате, второй лид не создаём —
+    lead_requested уже True с первого раза."""
+
+    from app.models import SessionStatus
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+    ).json()["session_id"]
+    test_client.app.state.session_store._sessions[session_id].status = SessionStatus.HUMAN_ACTIVE
+
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "Леха, 89991234567"},
+    )
+    test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "мой номер 89991234567"},
+    )
+
+    assert len(fake_bridge.client_cards) == 1
+
+
+def test_human_active_session_without_contact_does_not_create_lead(test_client) -> None:
+    """Обычное сообщение без контакта под живым оператором не должно триггерить лид/карточку —
+    только реальный телефон в тексте запускает эту ветку."""
+
+    from app.models import SessionStatus
+
+    fake_bridge = _FakeTelegramBridge()
+    test_client.app.state.telegram_bridge_service = fake_bridge
+
+    session_id = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "привет"},
+    ).json()["session_id"]
+    test_client.app.state.session_store._sessions[session_id].status = SessionStatus.HUMAN_ACTIVE
+
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": session_id, "message": "когда откроетесь?"},
+    )
+
+    assert response.status_code == 200
+    assert fake_bridge.queue_cards == []
+    assert fake_bridge.client_cards == []
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    assert stored_session.lead_requested is False

@@ -981,20 +981,84 @@ class ChatService:
                 type(error).__name__,
             )
 
+    async def maybe_capture_human_active_lead(self, session, message: str) -> None:
+        """Тихая фиксация лида, когда бот не отвечает по содержанию — оператор уже в чате
+        (HUMAN_ACTIVE). Общий код для двух мест: REST-фоллбэка в handle_message И
+        вебсокет-канала (routes/ws.py: client_ws) — а это и есть ОСНОВНОЙ путь живой
+        переписки клиента с оператором в виджете (widget.js: sendText шлёт в ws, если
+        status==HUMAN_ACTIVE и ws открыт, REST только пока ws не подключился). Живой баг
+        (ручное тестирование пользователем, 2026-08-28): раньше лид ловился только в
+        handle_message — через вебсокет сообщения вообще не доходили до этого кода, контакт
+        клиента терялся молча. lead_requested — дедуп: не плодим второй лид, если клиент
+        повторит номер ещё раз в этом чате."""
+
+        if session.lead_requested:
+            return
+        phone = extract_phone(message)
+        if not phone:
+            return
+        request = self.request
+        try:
+            knowledge_base = request.app.state.knowledge_base_resolver.get(
+                session.company_id, fallback=False
+            )
+        except KeyError:
+            return
+        contact = {
+            "name": extract_name(message, phone, known_services=knowledge_base.services),
+            "phone": phone,
+        }
+        lead = build_lead_from_contact(
+            company_id=session.company_id,
+            session_id=session.session_id,
+            contact=contact,
+            summary=self._lead_summary(
+                session,
+                message,
+                is_booking_request=False,
+                name=contact.get("name"),
+                phone=contact.get("phone"),
+            ),
+            service_id=session.last_service_id,
+            reason=classify_lead_reason(last_intent=session.last_intent, is_booking_request=False),
+            needs_operator=False,
+            lead_trigger=lead_trigger_for(is_booking_request=False, is_operator_flow=True),
+            recent_messages=recent_messages_for(session),
+            operator_url=self._operator_session_url(session.session_id),
+        )
+        await self._finalize_lead_summary(session, lead)
+        await request.app.state.lead_service.save(lead)
+        await request.app.state.session_store.set_lead_requested(session.session_id, True)
+        await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
+
     async def _notify_telegram_for_lead(self, lead, *, reason: str) -> None:
-        """Лид с needs_operator=True реально ждёт живого человека — карточка в General
-        с клеймом (как operator_requested). Обычный лид/запись — контакт уже зафиксирован,
-        бот уже дал полный ответ, никто прямо сейчас не ждёт у монитора — простая карточка
-        в тему "Клиенты", без клейма и без своей темы."""
+        """Лид с needs_operator=True, для которого ЕЩЁ нет сигнала в очереди — реально ждёт
+        живого человека впервые, карточка в General с клеймом (как operator_requested).
+        Если сигнал уже есть (тема создана при клейме, ИЛИ уже висит неразобранная карточка
+        "⚡️ Запросил оператора") — заново звать оператора не нужно, но контакт всё равно
+        новый, поэтому падает вниз, в тот же путь, что обычный лид/запись: простая карточка
+        в тему "Клиенты", без клейма и без своей темы, просто лог для оператора."""
 
         bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
         if bridge is None or not bridge.enabled:
             return
         try:
-            if lead.needs_operator:
+            needs_fresh_queue_card = lead.needs_operator
+            if needs_fresh_queue_card:
                 session = await self.request.app.state.session_store.get(lead.session_id)
-                if session is not None and session.telegram_topic_id is not None:
-                    return
+                # Живой баг (ручное тестирование пользователем, 2026-08-28): "Хочу оператора"
+                # сразу ставит operator_requested=True и шлёт карточку "⚡️ Запросил оператора"
+                # в General — задолго до появления telegram_topic_id (тема появляется только
+                # при клейме, см. post_operator_queue_card). Если клиент даёт контакт, ПОКА
+                # ждёт оператора, эта же сессия раньше слала ВТОРУЮ карточку "🔔 Новый лид" с
+                # ещё одной кнопкой "Взять в работу" — визуально дублируется. operator_requested
+                # уже значит "карточка в очереди уже есть", даже без темы — не дублируем клейм,
+                # но карточку с контактом всё равно шлём (просто без кнопки, см. ниже).
+                if session is not None and (
+                    session.telegram_topic_id is not None or session.operator_requested
+                ):
+                    needs_fresh_queue_card = False
+            if needs_fresh_queue_card:
                 # contact_draft уже очищен к этому моменту (_clear_contact_state отрабатывает
                 # до вызова этого метода) — берём имя/телефон с самого lead, не с сессии.
                 client_label = lead.name or lead.phone or f"Сессия {lead.session_id[:8]}"
@@ -1312,6 +1376,12 @@ class ChatService:
             )
 
         if session.status == SessionStatus.HUMAN_ACTIVE:
+            # Клиент активно переписывается с живым оператором — бот больше не отвечает по
+            # содержанию, оператор уже видит сообщение живьём (_forward_to_telegram_topic
+            # выше). REST сюда попадает только пока у виджета не открыт вебсокет (см.
+            # maybe_capture_human_active_lead — тот же метод зовёт и routes/ws.py, это и есть
+            # основной путь живой переписки в виджете).
+            await self.maybe_capture_human_active_lead(session, message)
             return ChatMessageResponse(
                 session_id=session.session_id,
                 status=session.status,

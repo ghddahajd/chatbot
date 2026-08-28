@@ -6,6 +6,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..models import MessageRole, SessionStatus
+from ..services.chat_service import ChatService
 
 
 router = APIRouter(tags=["ws"])
@@ -36,7 +37,9 @@ async def client_ws(websocket: WebSocket, session_id: str) -> None:
             # Тот же per-session лок, что и REST /api/chat/message — не даёт этому сообщению
             # вклиниться посреди многошаговой обработки REST-пайплайна для той же сессии.
             async with session_store.lock_for(session_id):
-                await session_store.append_message(session_id, MessageRole.USER, text)
+                current_session = await session_store.append_message(
+                    session_id, MessageRole.USER, text
+                )
                 await manager.send_to_operator(
                     session_id,
                     {"type": "message", "role": "user", "text": text, "session_id": session_id},
@@ -47,6 +50,23 @@ async def client_ws(websocket: WebSocket, session_id: str) -> None:
                     except Exception as error:
                         logger.warning(
                             "telegram_bridge forward failed session_id=%s error=%s",
+                            session_id,
+                            type(error).__name__,
+                        )
+                # Живой баг (ручное тестирование пользователем, 2026-08-28): виджет шлёт
+                # сообщения сюда, а не в REST /api/chat/message, как только статус
+                # HUMAN_ACTIVE и вебсокет открыт (см. widget.js sendText) — лиды из живой
+                # переписки с оператором раньше тут вообще не ловились. ChatService зовём
+                # прямо с websocket: у него тот же .app.state, что и у Request (общий базовый
+                # класс Starlette HTTPConnection).
+                if current_session is not None:
+                    try:
+                        await ChatService(websocket).maybe_capture_human_active_lead(
+                            current_session, text
+                        )
+                    except Exception as error:
+                        logger.warning(
+                            "human_active lead capture failed session_id=%s error=%s",
                             session_id,
                             type(error).__name__,
                         )

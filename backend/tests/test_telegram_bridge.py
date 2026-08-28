@@ -691,13 +691,17 @@ def test_close_skips_operator_closed_event_when_never_claimed(monkeypatch) -> No
     assert analytics.events == []
 
 
-def test_track_session_evicted_records_operator_closed_for_claimed_session(monkeypatch) -> None:
-    """Живой баг (код-ревью, 2026-08-27): оператор взял диалог и забыл про него — сессия
-    дошла до TTL-эвикции (session_store.evict_stale) без явного /done. Раньше telegram_claimed_by
-    просто стирался вместе с сессией, operator_closed никогда не записывался, и такой диалог
-    навсегда пропадал из operator_summary как "закрыто"."""
+def test_close_evicted_operator_session_records_operator_closed_and_closes_topic(monkeypatch) -> None:
+    """Живой баг (код-ревью, 2026-08-27; докручено 2026-08-29): оператор взял диалог и забыл
+    про него — сессия дошла до TTL-эвикции (session_store.evict_stale) без явного /done.
+    Раньше фиксировали только operator_closed в аналитику — сама тема в Telegram оставалась
+    висеть открытой навсегда, никто не уведомлялся. Сессия намеренно удалена из store ДО
+    вызова — ровно как в реальной эвикции (evict_stale удаляет раньше, чем этот метод
+    вызывается) — иначе тест не поймал бы баг, при котором close_topic сам перечитывает
+    сессию из store и тихо ничего не закрывает."""
 
     _reset_fake_client(monkeypatch)
+    FakeAsyncClient.responses["closeForumTopic"] = {"ok": True, "result": True}
     store = SessionStore()
     ws_manager = FakeWsManager()
     analytics = FakeAnalyticsService()
@@ -708,7 +712,8 @@ def test_track_session_evicted_records_operator_closed_for_claimed_session(monke
         await store.set_status(session.session_id, SessionStatus.HUMAN_ACTIVE)
         service = _service(store, ws_manager, analytics_service=analytics)
         evicted_session = await store.get(session.session_id)
-        await service.track_session_evicted(evicted_session)
+        store._sessions.pop(session.session_id, None)  # симулируем реальную эвикцию
+        await service.close_evicted_operator_session(evicted_session)
         return session.session_id
 
     session_id = anyio.run(run)
@@ -718,8 +723,17 @@ def test_track_session_evicted_records_operator_closed_for_claimed_session(monke
     assert closed_events[0]["session_id"] == session_id
     assert closed_events[0]["metadata"]["claimed_by"] == "masha"
 
+    send_calls = [c for c in FakeAsyncClient.calls if c["method"] == "sendMessage"]
+    assert len(send_calls) == 1
+    assert "неактивности" in send_calls[0]["json"]["text"]
+    assert send_calls[0]["json"]["message_thread_id"] == 42
 
-def test_track_session_evicted_skips_unclaimed_or_non_operator_session(monkeypatch) -> None:
+    close_calls = [c for c in FakeAsyncClient.calls if c["method"] == "closeForumTopic"]
+    assert len(close_calls) == 1
+    assert close_calls[0]["json"]["message_thread_id"] == 42
+
+
+def test_close_evicted_operator_session_skips_unclaimed_or_non_operator_session(monkeypatch) -> None:
     _reset_fake_client(monkeypatch)
     store = SessionStore()
     ws_manager = FakeWsManager()
@@ -730,15 +744,16 @@ def test_track_session_evicted_skips_unclaimed_or_non_operator_session(monkeypat
 
         never_claimed = await store.get_or_create(None, "rosh_demo")
         await store.set_status(never_claimed.session_id, SessionStatus.WAITING_OPERATOR)
-        await service.track_session_evicted(await store.get(never_claimed.session_id))
+        await service.close_evicted_operator_session(await store.get(never_claimed.session_id))
 
         ai_active = await store.get_or_create(None, "rosh_demo")
         await store.set_telegram_bridge(ai_active.session_id, topic_id=7, claimed_by="masha")
-        await service.track_session_evicted(await store.get(ai_active.session_id))
+        await service.close_evicted_operator_session(await store.get(ai_active.session_id))
 
     anyio.run(run)
 
     assert analytics.events == []
+    assert FakeAsyncClient.calls == []
 
 
 def test_claim_does_not_reopen_already_closed_session(monkeypatch) -> None:

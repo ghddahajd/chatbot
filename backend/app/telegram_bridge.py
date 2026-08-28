@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -203,13 +203,15 @@ class TelegramBridgeService:
                 type(error).__name__,
             )
 
-    async def track_session_evicted(self, session: Any) -> None:
-        """Живой баг (код-ревью, 2026-08-27): сессия дошла до TTL-эвикции, пока была в
-        работе у оператора (WAITING_OPERATOR/HUMAN_ACTIVE), и никто не закрыл её явным
-        /done или клиентским уходом — единственный шанс записать operator_closed для неё,
-        иначе telegram_claimed_by стирается вместе с сессией и operator_summary навсегда
-        теряет этот диалог из числа "закрыто" (claimed > closed без объяснения, среднее
-        время диалога считается только по благополучным случаям)."""
+    async def close_evicted_operator_session(self, session: Any) -> None:
+        """Живой баг (код-ревью, 2026-08-27; докручено 2026-08-29): сессия дошла до
+        TTL-эвикции, пока была в работе у оператора (WAITING_OPERATOR/HUMAN_ACTIVE), и никто
+        не закрыл её явным /done или клиентским уходом. Раньше только фиксировали
+        operator_closed в аналитику (иначе telegram_claimed_by стирается вместе с сессией и
+        operator_summary навсегда теряет этот диалог из числа "закрыто") — но сама тема в
+        Telegram оставалась висеть открытой навсегда, никто не уведомлялся. Теперь ещё и
+        закрываем тему тем же путём, что /done, с отдельной пометкой (не реальное завершение
+        диалога, а автозакрытие по неактивности)."""
 
         operator_statuses = {SessionStatus.WAITING_OPERATOR, SessionStatus.HUMAN_ACTIVE}
         if getattr(session, "status", None) not in operator_statuses:
@@ -218,6 +220,13 @@ class TelegramBridgeService:
         if not claimed_by:
             return
         await self._track_operator_event(event_type="operator_closed", session=session, claimed_by=claimed_by)
+        topic_id = getattr(session, "telegram_topic_id", None)
+        if topic_id is not None:
+            await self._close_session_from_topic(
+                session.session_id,
+                topic_id,
+                closing_text="⏱ Диалог автоматически закрыт по неактивности (48 часов).",
+            )
 
     @property
     def enabled(self) -> bool:
@@ -363,14 +372,21 @@ class TelegramBridgeService:
             text=f"👤 {text}",
         )
 
-    async def close_topic(self, session_id: str) -> None:
-        session = await self.session_store.get(session_id)
-        if session is None or session.telegram_topic_id is None or not self.enabled:
+    async def close_topic(self, session_id: str, topic_id: Optional[int] = None) -> None:
+        # topic_id опционален — 2026-08-29, для эвикции по TTL: к моменту вызова сессия уже
+        # удалена из store (evict_stale отработал раньше), обычный self.session_store.get()
+        # вернул бы None и молча ничего не закрыл бы. Явно переданный topic_id обходит это.
+        if topic_id is None:
+            session = await self.session_store.get(session_id)
+            if session is None or session.telegram_topic_id is None:
+                return
+            topic_id = session.telegram_topic_id
+        if not self.enabled:
             return
         await self._call(
             "closeForumTopic",
             chat_id=self.group_chat_id,
-            message_thread_id=session.telegram_topic_id,
+            message_thread_id=topic_id,
         )
 
     async def notify_client_left(self, session_id: str) -> None:
@@ -546,10 +562,14 @@ class TelegramBridgeService:
         }
         await self.ws_manager.send_to_client(session.session_id, payload)
 
-    async def _close_session_from_topic(self, session_id: str, thread_id: int) -> None:
+    async def _close_session_from_topic(
+        self, session_id: str, thread_id: int, *, closing_text: str = "✅ Диалог завершён."
+    ) -> None:
         """Завершает диалог по команде оператора из темы (/done и т.д.) — переиспользует
         тот же путь закрытия, что и веб-панель оператора (disconnect_operator), плюс
-        закрывает саму тему."""
+        закрывает саму тему. closing_text переопределяется для автозакрытия по TTL
+        (close_evicted_operator_session) — отдельная пометка, чтобы оператор не путал
+        автозакрытие по неактивности с реальным завершением диалога."""
 
         session = await self.session_store.get(session_id)
         if session is not None and session.telegram_claimed_by:
@@ -562,9 +582,11 @@ class TelegramBridgeService:
             "sendMessage",
             chat_id=self.group_chat_id,
             message_thread_id=thread_id,
-            text="✅ Диалог завершён.",
+            text=closing_text,
         )
-        await self.close_topic(session_id)
+        # topic_id передаём явно (не полагаемся на self.session_store.get внутри close_topic) —
+        # при вызове из эвикции сессии в сторе уже нет, только этим путём тема реально закроется.
+        await self.close_topic(session_id, topic_id=thread_id)
 
     async def _process_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:

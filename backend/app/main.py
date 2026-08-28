@@ -46,12 +46,13 @@ async def _run_session_eviction_loop(
         try:
             await asyncio.sleep(interval_seconds)
             evicted_sessions = await session_store.evict_stale(ttl_seconds, operator_ttl_seconds)
-            # Код-ревью 2026-08-27: без этого сессии, брошенные оператором без /done, тихо
-            # эвиктятся по TTL и никогда не получают operator_closed — see
-            # TelegramBridgeService.track_session_evicted.
+            # Код-ревью 2026-08-27, докручено 2026-08-29: без этого сессии, брошенные
+            # оператором без /done, тихо эвиктятся по TTL, никогда не получают
+            # operator_closed, а их тема в Telegram виснет открытой навсегда — see
+            # TelegramBridgeService.close_evicted_operator_session.
             if telegram_bridge_service is not None:
                 for session in evicted_sessions:
-                    await telegram_bridge_service.track_session_evicted(session)
+                    await telegram_bridge_service.close_evicted_operator_session(session)
             if snapshot_file is not None:
                 await session_store.snapshot_to(
                     snapshot_file,

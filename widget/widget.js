@@ -16,6 +16,12 @@
   };
   const MIN_TYPING_VISIBLE_MS = 450;
   const SEND_TIMEOUT_MS = 30000;
+  // Реконнект вебсокета живого чата (2026-08-29) — большинство обрывов (редеплой сервера,
+  // моргнувшая сеть) не значат, что оператор реально завершил диалог: настоящее завершение
+  // приходит отдельным сообщением operator_left и само переключает статус ДО закрытия сокета
+  // (см. connectWS) — так что на кнопку "close" тут попадают только настоящие обрывы связи.
+  const WS_RECONNECT_MAX_ATTEMPTS = 4;
+  const WS_RECONNECT_BASE_DELAY_MS = 1000;
 
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
@@ -1150,6 +1156,8 @@
         companyId: "",
         sessionId: "",
         ws: null,
+        wsReconnectAttempts: 0,
+        wsReconnectTimer: null,
         typingNode: null,
         typingStartedAt: 0,
         voiceEnabled: false,
@@ -1899,6 +1907,7 @@
     }
 
     async startNew() {
+      clearTimeout(this.state.wsReconnectTimer);
       if (this.state.ws) { this.state.ws.close(); this.state.ws = null; }
       this.clearLocalSession();
       this.el.messages.innerHTML = "";
@@ -1913,6 +1922,7 @@
     }
 
     markUnavailable(err) {
+      clearTimeout(this.state.wsReconnectTimer);
       this.clearLocalSession();
       if (this.state.ws) { this.state.ws.close(); this.state.ws = null; }
       this.el.messages.innerHTML = "";
@@ -1931,10 +1941,14 @@
     connectWS() {
       if (!this.state.sessionId || !this.state.companyId) return;
       if (this.state.ws && this.state.ws.readyState <= 1) return;
+      clearTimeout(this.state.wsReconnectTimer);
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const url = new URL(proto + "//" + new URL(API_BASE).host + "/ws/chat/" + this.state.sessionId);
       url.searchParams.set("company_id", this.state.companyId);
       this.state.ws = new WebSocket(url.toString());
+      this.state.ws.addEventListener("open", () => {
+        this.state.wsReconnectAttempts = 0; // успешно связались — счётчик обнуляем
+      });
       this.state.ws.addEventListener("message", (e) => {
         try {
           const d = JSON.parse(e.data);
@@ -1943,8 +1957,22 @@
           else if (d.type === "message" && d.role === "operator") { this.setStatus(STATUS.HUMAN_ACTIVE); this.addMsg("operator", d.text); }
         } catch (_) {}
       });
-      this.state.ws.addEventListener("close", () => {
-        if (this.state.status === STATUS.HUMAN_ACTIVE) this.setStatus(STATUS.CLOSED);
+      this.state.ws.addEventListener("close", (event) => {
+        if (this.state.status !== STATUS.HUMAN_ACTIVE) return;
+        // Сервер шлёт эти коды явно, когда сессии реально больше нет — не обрыв, а
+        // осознанный отказ (routes/ws.py: 4404 сессия не найдена, 4003 company_id не
+        // совпадает). Ретраить тут нечего, сразу как раньше.
+        const isFatal = event && (event.code === 4404 || event.code === 4003);
+        if (!isFatal && this.state.wsReconnectAttempts < WS_RECONNECT_MAX_ATTEMPTS) {
+          const attempt = this.state.wsReconnectAttempts;
+          this.state.wsReconnectAttempts = attempt + 1;
+          const delay = WS_RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt); // 1с, 2с, 4с, 8с
+          this.state.wsReconnectTimer = setTimeout(() => {
+            if (this.state.status === STATUS.HUMAN_ACTIVE) this.connectWS();
+          }, delay);
+          return;
+        }
+        this.setStatus(STATUS.CLOSED);
       });
     }
 

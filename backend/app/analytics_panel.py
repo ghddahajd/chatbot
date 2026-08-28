@@ -227,11 +227,53 @@ def render_analytics_panel() -> str:
     /* ── лента нераспознанных вопросов ── */
     .feed-item { padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
     .feed-item:last-child { border-bottom: 0; }
-    .feed-text { font-size: 13.5px; font-weight: 600; }
+    .feed-text { font-size: 13.5px; font-weight: 600; overflow-wrap: break-word; }
     .feed-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
 
     .loading, .error { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 14px; }
     .error { color: #b3261e; }
+
+    /* ── вкладки (2026-08-29, TSK-05) ── */
+    .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+    .tab-btn {
+      font: inherit; font-size: 14px; font-weight: 700; padding: 10px 18px; border: none;
+      background: transparent; color: var(--text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--accent-deep); }
+    .tab-btn:hover { color: var(--text); }
+
+    /* ── вкладка "Чаты" ── */
+    .chat-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .filter-btn {
+      font: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); cursor: pointer;
+    }
+    .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .filter-btn:hover:not(.active) { background: var(--border-soft); }
+
+    .chat-row { padding: 14px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+    .chat-row:last-child { border-bottom: 0; }
+    .chat-row:hover { background: var(--border-soft); }
+    .chat-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+    .chat-id { font-size: 12px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .chat-badge {
+      font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+      background: var(--border-soft); color: var(--text-secondary);
+    }
+    .chat-badge.operator { background: #fdf0e5; color: #a65a1f; }
+    .chat-badge.lead { background: #eaf4e0; color: var(--accent-deep); }
+    .chat-time { font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
+    .chat-preview { font-size: 13.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .chat-transcript { padding: 4px 4px 16px; border-bottom: 1px solid var(--border-soft); }
+    .chat-transcript .loading { padding: 20px; }
+    .t-msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; margin-bottom: 8px; font-size: 13.5px; line-height: 1.4; }
+    .t-msg-role { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .6; margin-bottom: 2px; }
+    .t-msg.user { background: var(--border-soft); margin-right: auto; }
+    .t-msg.assistant { background: var(--card); border: 1px solid var(--border); margin-right: auto; }
+    .t-msg.operator { background: var(--accent-soft); margin-left: auto; }
+    .t-msg.system { background: transparent; border: 1px dashed var(--border); color: var(--text-muted); margin: 0 auto 8px; text-align: center; max-width: 90%; }
   </style>
 </head>
 <body>
@@ -259,8 +301,25 @@ def render_analytics_panel() -> str:
       </div>
     </header>
 
+    <div class="tabs">
+      <button type="button" class="tab-btn active" id="tabDashboardBtn">Дашборд</button>
+      <button type="button" class="tab-btn" id="tabChatsBtn">Чаты</button>
+    </div>
+
     <div id="content">
       <div class="loading">Загрузка…</div>
+    </div>
+
+    <div id="chatsContent" style="display:none">
+      <div class="chat-filters">
+        <button type="button" class="filter-btn active" data-scope="all">Все</button>
+        <button type="button" class="filter-btn" data-scope="bot_only">Только бот</button>
+        <button type="button" class="filter-btn" data-scope="operator">С оператором</button>
+        <button type="button" class="filter-btn" data-scope="lead">Успешные лиды</button>
+      </div>
+      <div class="card" id="chatsList">
+        <div class="loading">Загрузка…</div>
+      </div>
     </div>
   </main>
 
@@ -494,6 +553,45 @@ def render_analytics_panel() -> str:
       `;
     }
 
+    const INTENT_LABELS = {
+      ok: "Обычный ответ", price_question: "Цена", price_question_no_service: "Цена (без услуги)",
+      list_services: "Список услуг", small_talk: "Смолток", off_topic: "Офтоп",
+      off_topic_body_redirect: "Офтоп (про тело)", operator_requested: "Просьба оператора",
+      booking_request: "Запись", contact_provided: "Контакт получен", lead_request: "Лид",
+      cosmetic_concern: "Косметический вопрос", medical_advice: "Мед. вопрос",
+      regulated_advice: "Регулируемый мед. вопрос", unknown_service: "Неизвестная услуга",
+      similar_services_found: "Похожие услуги", contact_link: "Ссылка/контакт",
+      location_mismatch: "Несовпадение города", unsupported_city: "Город не обслуживаем",
+      service_mention: "Упоминание услуги", service_explanation: "Объяснение услуги",
+      duration_question: "Вопрос про сроки", faq_question: "Частый вопрос", quick_faq: "Быстрый ответ (FAQ)",
+      objection_handled: "Возражение", objection_backoff: "Возражение (повтор)",
+      complaint: "Жалоба", self_harm_crisis: "Кризис (самоповреждение)", out_of_scope: "Вне зоны ответственности",
+      unknown: "Неизвестно",
+    };
+
+    function renderIntentBreakdown(items) {
+      if (!items.length) {
+        return `<div class="card"><h2>Разбивка по темам</h2><p class="card-hint">За период</p><div class="empty-state">Пока нет данных</div></div>`;
+      }
+      const max = Math.max(...items.map((i) => i.count));
+      const rows = items.map((item, i) => `
+        <div class="service-row">
+          <div class="service-name" title="${escapeHtml(item.reason)}">${escapeHtml(INTENT_LABELS[item.reason] || item.reason)}</div>
+          <div class="service-bar-track">
+            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%; background:${seriesColors[i % seriesColors.length]}"></div>
+          </div>
+          <div class="service-count">${fmt(item.count)}</div>
+        </div>
+      `).join("");
+      return `
+        <div class="card">
+          <h2>Разбивка по темам</h2>
+          <p class="card-hint">О чём чаще всего спрашивают</p>
+          ${rows}
+        </div>
+      `;
+    }
+
     function renderUnansweredTrend(trend) {
       const max = Math.max(1, ...trend.map((d) => d.count));
       const bars = trend.map((d) => {
@@ -562,6 +660,34 @@ def render_analytics_panel() -> str:
       `;
     }
 
+    function truncate(text, maxLen) {
+      return text.length > maxLen ? text.slice(0, maxLen).trimEnd() + "…" : text;
+    }
+
+    function renderTopQuestions(title, hint, items) {
+      // Группировка по точному тексту (см. top_unanswered_questions/top_answered_questions в
+      // analytics.py) — разные формулировки одного вопроса считаются отдельно, это осознанное
+      // упрощение первой версии, не баг.
+      if (!items.length) {
+        return `<div class="card"><h2>${escapeHtml(title)}</h2><p class="card-hint">${escapeHtml(hint)}</p><div class="empty-state">Пока нет данных</div></div>`;
+      }
+      // Живой баг (2026-08-29): реальное сообщение из смоук-теста оказалось на 3000+ символов
+      // спама ("аааа…") — без обрезки такая строка разносила вёрстку карточки целиком.
+      const rows = items.map((item) => `
+        <div class="feed-item">
+          <div class="feed-text">${escapeHtml(truncate(item.message, 160))}</div>
+          <div class="feed-meta">${fmt(item.count)} раз${item.count === 1 ? "" : "а"}</div>
+        </div>
+      `).join("");
+      return `
+        <div class="card">
+          <h2>${escapeHtml(title)}</h2>
+          <p class="card-hint">${escapeHtml(hint)}</p>
+          ${rows}
+        </div>
+      `;
+    }
+
     function renderUnanswered(items) {
       if (!items.length) {
         return `<div class="card"><h2>Нераспознанные вопросы</h2><p class="card-hint">Последние ${items.length}</p><div class="empty-state">Ничего нет — база знаний покрывает все вопросы</div></div>`;
@@ -579,6 +705,98 @@ def render_analytics_panel() -> str:
           ${rows}
         </div>
       `;
+    }
+
+    let currentChatScope = "all";
+    const chatTranscriptCache = {};
+
+    async function fetchChats(companyId, scope) {
+      const params = new URLSearchParams();
+      if (companyId) params.set("company_id", companyId);
+      params.set("scope", scope);
+      const res = await fetch(`/api/analytics/chats?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    async function fetchChatDetail(sessionId) {
+      const res = await fetch(`/api/analytics/chats/${encodeURIComponent(sessionId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function chatBadges(item) {
+      const badges = [];
+      if (item.operator_requested) badges.push('<span class="chat-badge operator">Оператор</span>');
+      if (item.lead_requested) badges.push('<span class="chat-badge lead">Лид</span>');
+      return badges.join("");
+    }
+
+    function renderTranscriptMessages(messages) {
+      if (!messages.length) return '<div class="empty-state">Сообщений нет</div>';
+      return messages.map((m) => `
+        <div class="t-msg ${escapeHtml(m.role)}">
+          <div class="t-msg-role">${escapeHtml(m.role)}</div>
+          <div>${escapeHtml(m.text)}</div>
+        </div>
+      `).join("");
+    }
+
+    async function toggleChatTranscript(sessionId) {
+      const box = document.getElementById(`transcript-${sessionId}`);
+      if (!box) return;
+      const isOpen = box.style.display === "block";
+      box.style.display = isOpen ? "none" : "block";
+      if (isOpen || box.dataset.loaded === "1") return;
+      box.innerHTML = '<div class="loading">Загрузка…</div>';
+      try {
+        const detail = chatTranscriptCache[sessionId] || await fetchChatDetail(sessionId);
+        chatTranscriptCache[sessionId] = detail;
+        box.innerHTML = renderTranscriptMessages(detail.messages);
+        box.dataset.loaded = "1";
+      } catch (error) {
+        box.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderChatRow(item) {
+      const time = (item.updated_at || "").replace("T", " ").slice(0, 16);
+      return `
+        <div>
+          <div class="chat-row" data-session-id="${escapeHtml(item.session_id)}">
+            <div class="chat-row-top">
+              <span class="chat-id">${escapeHtml(item.session_id.slice(0, 8))}</span>
+              ${chatBadges(item)}
+              <span class="chat-time">${escapeHtml(time)}</span>
+            </div>
+            <div class="chat-preview">${escapeHtml(item.last_message || "—")}</div>
+          </div>
+          <div class="chat-transcript" id="transcript-${escapeHtml(item.session_id)}" style="display:none"></div>
+        </div>
+      `;
+    }
+
+    async function loadChats() {
+      const list = document.getElementById("chatsList");
+      const companyId = document.getElementById("companySelect").value;
+      list.innerHTML = '<div class="loading">Загрузка…</div>';
+      try {
+        const data = await fetchChats(companyId, currentChatScope);
+        list.innerHTML = data.conversations.length
+          ? data.conversations.map(renderChatRow).join("")
+          : '<div class="empty-state">Диалогов не найдено</div>';
+      } catch (error) {
+        list.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function switchTab(tab) {
+      const isDashboard = tab === "dashboard";
+      document.getElementById("tabDashboardBtn").classList.toggle("active", isDashboard);
+      document.getElementById("tabChatsBtn").classList.toggle("active", !isDashboard);
+      document.getElementById("content").style.display = isDashboard ? "" : "none";
+      document.getElementById("chatsContent").style.display = isDashboard ? "none" : "";
+      if (!isDashboard) loadChats();
     }
 
     async function load() {
@@ -603,6 +821,11 @@ def render_analytics_panel() -> str:
             ${renderActivityByHour(data.activity_by_hour)}
             ${renderActivityByWeekday(data.activity_by_weekday)}
           </div>
+          ${renderIntentBreakdown(data.intent_breakdown)}
+          <div class="grid-2">
+            ${renderTopQuestions("Топ непонятых вопросов", "По частоте точного текста", data.top_unanswered_questions)}
+            ${renderTopQuestions("Топ частых вопросов", "По частоте точного текста", data.top_answered_questions)}
+          </div>
           <!-- Тренд нераспознанных вопросов сознательно скрыт с публичной страницы
                (2026-08-27) — данные остаются в /api/analytics/dashboard (unanswered_trend),
                чтобы проверять вручную, не показывая возможную регрессию базы знаний всем,
@@ -614,8 +837,27 @@ def render_analytics_panel() -> str:
       }
     }
 
-    document.getElementById("companySelect").addEventListener("change", load);
+    document.getElementById("companySelect").addEventListener("change", () => {
+      load();
+      if (document.getElementById("chatsContent").style.display !== "none") loadChats();
+    });
     document.getElementById("daysSelect").addEventListener("change", load);
+
+    document.getElementById("tabDashboardBtn").addEventListener("click", () => switchTab("dashboard"));
+    document.getElementById("tabChatsBtn").addEventListener("click", () => switchTab("chats"));
+    document.querySelectorAll(".filter-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentChatScope = btn.dataset.scope;
+        loadChats();
+      });
+    });
+    document.getElementById("chatsList").addEventListener("click", (event) => {
+      const row = event.target.closest(".chat-row");
+      if (row) toggleChatTranscript(row.dataset.sessionId);
+    });
+
     load();
   </script>
 </body>

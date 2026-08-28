@@ -172,6 +172,7 @@ async def lifespan(app: FastAPI):
         leads_file=settings.leads_file,
         rollup_file=settings.analytics_rollup_file,
         leads_archive_file=settings.leads_archive_file,
+        conversations_archive_file=settings.conversations_archive_file,
     )
     app.state.llm_client = build_llm_client(
         provider=settings.llm_provider,

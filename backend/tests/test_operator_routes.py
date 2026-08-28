@@ -148,6 +148,53 @@ def test_analytics_dashboard_requires_token(test_client) -> None:
     assert response.status_code == 403
 
 
+def test_analytics_chats_requires_token(test_client) -> None:
+    response = test_client.get("/api/analytics/chats")
+    assert response.status_code == 403
+
+
+def test_analytics_chats_lists_live_session_and_supports_scope_filter(test_client) -> None:
+    """Вкладка "Чаты" (TSK-05): живая сессия появляется в списке сразу, без ожидания
+    архивации, и фильтры отсекают лишнее."""
+
+    bot_only = _send_message(test_client, "привет")
+    operator_payload = _request_operator_handoff(test_client)
+
+    all_response = test_client.get("/api/analytics/chats?company_id=rosh_demo", headers=OPERATOR_HEADERS)
+    assert all_response.status_code == 200
+    all_ids = {item["session_id"] for item in all_response.json()["conversations"]}
+    assert bot_only["session_id"] in all_ids
+    assert operator_payload["session_id"] in all_ids
+
+    operator_scope = test_client.get(
+        "/api/analytics/chats?company_id=rosh_demo&scope=operator", headers=OPERATOR_HEADERS
+    )
+    operator_ids = {item["session_id"] for item in operator_scope.json()["conversations"]}
+    assert operator_payload["session_id"] in operator_ids
+    assert bot_only["session_id"] not in operator_ids
+
+    bot_only_scope = test_client.get(
+        "/api/analytics/chats?company_id=rosh_demo&scope=bot_only", headers=OPERATOR_HEADERS
+    )
+    bot_only_ids = {item["session_id"] for item in bot_only_scope.json()["conversations"]}
+    assert bot_only["session_id"] in bot_only_ids
+    assert operator_payload["session_id"] not in bot_only_ids
+
+
+def test_analytics_chat_detail_returns_full_transcript_and_404s_for_unknown(test_client) -> None:
+    payload = _send_message(test_client, "привет, сколько стоит?")
+    session_id = payload["session_id"]
+
+    response = test_client.get(f"/api/analytics/chats/{session_id}", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["source"] == "live"
+    assert detail["messages"][0]["text"] == "привет, сколько стоит?"
+
+    missing = test_client.get("/api/analytics/chats/does-not-exist", headers=OPERATOR_HEADERS)
+    assert missing.status_code == 404
+
+
 def test_analytics_page_redirects_to_login_when_unauthenticated(test_client) -> None:
     """2026-08-27: раньше без токена /analytics отдавал голый 403, теперь уводит на форму
     логина — токену больше не обязательно светиться в URL."""
@@ -225,7 +272,8 @@ def test_analytics_dashboard_resolves_service_name_and_shape(test_client) -> Non
     assert response.status_code == 200
     assert set(result.keys()) == {
         "company_id", "days", "summary", "operators", "leads_by_month", "leads_by_reason", "top_services",
-        "funnel", "unanswered_trend", "activity_by_hour", "activity_by_weekday",
+        "funnel", "unanswered_trend", "intent_breakdown", "top_unanswered_questions",
+        "top_answered_questions", "activity_by_hour", "activity_by_weekday",
         "queue_wait", "period_comparison",
     }
     assert result["summary"]["leads"]["total"] >= 1

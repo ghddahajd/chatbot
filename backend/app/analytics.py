@@ -69,6 +69,7 @@ class AnalyticsService:
         leads_file: Path,
         rollup_file: Optional[Path] = None,
         leads_archive_file: Optional[Path] = None,
+        conversations_archive_file: Optional[Path] = None,
     ) -> None:
         self.analytics_file = analytics_file
         self.leads_file = leads_file
@@ -79,6 +80,10 @@ class AnalyticsService:
         # из "горячего" файла (см. archive_old_leads в leads.py), но не удалённые.
         self.rollup_file = rollup_file
         self.leads_archive_file = leads_archive_file
+        # 2026-08-29: полная переписка сессий, уже эвиктнутых из памяти — см.
+        # sessions.archive_session. list_conversations/get_conversation читают отсюда то,
+        # чего уже нет в live session_store (вкладка "Чаты" смотрит и туда, и сюда разом).
+        self.conversations_archive_file = conversations_archive_file
 
     def _all_leads(self) -> list[dict[str, Any]]:
         """Горячий файл + архив вместе — иначе любой лидовый агрегат (по месяцам, по услуге,
@@ -173,6 +178,19 @@ class AnalyticsService:
                 event_type="operator_requested",
                 message=message,
                 metadata=metadata,
+            )
+        if policy_result.reason in {PolicyReason.OBJECTION_HANDLED, PolicyReason.OBJECTION_BACKOFF}:
+            # 2026-08-29: только инструментация — до сих пор конкретная ТЕМА возражения
+            # (price/hesitation/competitor/guarantee/pain_fear) нигде не логировалась долговечно,
+            # только общий policy_reason (см. message_answered) и счётчик в памяти сессии
+            # (session.objection_response_counts, пропадает вместе с TTL). Отчёт "топ возражений
+            # по теме" пока не строим — данных с этим полем ещё нет, копим с сегодня.
+            await self.track_event(
+                company_id=company_id,
+                session_id=session_id,
+                event_type="objection_raised",
+                message=message,
+                metadata={**metadata, "objection_topic": policy_result.safe_context.get("objection_topic")},
             )
 
     def summary(
@@ -363,6 +381,125 @@ class AnalyticsService:
         counts: Counter[str] = Counter(str(lead.get("reason") or "commercial_interest") for lead in leads)
         return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
 
+    def intent_breakdown(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+        """Разбивка по категориям сообщений (smalltalk/price_question/off_topic и т.д.) — для
+        вкладки "Чаты" (TSK-05). Данные уже есть в message_answered.metadata.policy_reason
+        (см. track_answer) — только агрегация, новой инструментации не потребовалось."""
+
+        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        counts: Counter[str] = Counter()
+        for event in events:
+            if event.get("event_type") != "message_answered":
+                continue
+            reason = str((event.get("metadata") or {}).get("policy_reason") or "unknown")
+            counts[reason] += 1
+        return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
+
+    def _archived_conversations(self, company_id: Optional[str] = None) -> list[dict[str, Any]]:
+        if self.conversations_archive_file is None:
+            return []
+        return [
+            record
+            for record in read_jsonl(self.conversations_archive_file)
+            if company_id is None or record.get("company_id") == company_id
+        ]
+
+    def list_conversations(
+        self,
+        live_sessions: list[Session],
+        *,
+        company_id: Optional[str] = None,
+        scope: str = "all",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Вкладка "Чаты" (TSK-05): список диалогов — живые сессии (session_store, последние
+        24-48ч) + уже заархивированные (conversations_archive.jsonl, см. sessions.archive_session)
+        одним списком, отсортированным по свежести. scope: all | bot_only | operator | lead —
+        напрямую по уже существующим полям (operator_requested/lead_requested), новых данных
+        собирать не пришлось."""
+
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for session in live_sessions:
+            if company_id is not None and session.company_id != company_id:
+                continue
+            items.append(
+                {
+                    "session_id": session.session_id,
+                    "company_id": session.company_id,
+                    "status": session.status.value,
+                    "operator_requested": session.operator_requested,
+                    "lead_requested": session.lead_requested,
+                    "message_count": len(session.messages),
+                    "last_message": session.messages[-1].text if session.messages else "",
+                    "updated_at": session.updated_at.isoformat(),
+                    "source": "live",
+                }
+            )
+            seen_ids.add(session.session_id)
+
+        for record in self._archived_conversations(company_id=company_id):
+            session_id = str(record.get("session_id") or "")
+            if not session_id or session_id in seen_ids:
+                continue
+            messages = record.get("messages") or []
+            items.append(
+                {
+                    "session_id": session_id,
+                    "company_id": record.get("company_id"),
+                    "status": record.get("status"),
+                    "operator_requested": bool(record.get("operator_requested")),
+                    "lead_requested": bool(record.get("lead_requested")),
+                    "message_count": len(messages),
+                    "last_message": messages[-1].get("text") if messages else "",
+                    "updated_at": record.get("closed_at"),
+                    "source": "archive",
+                }
+            )
+
+        def _matches_scope(item: dict[str, Any]) -> bool:
+            if scope == "bot_only":
+                return not item["operator_requested"]
+            if scope == "operator":
+                return item["operator_requested"]
+            if scope == "lead":
+                return item["lead_requested"]
+            return True
+
+        filtered = [item for item in items if _matches_scope(item)]
+        filtered.sort(key=lambda item: item["updated_at"] or "", reverse=True)
+        return filtered[:limit]
+
+    def get_conversation(self, session_id: str, live_sessions: list[Session]) -> Optional[dict[str, Any]]:
+        """Полный транскрипт одного диалога для вкладки "Чаты" — сначала живая сессия, иначе
+        ищем в архиве (см. list_conversations)."""
+
+        for session in live_sessions:
+            if session.session_id == session_id:
+                return {
+                    "session_id": session.session_id,
+                    "company_id": session.company_id,
+                    "status": session.status.value,
+                    "operator_requested": session.operator_requested,
+                    "lead_requested": session.lead_requested,
+                    "messages": [
+                        {
+                            "role": message.role.value,
+                            "text": message.text,
+                            "kind": message.kind,
+                            "created_at": message.created_at.isoformat(),
+                        }
+                        for message in session.messages
+                    ],
+                    "source": "live",
+                }
+        for record in self._archived_conversations():
+            if record.get("session_id") == session_id:
+                record = dict(record)
+                record["source"] = "archive"
+                return record
+        return None
+
     def unanswered_trend(self, company_id: Optional[str] = None, days: int = 14) -> list[dict[str, Any]]:
         """Дневная динамика unknown_question — растёт база знаний или деградирует. Не
         подчиняется MESSAGE_RETENTION_EVENT_TYPES (хранится вечно), так что честно работает и
@@ -382,6 +519,43 @@ class AnalyticsService:
             day = (datetime.utcnow() - timedelta(days=offset)).strftime("%Y-%m-%d")
             result.append({"date": day, "count": counts.get(day, 0)})
         return result
+
+    def _top_messages_by_text(
+        self,
+        event_type: str,
+        *,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Топ-N по частоте текста сообщения — группировка по НОРМАЛИЗОВАННОМУ (lower+strip)
+        тексту, ловит буквальные повторы одного вопроса. Разные формулировки одного смысла
+        ("сколько стоит ботокс" vs "почём ботокс") НЕ объединяются — это отдельная задача
+        (кластеризация по смыслу), сознательно не делаем сейчас, см. память по TSK-05."""
+
+        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        counts: Counter[str] = Counter()
+        examples: dict[str, str] = {}
+        for event in events:
+            if event.get("event_type") != event_type:
+                continue
+            message = str(event.get("message") or "").strip()
+            if not message:
+                continue
+            key = message.lower()
+            counts[key] += 1
+            examples.setdefault(key, message)
+        return [{"message": examples[key], "count": count} for key, count in counts.most_common(limit)]
+
+    def top_unanswered_questions(
+        self, company_id: Optional[str] = None, days: Optional[int] = None, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        return self._top_messages_by_text("unknown_question", company_id=company_id, days=days, limit=limit)
+
+    def top_answered_questions(
+        self, company_id: Optional[str] = None, days: Optional[int] = None, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        return self._top_messages_by_text("message_answered", company_id=company_id, days=days, limit=limit)
 
     def _rollup_message_answered_rows(
         self, company_id: Optional[str], days: Optional[int]

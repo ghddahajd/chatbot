@@ -94,6 +94,42 @@ def _resolve_service_name(request: Request, company_id: Optional[str], service_i
     return service.name if service is not None else service_id
 
 
+@router.get("/chats")
+async def analytics_chats(
+    request: Request,
+    company_id: Optional[str] = Query(default=None),
+    scope: str = Query(default="all"),
+    limit: int = Query(default=50, ge=1, le=200),
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict:
+    """Вкладка "Чаты" (TSK-05) — список диалогов, живые + заархивированные, с фильтром по
+    исходу. scope: all | bot_only | operator | lead."""
+
+    verify_operator_token(request, x_operator_token)
+    live_sessions = await request.app.state.session_store.list_all()
+    conversations = request.app.state.analytics_service.list_conversations(
+        live_sessions,
+        company_id=company_id,
+        scope=scope,
+        limit=limit,
+    )
+    return {"conversations": conversations}
+
+
+@router.get("/chats/{session_id}")
+async def analytics_chat_detail(
+    session_id: str,
+    request: Request,
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict:
+    verify_operator_token(request, x_operator_token)
+    live_sessions = await request.app.state.session_store.list_all()
+    conversation = request.app.state.analytics_service.get_conversation(session_id, live_sessions)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
 @router.get("/dashboard")
 async def analytics_dashboard(
     request: Request,
@@ -136,6 +172,9 @@ async def analytics_dashboard(
         "top_services": top_services,
         "funnel": analytics_service.conversion_funnel(company_id=company_id, days=funnel_days),
         "unanswered_trend": analytics_service.unanswered_trend(company_id=company_id, days=min(days, 30)),
+        "intent_breakdown": analytics_service.intent_breakdown(company_id=company_id, days=days),
+        "top_unanswered_questions": analytics_service.top_unanswered_questions(company_id=company_id, days=days),
+        "top_answered_questions": analytics_service.top_answered_questions(company_id=company_id, days=days),
         "activity_by_hour": analytics_service.activity_by_hour(company_id=company_id, days=days),
         "activity_by_weekday": analytics_service.activity_by_weekday(company_id=company_id, days=days),
         "queue_wait": analytics_service.queue_wait_stats(company_id=company_id, days=days),

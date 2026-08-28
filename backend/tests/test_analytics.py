@@ -705,3 +705,271 @@ def test_period_comparison_splits_current_and_previous_equal_windows(tmp_path) -
 
     assert result["conversations"] == {"current": 1, "previous": 2}
     assert result["leads"] == {"current": 1, "previous": 1}
+
+
+def test_intent_breakdown_counts_message_answered_by_policy_reason(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    now = datetime.utcnow()
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-1",
+            "event_type": "message_answered",
+            "message": "сколько стоит?",
+            "metadata": {"policy_reason": "price_question"},
+        },
+    )
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-2",
+            "event_type": "message_answered",
+            "message": "привет",
+            "metadata": {"policy_reason": "small_talk"},
+        },
+    )
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-3",
+            "event_type": "message_answered",
+            "message": "сколько стоит ещё раз?",
+            "metadata": {"policy_reason": "price_question"},
+        },
+    )
+    # другой event_type — не должен попасть в разбивку
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-4",
+            "event_type": "unknown_question",
+            "message": "непонятный вопрос",
+            "metadata": {"policy_reason": "unknown_service"},
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    result = service.intent_breakdown()
+
+    assert result == [
+        {"reason": "price_question", "count": 2},
+        {"reason": "small_talk", "count": 1},
+    ]
+
+
+def test_list_conversations_merges_live_and_archived_and_filters_by_scope(tmp_path) -> None:
+    from app.models import Message, MessageRole, Session, SessionStatus
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    archive_file = tmp_path / "conversations_archive.jsonl"
+
+    live_bot_only = Session(
+        session_id="live-bot",
+        company_id="rosh_import_demo",
+        messages=[Message(role=MessageRole.USER, text="привет")],
+    )
+    live_operator = Session(
+        session_id="live-operator",
+        company_id="rosh_import_demo",
+        status=SessionStatus.HUMAN_ACTIVE,
+        operator_requested=True,
+        messages=[Message(role=MessageRole.USER, text="хочу оператора")],
+    )
+    append_jsonl(
+        archive_file,
+        {
+            "session_id": "archived-lead",
+            "company_id": "rosh_import_demo",
+            "status": "CLOSED",
+            "lead_requested": True,
+            "operator_requested": False,
+            "telegram_claimed_by": None,
+            "created_at": datetime.utcnow().isoformat(),
+            "closed_at": datetime.utcnow().isoformat(),
+            "messages": [{"role": "user", "text": "запишите меня", "kind": None, "created_at": datetime.utcnow().isoformat()}],
+        },
+    )
+
+    service = AnalyticsService(
+        analytics_file=analytics_file,
+        leads_file=tmp_path / "leads.jsonl",
+        conversations_archive_file=archive_file,
+    )
+
+    all_items = service.list_conversations([live_bot_only, live_operator])
+    assert {item["session_id"] for item in all_items} == {"live-bot", "live-operator", "archived-lead"}
+
+    bot_only = service.list_conversations([live_bot_only, live_operator], scope="bot_only")
+    assert {item["session_id"] for item in bot_only} == {"live-bot", "archived-lead"}
+
+    operator_only = service.list_conversations([live_bot_only, live_operator], scope="operator")
+    assert {item["session_id"] for item in operator_only} == {"live-operator"}
+
+    lead_only = service.list_conversations([live_bot_only, live_operator], scope="lead")
+    assert {item["session_id"] for item in lead_only} == {"archived-lead"}
+
+
+def test_get_conversation_returns_live_session_then_falls_back_to_archive(tmp_path) -> None:
+    from app.models import Message, MessageRole, Session
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    archive_file = tmp_path / "conversations_archive.jsonl"
+    live_session = Session(
+        session_id="live-1",
+        company_id="rosh_import_demo",
+        messages=[Message(role=MessageRole.USER, text="привет")],
+    )
+    append_jsonl(
+        archive_file,
+        {
+            "session_id": "archived-1",
+            "company_id": "rosh_import_demo",
+            "status": "CLOSED",
+            "lead_requested": False,
+            "operator_requested": False,
+            "telegram_claimed_by": None,
+            "created_at": datetime.utcnow().isoformat(),
+            "closed_at": datetime.utcnow().isoformat(),
+            "messages": [{"role": "user", "text": "старый вопрос", "kind": None, "created_at": datetime.utcnow().isoformat()}],
+        },
+    )
+    service = AnalyticsService(
+        analytics_file=analytics_file,
+        leads_file=tmp_path / "leads.jsonl",
+        conversations_archive_file=archive_file,
+    )
+
+    live_result = service.get_conversation("live-1", [live_session])
+    assert live_result["source"] == "live"
+    assert live_result["messages"][0]["text"] == "привет"
+
+    archived_result = service.get_conversation("archived-1", [live_session])
+    assert archived_result["source"] == "archive"
+    assert archived_result["messages"][0]["text"] == "старый вопрос"
+
+    assert service.get_conversation("does-not-exist", [live_session]) is None
+
+
+def test_track_policy_result_records_objection_raised_with_topic(tmp_path) -> None:
+    """2026-08-29: инструментация под будущий отчёт "топ возражений по теме" — раньше
+    конкретная тема (price/hesitation/competitor/...) нигде долговечно не логировалась."""
+
+    import anyio
+
+    from app.models import PolicyAction, PolicyReason, PolicyResult
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+
+    policy_result = PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.OBJECTION_HANDLED,
+        safe_context={"objection_topic": "price"},
+    )
+
+    anyio.run(
+        lambda: service.track_policy_result(
+            company_id="rosh_import_demo",
+            session_id="s-1",
+            message="это дорого",
+            policy_result=policy_result,
+        )
+    )
+
+    events = [e for e in read_jsonl(analytics_file) if e["event_type"] == "objection_raised"]
+    assert len(events) == 1
+    assert events[0]["metadata"]["objection_topic"] == "price"
+    assert events[0]["message"] == "это дорого"
+
+
+def test_track_policy_result_skips_objection_raised_for_non_objection_reasons(tmp_path) -> None:
+    import anyio
+
+    from app.models import PolicyAction, PolicyReason, PolicyResult
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+
+    policy_result = PolicyResult(action=PolicyAction.ANSWER, reason=PolicyReason.OK, safe_context={})
+
+    anyio.run(
+        lambda: service.track_policy_result(
+            company_id="rosh_import_demo",
+            session_id="s-1",
+            message="привет",
+            policy_result=policy_result,
+        )
+    )
+
+    events = [e for e in read_jsonl(analytics_file) if e["event_type"] == "objection_raised"]
+    assert events == []
+
+
+def test_top_unanswered_questions_groups_by_normalized_text(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    now = datetime.utcnow()
+
+    def _unknown(message: str) -> dict:
+        return {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-1",
+            "event_type": "unknown_question",
+            "message": message,
+            "metadata": {},
+        }
+
+    append_jsonl(analytics_file, _unknown("Сколько стоит ботокс?"))
+    append_jsonl(analytics_file, _unknown("сколько стоит ботокс?"))  # тот же вопрос, регистр
+    append_jsonl(analytics_file, _unknown("  Сколько стоит ботокс?  "))  # пробелы
+    append_jsonl(analytics_file, _unknown("А делаете ли скидки?"))
+    # message_answered — не должен попасть в топ непонятых
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-1",
+            "event_type": "message_answered",
+            "message": "привет",
+            "metadata": {},
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    result = service.top_unanswered_questions()
+
+    assert result == [
+        {"message": "Сколько стоит ботокс?", "count": 3},
+        {"message": "А делаете ли скидки?", "count": 1},
+    ]
+
+
+def test_top_answered_questions_uses_message_answered_events(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    now = datetime.utcnow()
+    for _ in range(2):
+        append_jsonl(
+            analytics_file,
+            {
+                "timestamp": now.isoformat(),
+                "company_id": "rosh_import_demo",
+                "session_id": "s-1",
+                "event_type": "message_answered",
+                "message": "какие есть услуги",
+                "metadata": {},
+            },
+        )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    result = service.top_answered_questions()
+
+    assert result == [{"message": "какие есть услуги", "count": 2}]

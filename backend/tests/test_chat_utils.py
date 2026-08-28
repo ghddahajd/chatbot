@@ -8,6 +8,7 @@ from app.routes.chat_utils import (
     CONSULTATION_RISK_SAFE,
     _company_overview_classification,
     _contextual_frame_classification,
+    _contextual_service_classification,
     _doctor_info_classification,
     _doctor_uncertainty_classification,
     _objection_classification,
@@ -102,6 +103,37 @@ def test_context_frame_resolves_fact_followup() -> None:
     assert result == {"intent": "service_mention", "service_id": "botulinotherapy", "confidence": 0.9}
 
 
+def test_context_frame_does_not_override_confident_list_services() -> None:
+    """Живой баг (2026-08-28): "Какие услуги у вас есть и сколько стоят?" после разговора про
+    ботокс (активный fact_question-фрейм на ботулинотерапии) — "сколько стоЯт" нечётко
+    совпадало с "сколько стоИт" из PRICE_KEYWORDS почти так же хорошо, как настоящий короткий
+    ценовой follow-up, из-за чего честный вопрос про весь каталог подменялся ценой услуги из
+    фрейма вместо каталога. Тот же класс бага, что и в _contextual_service_classification, но
+    отдельный, независимый code path."""
+
+    session = Session(
+        company_id="rosh_import_demo",
+        message_count=3,
+        active_frame=ContextFrame(
+            frame_type="fact_question",
+            entity_type="service",
+            entity_id="botulinoterapiya_9d5734af",
+            entity_label="Ботулинотерапия",
+            slots={"topic": "ботулинотерапия"},
+            expires_at_turn=6,
+        ),
+    )
+    local_result = {"intent": "list_services", "service_id": None, "confidence": 0.9}
+
+    result = _contextual_frame_classification(
+        "Какие услуги у вас есть и сколько стоят?",
+        session,
+        local_result,
+    )
+
+    assert result == local_result
+
+
 def test_variant_list_question_does_not_match_substring_inside_word() -> None:
     assert not is_variant_list_question("биорезонансная диагностика есть?")
     assert is_variant_list_question("какие зоны есть?")
@@ -169,6 +201,47 @@ def test_company_overview_classification_matches_common_phrasings() -> None:
 def test_company_overview_classification_does_not_match_unrelated_messages() -> None:
     assert _company_overview_classification("расскажи про биоревитализацию") is None
     assert _company_overview_classification("сколько стоит консультация") is None
+
+
+def test_contextual_service_classification_does_not_override_confident_list_services() -> None:
+    """Живой баг (2026-08-28): "Какие услуги у вас есть и сколько стоят?" после разговора про
+    ботокс — "сколько стоЯт" (мн. число) нечётко совпадало с "сколько стоИт" из PRICE_KEYWORDS
+    почти так же хорошо, как настоящий короткий ценовой follow-up, из-за чего честный вопрос
+    про весь каталог подменялся ценой последней обсуждённой услуги."""
+
+    session = Session(company_id="rosh_import_demo", last_service_id="botulinoterapiya_9d5734af")
+    local_result = {"intent": "list_services", "service_id": None, "confidence": 0.9}
+
+    result = _contextual_service_classification(
+        "Какие услуги у вас есть и сколько стоят?",
+        session,
+        SimpleNamespace(),
+        local_result,
+    )
+
+    assert result == local_result
+
+
+def test_contextual_service_classification_still_handles_short_price_followup() -> None:
+    """Легитимный сценарий, ради которого функция и существует, не должен сломаться —
+    короткий "а сколько это стоит?" без переклассификации локальным классификатором в
+    list_services по-прежнему привязывается к последней обсуждённой услуге."""
+
+    session = Session(company_id="rosh_import_demo", last_service_id="botulinoterapiya_9d5734af")
+    local_result = {"intent": "service_mention", "service_id": None, "confidence": 0.0}
+
+    result = _contextual_service_classification(
+        "а сколько стоит?",
+        session,
+        SimpleNamespace(),
+        local_result,
+    )
+
+    assert result == {
+        "intent": "price_question",
+        "service_id": "botulinoterapiya_9d5734af",
+        "confidence": 0.9,
+    }
 
 
 def test_doctor_uncertainty_classification_matches_script_phrasing() -> None:

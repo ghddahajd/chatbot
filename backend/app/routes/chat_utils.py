@@ -271,6 +271,17 @@ def _contextual_service_classification(
     if local_service_id and local_service_id != service_id:
         return local_result
 
+    # Живой баг (2026-08-28): "Какие услуги у вас есть и сколько стоят?" после разговора про
+    # ботокс — "сколько стоЯт" (мн. число) нечётко совпадает с "сколько стоИт" из PRICE_KEYWORDS
+    # почти так же хорошо, как настоящий короткий ценовой follow-up ("а сколько это стоит?").
+    # В итоге честный вопрос про весь каталог подменялся ценой последней обсуждённой услуги.
+    # Локальный классификатор для ГОЛОГО сообщения (без контекста сессии) для такого вопроса
+    # и так уже уверенно говорит list_services — легитимный короткий follow-up так никогда не
+    # классифицируется (там нет самого перечисления "услуги"), так что это безопасный сигнал
+    # не давать контекстной привязке к прошлой услуге его перебивать.
+    if local_result.get("intent") == "list_services":
+        return local_result
+
     normalized_message = normalize_text(message)
     if fuzzy_contains(normalized_message, PRICE_KEYWORDS) or normalized_message in {"а сколько", "сколько", "почем", "почём"}:
         return {"intent": "price_question", "service_id": service_id, "confidence": 0.9}
@@ -461,6 +472,15 @@ def _contextual_frame_classification(
             return local_result
 
     if frame.frame_type in {"service_interest", "fact_question"} and frame.entity_id:
+        if local_intent == "list_services":
+            # Живой баг (2026-08-28): "Какие услуги у вас есть и сколько стоят?" после
+            # разговора про конкретную услугу (тут — активный fact_question-фрейм) — "сколько
+            # стоЯт" (мн. число) нечётко совпадало с "сколько стоИт" из PRICE_KEYWORDS ниже
+            # почти так же хорошо, как настоящий короткий ценовой follow-up ("а сколько
+            # стоит?"), из-за чего честный вопрос про весь каталог подменялся ценой услуги из
+            # фрейма. Тот же фикс, что и в _contextual_service_classification — тут отдельный,
+            # независимый code path с тем же самым fuzzy_contains(PRICE_KEYWORDS) ниже.
+            return local_result
         if local_intent == "booking_request":
             return {"intent": "booking_request", "service_id": frame.entity_id, "confidence": 0.9}
         frame_variant = frame.slots.get("variant") if isinstance(frame.slots.get("variant"), dict) else None

@@ -22,6 +22,7 @@ from ..policy.constants import (
     BOT_IDENTITY_SIGNAL_KEYWORDS,
     BOT_IDENTITY_WHO_ARE_YOU_PHRASES,
     CLARIFY_SHORT_MESSAGES,
+    COMPANY_OVERVIEW_KEYWORDS,
     COMPETITOR_CONTEXT_TOKENS,
     COMPETITOR_PRICE_NUMBER_PATTERN,
     COMPETITOR_PRICE_TOKEN,
@@ -611,6 +612,25 @@ def _doctor_info_classification(message: str) -> dict[str, object] | None:
     }
 
 
+def _company_overview_classification(message: str) -> dict[str, object] | None:
+    """Живой баг (смоук-тест, 2026-08-28): "расскажи о клинике" уходило в off_topic —
+    у фиксированного списка категорий классификатора (см. INTENT_CLASSIFICATION_PROMPT)
+    нет варианта "общий вопрос о компании", и модель выбирала ближайшее по остаточному
+    принципу. Тот же детерминированный паттерн, что и _doctor_info_classification —
+    перехватываем до LLM-классификатора, _clinic_info_result уже умеет отвечать по
+    context_topic."""
+
+    normalized_message = normalize_text(message)
+    if not contains_keyword(normalized_message, COMPANY_OVERVIEW_KEYWORDS):
+        return None
+    return {
+        "intent": "clinic_info",
+        "service_id": None,
+        "confidence": 0.88,
+        "context_topic": "overview",
+    }
+
+
 def _looks_like_unknown_service_question(message: str) -> bool:
     normalized_message = normalize_text(message)
     return any(
@@ -664,6 +684,9 @@ async def resolve_classification(
     doctor_info_result = _doctor_info_classification(message)
     if doctor_info_result is not None:
         return doctor_info_result
+    company_overview_result = _company_overview_classification(message)
+    if company_overview_result is not None:
+        return company_overview_result
     clarify_result = _clarify_without_model(message)
     if clarify_result is not None:
         return clarify_result

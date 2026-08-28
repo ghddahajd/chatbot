@@ -29,6 +29,7 @@ from .constants import (
     AMBULANCE_ACTION_KEYWORDS,
     AMBULANCE_SUBJECT_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
+    COMPANY_OVERVIEW_KEYWORDS,
     DEFAULT_SENSITIVE_TOPIC_KEYWORDS,
     DMS_FACT_KEYWORDS,
     DOCTOR_INFO_KEYWORDS,
@@ -1386,6 +1387,27 @@ def _clinic_info_result(
                 "clinic_info_topic": "location",
             },
             quick_actions=base_quick_actions,
+        )
+
+    if context_topic == "overview" or contains_keyword(normalized_message, COMPANY_OVERVIEW_KEYWORDS):
+        message_to_user = _format_phrase(
+            knowledge_base,
+            "company_overview",
+            company_name=company.company_name,
+            company_type=_phrase(knowledge_base, "company_type") or _phrase(knowledge_base, "company_noun"),
+            city=city_prepositional(company.city),
+            working_hours=company.working_hours,
+        )
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "clinic_info_topic": "overview",
+            },
+            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
     doctor_schedule_requested = contains_keyword(normalized_message, DOCTOR_SCHEDULE_KEYWORDS)

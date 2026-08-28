@@ -550,6 +550,24 @@ def test_clinic_location_answers_without_offtopic(policy_session, resolver, mana
     assert "Ростовская набережная" in result.safe_context["message_to_user"]
 
 
+def test_company_overview_answers_without_offtopic(policy_session, resolver, managed_env) -> None:
+    """Живой баг (смоук-тест, 2026-08-28): "расскажи о клинике" уходило в off_topic — у
+    фиксированного списка категорий классификатора нет варианта "общий вопрос о компании".
+    Ответ строго из структурных полей (имя/тип/город/часы), без выдумывания содержания."""
+
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    for message in ("расскажи о клинике", "что за центр", "чем вы занимаетесь"):
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.action == PolicyAction.ANSWER, message
+        assert result.reason == PolicyReason.OK, message
+        answer = result.safe_context["message_to_user"]
+        assert "медицинский центр" in answer.lower(), message
+        assert "Часы работы" in answer, message
+        assert "off_topic" not in str(result.reason).lower(), message
+
+
 def test_clinic_hours_followup_phrasings_answer_without_offtopic(
     policy_session, resolver, managed_env
 ) -> None:

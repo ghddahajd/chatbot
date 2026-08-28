@@ -6,6 +6,7 @@ import pytest
 
 from app.routes.chat_utils import (
     CONSULTATION_RISK_SAFE,
+    _company_overview_classification,
     _contextual_frame_classification,
     _doctor_info_classification,
     _doctor_uncertainty_classification,
@@ -143,6 +144,31 @@ def test_doctor_info_classification_matches_show_doctors_without_kto() -> None:
 
 def test_doctor_info_classification_still_requires_a_trigger_word() -> None:
     assert _doctor_info_classification("врач хороший") is None
+
+
+def test_company_overview_classification_matches_common_phrasings() -> None:
+    """Живой баг (смоук-тест, 2026-08-28): "расскажи о клинике" классифицировалось как
+    off_topic — у фиксированного списка категорий классификатора нет варианта "общий вопрос
+    о компании". Тот же детерминированный паттерн, что и doctor_info."""
+
+    assert _company_overview_classification("расскажи о клинике") == {
+        "intent": "clinic_info",
+        "service_id": None,
+        "confidence": 0.88,
+        "context_topic": "overview",
+    }
+    for message in [
+        "расскажите про клинику",
+        "что за центр",
+        "о вашей клинике",
+        "чем вы занимаетесь",
+    ]:
+        assert _company_overview_classification(message) is not None, message
+
+
+def test_company_overview_classification_does_not_match_unrelated_messages() -> None:
+    assert _company_overview_classification("расскажи про биоревитализацию") is None
+    assert _company_overview_classification("сколько стоит консультация") is None
 
 
 def test_doctor_uncertainty_classification_matches_script_phrasing() -> None:

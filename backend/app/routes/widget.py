@@ -68,4 +68,5 @@ async def bootstrap_widget(
         features=resolver.widget_features(company.company_id),
         widget_config=resolver.widget_config(company.company_id),
         greeting=greeting,
+        quick_faq=knowledge_base.quick_faq,
     )

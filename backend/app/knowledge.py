@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, Service
+from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, QuickFaqItem, Service
 
 
 logger = logging.getLogger(__name__)
@@ -572,6 +572,7 @@ class KnowledgeBase:
         domain_profile: Optional[dict[str, object]] = None,
         config_payload: Optional[dict[str, object]] = None,
         article_service_map: Optional[dict[str, ArticleServiceMapEntry]] = None,
+        quick_faq: Optional[list[QuickFaqItem]] = None,
     ) -> None:
         self.company = company
         self.services = services
@@ -581,6 +582,8 @@ class KnowledgeBase:
         self.domain_profile = domain_profile or _default_domain_profile()
         self.config_payload = config_payload or {}
         self.article_service_map = article_service_map or {}
+        self.quick_faq = quick_faq or []
+        self._quick_faq_by_id = {item.id: item for item in self.quick_faq}
 
         self._services_by_id = {service.id: service for service in services}
         self._prices_by_service_id = {price.service_id: price for price in prices}
@@ -610,6 +613,7 @@ class KnowledgeBase:
         config_payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
         config_payload = config_payload or {}
         article_service_map = cls._load_article_service_map(data_dir)
+        quick_faq = cls._load_quick_faq(data_dir)
         domain_profile = _domain_profile_from_payload(company_payload)
         return cls(
             company=company,
@@ -619,7 +623,36 @@ class KnowledgeBase:
             domain_profile=domain_profile,
             config_payload=config_payload if isinstance(config_payload, dict) else {},
             article_service_map=article_service_map,
+            quick_faq=quick_faq,
         )
+
+    @staticmethod
+    def _load_quick_faq(data_dir: Path) -> list[QuickFaqItem]:
+        """Готовые вопрос-ответ для второго экрана "Частые вопросы" в виджете (2026-08-28) —
+        опциональный файл, не у каждого клиента есть. Битую/неполную запись пропускаем, а не
+        роняем загрузку всей базы знаний целиком из-за одного плохого пункта."""
+
+        faq_path = data_dir / "faq_quick_answers.json"
+        if not faq_path.exists():
+            return []
+
+        try:
+            raw_items = json.loads(faq_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("faq_quick_answers.json invalid JSON, ignoring path=%s", faq_path)
+            return []
+        if not isinstance(raw_items, list):
+            return []
+
+        items: list[QuickFaqItem] = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            try:
+                items.append(QuickFaqItem.model_validate(raw_item))
+            except Exception:
+                logger.warning("faq_quick_answers.json entry invalid, skipping: %r", raw_item)
+        return items
 
     @staticmethod
     def _load_article_service_map(data_dir: Path) -> dict[str, ArticleServiceMapEntry]:
@@ -662,6 +695,11 @@ class KnowledgeBase:
         if not service_id:
             return None
         return self._prices_by_service_id.get(service_id)
+
+    def find_quick_faq_by_id(self, faq_id: Optional[str]) -> Optional[QuickFaqItem]:
+        if not faq_id:
+            return None
+        return self._quick_faq_by_id.get(faq_id)
 
     def search_service(self, query: str) -> Optional[Service]:
         normalized_query = normalize_text(query)

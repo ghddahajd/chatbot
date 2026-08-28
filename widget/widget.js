@@ -604,6 +604,51 @@
         margin-top: 2px;
       }
 
+      /* ── FAQ (второй экран "Частые вопросы") ── */
+      .faq-back-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .faq-back-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        flex-shrink: 0;
+        color: var(--text);
+        font: inherit;
+        padding: 0;
+        transition: border-color .15s, background .15s;
+      }
+      .faq-back-btn:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+      .faq-back-btn svg { width: 14px; height: 14px; }
+      .faq-back-title { font-size: 13.5px; font-weight: 700; color: var(--text); }
+      .faq-list { display: flex; flex-direction: column; gap: 8px; }
+      .faq-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-align: left;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 12px 13px;
+        cursor: pointer;
+        font: inherit;
+        transition: border-color .15s, transform .12s;
+      }
+      .faq-row:hover { border-color: var(--accent-border); transform: translateY(-1px); }
+      .faq-row:disabled { opacity: .6; cursor: default; transform: none; }
+      .faq-row-text { flex: 1; font-size: 13px; line-height: 1.4; color: var(--text); font-weight: 600; }
+      .faq-row-arrow { flex-shrink: 0; width: 15px; height: 15px; color: var(--text-muted); }
+
       /* ── Message bubbles ── */
       .msg {
         max-width: 82%;
@@ -1279,6 +1324,7 @@
           icon: "M4 4h16v12H9l-4.2 3.5A1 1 0 0 1 3 18.7V4Z",
           icon2: "M9.6 9.2a2.4 2.4 0 1 1 3.4 2.2c-.9.5-1 1-1 1.8M12 15.4h.01",
           value: "Можно у вас сдать анализы?",
+          faq: true,
         },
         {
           title: "Позвать менеджера",
@@ -1306,13 +1352,138 @@
         `;
         btn.addEventListener("click", () => {
           if (this.el.inp.disabled) return;
-          this.el.inp.value = c.value;
-          this.el.inp.focus();
+          if (c.faq) {
+            this.showFaqList(d);
+            return;
+          }
+          this.sendText(c.value);
         });
         grid.appendChild(btn);
       }
       d.appendChild(grid);
       this.el.messages.appendChild(d);
+    }
+
+    showFaqList(welcomeEl) {
+      const grid = welcomeEl.querySelector(".welcome-grid");
+      const text = welcomeEl.querySelector(".welcome-text");
+      if (grid) grid.style.display = "none";
+      if (text) text.style.display = "none";
+
+      let faqView = welcomeEl.querySelector(".faq-view");
+      if (!faqView) {
+        faqView = document.createElement("div");
+        faqView.className = "faq-view";
+
+        const backRow = document.createElement("div");
+        backRow.className = "faq-back-row";
+        const backBtn = document.createElement("button");
+        backBtn.type = "button";
+        backBtn.className = "faq-back-btn";
+        backBtn.setAttribute("aria-label", "Назад");
+        backBtn.innerHTML =
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>';
+        backBtn.addEventListener("click", () => this.hideFaqList(welcomeEl));
+        const backTitle = document.createElement("div");
+        backTitle.className = "faq-back-title";
+        backTitle.textContent = "Частые вопросы";
+        backRow.appendChild(backBtn);
+        backRow.appendChild(backTitle);
+        faqView.appendChild(backRow);
+
+        const list = document.createElement("div");
+        list.className = "faq-list";
+        const faqItems = this.state.quickFaq || [];
+        if (!faqItems.length) {
+          const empty = document.createElement("div");
+          empty.className = "faq-row-text";
+          empty.style.color = "var(--text-muted)";
+          empty.style.fontWeight = "500";
+          empty.style.padding = "4px 2px";
+          empty.textContent = "Пока нет готовых вопросов — напишите свой в поле ниже.";
+          list.appendChild(empty);
+        }
+        for (const item of faqItems) {
+          const row = document.createElement("button");
+          row.type = "button";
+          row.className = "faq-row";
+          const rowText = document.createElement("div");
+          rowText.className = "faq-row-text";
+          rowText.textContent = item.question;
+          row.appendChild(rowText);
+          row.insertAdjacentHTML(
+            "beforeend",
+            '<svg class="faq-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>'
+          );
+          row.addEventListener("click", () => this.sendFaqAnswer(item, list));
+          list.appendChild(row);
+        }
+        faqView.appendChild(list);
+        welcomeEl.appendChild(faqView);
+      }
+      faqView.style.display = "";
+    }
+
+    hideFaqList(welcomeEl) {
+      const grid = welcomeEl.querySelector(".welcome-grid");
+      const text = welcomeEl.querySelector(".welcome-text");
+      const faqView = welcomeEl.querySelector(".faq-view");
+      if (faqView) faqView.style.display = "none";
+      if (grid) grid.style.display = "";
+      if (text) text.style.display = "";
+    }
+
+    async sendFaqAnswer(item, listEl) {
+      if (this.state.sending || !this.state.companyId) return;
+      if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
+
+      this.acceptConsent();
+      // Список отключаем на время запроса — двойной клик не должен задвоить вопрос в истории.
+      listEl.querySelectorAll(".faq-row").forEach(r => { r.disabled = true; });
+      // addMsg сам убирает .welcome (тот же clearGreeting, что и у остальных 3 плиток) —
+      // сразу видно свой вопрос, как и при обычной отправке, не дожидаясь ответа сервера.
+      this.addMsg("user", item.question);
+
+      this.state.sending = true;
+      this.showTyping();
+      await nextFrame();
+
+      const timeoutController = new AbortController();
+      const timeoutId = window.setTimeout(() => timeoutController.abort(), SEND_TIMEOUT_MS);
+      try {
+        const res = await fetch(API_BASE + "/api/chat/faq-answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: this.state.sessionId || "",
+            company_id: this.state.companyId,
+            faq_id: item.id,
+          }),
+          signal: timeoutController.signal,
+        });
+        if (!res.ok) throw new Error("request failed");
+        const data = await res.json();
+        await this.hideTyping();
+
+        if (data.session_id) {
+          this.state.sessionId = data.session_id;
+          window.localStorage.setItem(this.storageKey(), data.session_id);
+        }
+        this.setStatus(data.status);
+        if (data.answer) this.addMsg("assistant", data.answer);
+      } catch (err) {
+        await this.hideTyping();
+        const isTimeout = err && err.name === "AbortError";
+        this.addMsg(
+          "system",
+          isTimeout
+            ? "Сервер отвечает дольше обычного. Попробуйте отправить сообщение ещё раз через минуту."
+            : "Не удалось отправить. Попробуйте ещё раз."
+        );
+      } finally {
+        window.clearTimeout(timeoutId);
+        this.state.sending = false;
+      }
     }
 
     clearGreeting() {
@@ -1333,6 +1504,7 @@
         this.applyConfig(data.widget_config || {});
         this.setupConsent(typeof data.privacy_policy_url === "string" ? data.privacy_policy_url.trim() : "");
         this.state.greetingText = typeof data.greeting === "string" ? data.greeting.trim() : "";
+        this.state.quickFaq = Array.isArray(data.quick_faq) ? data.quick_faq : [];
         const voiceFeatureEnabled = Boolean(data.features && data.features.voice_input !== false);
         this.state.voiceEnabled = voiceFeatureEnabled && this.setupVoiceInput();
         await this.restoreSession();

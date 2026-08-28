@@ -218,6 +218,22 @@ class ChatMessageRequest(BaseModel):
     message: str = Field(max_length=4000)
 
 
+class QuickFaqItem(BaseModel):
+    """Готовый вопрос-ответ для второго экрана "Частые вопросы" в виджете (2026-08-28) —
+    ответ приходит с сервера дословно, без похода в LLM, id используется для выбора, не
+    текст (клиент не может подменить ответ, подсунув произвольный текст вопроса)."""
+
+    id: str
+    question: str
+    answer: str
+
+
+class FaqAnswerRequest(BaseModel):
+    session_id: str
+    company_id: str
+    faq_id: str = Field(min_length=1, max_length=100)
+
+
 class QuickAction(BaseModel):
     label: str
     type: str
@@ -243,6 +259,7 @@ class WidgetBootstrapResponse(BaseModel):
     features: dict[str, bool] = Field(default_factory=dict)
     widget_config: dict[str, Any] = Field(default_factory=dict)
     greeting: str = ""
+    quick_faq: list[QuickFaqItem] = Field(default_factory=list)
 
 
 class SessionPublicResponse(BaseModel):

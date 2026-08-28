@@ -7,13 +7,51 @@ import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import NamedTuple, Optional
 from pathlib import Path
 
 from .models import ContextFrame, Message, MessageRole, OperatorSessionSummary, Session, SessionStatus
+from .utils.jsonl import append_jsonl
 
 
 logger = logging.getLogger(__name__)
+
+
+class SnapshotResult(NamedTuple):
+    kept_count: int
+    dropped: list[Session]
+
+
+def archive_session(archive_file: Path, session: Session) -> None:
+    """Пишет полную переписку сессии (все роли — клиент/бот/оператор) в архив ОДИН раз,
+    целым диалогом — вызывается из цикла эвикции (main.py), для КАЖДОЙ эвиктнутой сессии,
+    не только операторских (в отличие от close_evicted_operator_session в telegram_bridge.py,
+    который занимается закрытием темы в Telegram, а не архивом текста). Раньше живая часть
+    эскалированных к оператору диалогов не архивировалась нигде, кроме памяти (пропадает
+    вместе с TTL) и самого Telegram — эта функция закрывает именно этот пробел."""
+
+    append_jsonl(
+        archive_file,
+        {
+            "session_id": session.session_id,
+            "company_id": session.company_id,
+            "status": session.status.value,
+            "lead_requested": session.lead_requested,
+            "operator_requested": session.operator_requested,
+            "telegram_claimed_by": session.telegram_claimed_by,
+            "created_at": session.created_at.isoformat(),
+            "closed_at": session.updated_at.isoformat(),
+            "messages": [
+                {
+                    "role": message.role.value,
+                    "text": message.text,
+                    "kind": message.kind,
+                    "created_at": message.created_at.isoformat(),
+                }
+                for message in session.messages
+            ],
+        },
+    )
 
 
 class SessionStore:
@@ -106,7 +144,7 @@ class SessionStore:
         *,
         ttl_seconds: Optional[int] = None,
         operator_ttl_seconds: Optional[int] = None,
-    ) -> int:
+    ) -> SnapshotResult:
         cutoff = None
         if ttl_seconds is not None:
             cutoff = datetime.utcnow() - timedelta(seconds=ttl_seconds)
@@ -128,14 +166,31 @@ class SessionStore:
             return active_cutoff is None or session.updated_at >= active_cutoff
 
         async with self._lock:
-            sessions = [session for session in self._sessions.values() if _keep(session)]
-            payload = [session.model_dump(mode="json") for session in sessions]
+            kept = [session for session in self._sessions.values() if _keep(session)]
+            # Живой баг (ручное тестирование пользователем, 2026-08-29): снапшот молча
+            # выбрасывает CLOSED-сессии (см. _keep выше) на КАЖДОМ вызове — не только на
+            # финальном shutdown, но и на каждом тике цикла эвикции. Сессия, закрытая
+            # оператором секунду назад, ещё не устарела для evict_stale (значит archive_session
+            # для неё ещё не вызывался), но уже выброшена отсюда — рестарт/деплой в этот
+            # момент терял её насовсем, архиватор её вообще не видел. Возвращаем эти сессии,
+            # чтобы вызывающая сторона (main.py) успела архивировать их здесь же.
+            dropped = [session for session in self._sessions.values() if not _keep(session)]
+            # Живой баг (ручное тестирование пользователем, 2026-08-29): dropped-сессии САМИ
+            # ПО СЕБЕ не удалялись из памяти — раз архивированная CLOSED-сессия снова
+            # попадала бы в dropped на КАЖДОМ следующем снапшоте (пока не дойдёт обычный
+            # 24ч TTL и evict_stale её не заберёт), давая дубли в архиве. Раз уже решили не
+            # включать в снапшот (и вызывающая сторона архивирует прямо сейчас) — удаляем
+            # сразу же, как и evict_stale делает для своих находок.
+            for session in dropped:
+                del self._sessions[session.session_id]
+                self._session_locks.pop(session.session_id, None)
+            payload = [session.model_dump(mode="json") for session in kept]
 
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(path.suffix + ".tmp")
         temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         temp_path.replace(path)
-        return len(payload)
+        return SnapshotResult(kept_count=len(payload), dropped=dropped)
 
     async def restore_from(self, path: Path) -> int:
         if not path.exists():

@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     leads_retention_days: int = 90
     leads_archive_interval_seconds: int = 86400
     leads_archive_enabled: bool = True
+    # 2026-08-29: полная переписка сессии (все роли — клиент/бот/оператор) пишется в архив
+    # РОВНО ОДИН РАЗ, в момент, когда сессия проходит через эвикцию (evict_stale) — не
+    # построчно налету. До этого живая часть эскалированных к оператору диалогов не
+    # архивировалась нигде, кроме памяти (пропадает через TTL) и самого Telegram. Тот же
+    # PII-вопрос, что и у leads.jsonl (152-ФЗ) — включено по умолчанию по прямому решению
+    # пользователя ("лучше писать чем не писать"), редактировать/маскировать содержимое
+    # можно позже без потери уже накопленной истории.
+    conversations_archive_enabled: bool = True
     # analytics.jsonl пишет message_answered на КАЖДЫЙ ход диалога (см. track_answer в
     # analytics.py) — в отличие от leads это чистый debug-хвост без структурного PII,
     # поэтому старые записи не архивируем, а удаляем, сохранив только дневные счётчики
@@ -106,6 +114,9 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
     leads_archive_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads_archive.jsonl")
+    conversations_archive_file: Path = Field(
+        default_factory=lambda: BASE_DIR / "logs" / "conversations_archive.jsonl"
+    )
     analytics_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "analytics.jsonl")
     analytics_rollup_file: Path = Field(
         default_factory=lambda: BASE_DIR / "logs" / "analytics_daily_rollup.jsonl"

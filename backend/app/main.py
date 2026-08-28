@@ -25,7 +25,7 @@ from .policy import analyze_message
 from .rate_limit import RateLimiter
 from .services.rag_search import rag_corpus_status
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
-from .sessions import SessionStore
+from .sessions import SessionStore, archive_session
 from .telegram_bridge import TelegramBridgeService
 from .ws_manager import ConnectionManager
 
@@ -41,11 +41,29 @@ async def _run_session_eviction_loop(
     interval_seconds: int,
     snapshot_file: Path | None,
     telegram_bridge_service: TelegramBridgeService | None = None,
+    conversations_archive_file: Path | None = None,
 ) -> None:
+    def _archive_sessions(sessions: list) -> None:
+        if conversations_archive_file is None:
+            return
+        for session in sessions:
+            try:
+                archive_session(conversations_archive_file, session)
+            except Exception as error:
+                logger.warning(
+                    "conversation archive failed session_id=%s error=%s",
+                    session.session_id,
+                    type(error).__name__,
+                )
+
     while True:
         try:
             await asyncio.sleep(interval_seconds)
             evicted_sessions = await session_store.evict_stale(ttl_seconds, operator_ttl_seconds)
+            # 2026-08-29: полная переписка КАЖДОЙ эвиктнутой сессии (не только операторских) —
+            # один раз, целым диалогом, пока она не пропала из памяти навсегда. Раньше живая
+            # часть эскалированных к оператору диалогов не архивировалась нигде вообще.
+            _archive_sessions(evicted_sessions)
             # Код-ревью 2026-08-27, докручено 2026-08-29: без этого сессии, брошенные
             # оператором без /done, тихо эвиктятся по TTL, никогда не получают
             # operator_closed, а их тема в Telegram виснет открытой навсегда — see
@@ -54,11 +72,18 @@ async def _run_session_eviction_loop(
                 for session in evicted_sessions:
                     await telegram_bridge_service.close_evicted_operator_session(session)
             if snapshot_file is not None:
-                await session_store.snapshot_to(
+                snapshot_result = await session_store.snapshot_to(
                     snapshot_file,
                     ttl_seconds=ttl_seconds,
                     operator_ttl_seconds=operator_ttl_seconds,
                 )
+                # Живой баг (ручное тестирование пользователем, 2026-08-29): snapshot_to
+                # молча выбрасывает CLOSED-сессии на КАЖДОМ вызове (не только на финальном
+                # shutdown) — сессия, закрытая секунду назад, ещё не устарела для evict_stale
+                # выше (значит archive_session для неё ещё не вызывался), но уже выброшена
+                # здесь. Рестарт/деплой в этот момент терял её насовсем, минуя архиватор
+                # полностью. Архивируем именно то, что снапшот сейчас выбросил.
+                _archive_sessions(snapshot_result.dropped)
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -184,6 +209,11 @@ async def lifespan(app: FastAPI):
                 interval_seconds=settings.session_eviction_interval_seconds,
                 snapshot_file=snapshot_file,
                 telegram_bridge_service=app.state.telegram_bridge_service,
+                conversations_archive_file=(
+                    settings.conversations_archive_file
+                    if settings.conversations_archive_enabled
+                    else None
+                ),
             )
         )
     telegram_bridge_task = None
@@ -234,11 +264,24 @@ async def lifespan(app: FastAPI):
             with contextlib.suppress(asyncio.CancelledError):
                 await analytics_prune_task
         if snapshot_file is not None:
-            await app.state.session_store.snapshot_to(
+            final_snapshot_result = await app.state.session_store.snapshot_to(
                 snapshot_file,
                 ttl_seconds=settings.session_ttl_seconds,
                 operator_ttl_seconds=settings.operator_session_ttl_seconds,
             )
+            # Тот же пробел, что и в цикле эвикции (см. _run_session_eviction_loop) — тут
+            # особенно важно: это последний шанс архивировать CLOSED-сессию перед тем, как
+            # процесс реально завершится и она пропадёт насовсем.
+            if settings.conversations_archive_enabled:
+                for session in final_snapshot_result.dropped:
+                    try:
+                        archive_session(settings.conversations_archive_file, session)
+                    except Exception as error:
+                        logger.warning(
+                            "conversation archive failed session_id=%s error=%s",
+                            session.session_id,
+                            type(error).__name__,
+                        )
 
 
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)

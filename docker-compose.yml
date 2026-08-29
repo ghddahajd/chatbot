@@ -5,6 +5,11 @@ services:
       dockerfile: backend/Dockerfile
     container_name: chat-widget-backend
     restart: unless-stopped
+    # Явная гарантия вместо неявного дефолта Docker (10s) — на выключении lifespan отменяет
+    # 5 фоновых тасков (быстро) и делает финальный snapshot_to() сессий (обычно тоже быстро,
+    # но зависит от их числа на момент рестарта). 30s даёт запас, не рискуя SIGKILL посреди
+    # записи снапшота при редком всплеске активности.
+    stop_grace_period: 30s
     # bridge локально (Docker Desktop на Mac не умеет нормально host-режим), host на реальном
     # сервере — там Docker-мост по умолчанию IPv4-only, а Telegram Bot API частично заблокирован
     # по IPv4 в РФ-датацентрах, тогда как у самого хоста рабочий IPv6 (живой баг, 2026-08-25:

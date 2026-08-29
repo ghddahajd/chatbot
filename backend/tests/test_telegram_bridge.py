@@ -1354,3 +1354,106 @@ def test_claim_topic_index_increments_from_todays_claims_in_analytics_file(tmp_p
     create_calls = [c for c in FakeAsyncClient.calls if c["method"] == "createForumTopic"]
     topic_name = create_calls[0]["json"]["name"]
     assert re.match(r"^#\d{6}003 🟢 · masha$", topic_name), topic_name
+
+
+def test_health_check_disabled_when_no_token_or_group(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    service = TelegramBridgeService(
+        bot_token="",
+        group_chat_id="",
+        session_store=store,
+        ws_manager=ws_manager,
+    )
+
+    async def run() -> dict[str, Any]:
+        return await service.health_check()
+
+    result = anyio.run(run)
+
+    assert result == {
+        "enabled": False,
+        "bot_token": {"status": "skip", "detail": "нет токена/группы — Telegram-бридж отключён"},
+        "operators_group": {"status": "skip", "detail": "—"},
+    }
+    assert FakeAsyncClient.calls == []
+
+
+def test_health_check_reports_invalid_token_without_checking_group(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    FakeAsyncClient.responses["getMe"] = {"ok": False, "description": "Unauthorized"}
+    service = _service(store, ws_manager)
+
+    async def run() -> dict[str, Any]:
+        return await service.health_check()
+
+    result = anyio.run(run)
+
+    assert result["enabled"] is True
+    assert result["bot_token"] == {"status": "error", "detail": "Unauthorized"}
+    assert result["operators_group"]["status"] == "skip"
+    # _call() уже ретраит любую не-429 ошибку API (3 попытки суммарно, см. telegram_bridge.py) —
+    # это существующее, отдельно протестированное поведение, не что-то новое для health_check;
+    # значит getChatMember не вызывался вообще (единственный метод в списке звонков — getMe).
+    assert set(c["method"] for c in FakeAsyncClient.calls) == {"getMe"}
+
+
+def test_health_check_ok_when_token_valid_and_bot_still_in_group(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    FakeAsyncClient.responses["getMe"] = {"ok": True, "result": {"id": 999, "username": "rosh_bot"}}
+    FakeAsyncClient.responses["getChatMember"] = {"ok": True, "result": {"status": "administrator"}}
+    service = _service(store, ws_manager)
+
+    async def run() -> dict[str, Any]:
+        return await service.health_check()
+
+    result = anyio.run(run)
+
+    assert result == {
+        "enabled": True,
+        "bot_token": {"status": "ok", "detail": "bot username: @rosh_bot"},
+        "operators_group": {"status": "ok", "detail": "доступ есть, status=administrator"},
+    }
+    get_chat_member_calls = [c for c in FakeAsyncClient.calls if c["method"] == "getChatMember"]
+    assert get_chat_member_calls[0]["json"]["user_id"] == 999
+
+
+def test_health_check_reports_bot_kicked_from_group(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    FakeAsyncClient.responses["getMe"] = {"ok": True, "result": {"id": 999, "username": "rosh_bot"}}
+    FakeAsyncClient.responses["getChatMember"] = {"ok": True, "result": {"status": "kicked"}}
+    service = _service(store, ws_manager)
+
+    async def run() -> dict[str, Any]:
+        return await service.health_check()
+
+    result = anyio.run(run)
+
+    assert result["bot_token"]["status"] == "ok"
+    assert result["operators_group"] == {
+        "status": "error",
+        "detail": "бот больше не в группе (status=kicked)",
+    }
+
+
+def test_health_check_reports_group_lookup_failure(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    FakeAsyncClient.responses["getMe"] = {"ok": True, "result": {"id": 999, "username": "rosh_bot"}}
+    FakeAsyncClient.responses["getChatMember"] = {"ok": False, "description": "chat not found"}
+    service = _service(store, ws_manager)
+
+    async def run() -> dict[str, Any]:
+        return await service.health_check()
+
+    result = anyio.run(run)
+
+    assert result["operators_group"] == {"status": "error", "detail": "chat not found"}

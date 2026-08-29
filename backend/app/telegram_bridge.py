@@ -323,6 +323,52 @@ class TelegramBridgeService:
             )
             return data
 
+    async def health_check(self) -> dict[str, Any]:
+        """Side-effect-free проверка живости доставки — getMe + getChatMember, оба строго
+        read-only методы Bot API (в отличие от sendMessage/createForumTopic, физически не
+        могут произвести видимое сообщение ни в одном чате). Не входит в /health (см. его
+        собственный докстринг — сетевой-free by design, дёргается внешним мониторингом каждые
+        1-5 минут) — это отдельный, ручной прогон, например сразу после деплоя, чтобы не
+        узнавать о мёртвой доставке только когда реальный лид не дошёл."""
+
+        if not self.enabled:
+            return {
+                "enabled": False,
+                "bot_token": {"status": "skip", "detail": "нет токена/группы — Telegram-бридж отключён"},
+                "operators_group": {"status": "skip", "detail": "—"},
+            }
+
+        me = await self._call("getMe")
+        if not me.get("ok"):
+            return {
+                "enabled": True,
+                "bot_token": {"status": "error", "detail": str(me.get("description") or "getMe failed")},
+                "operators_group": {"status": "skip", "detail": "не проверено — токен уже недействителен"},
+            }
+
+        bot_info = me.get("result") or {}
+        member = await self._call("getChatMember", chat_id=self.group_chat_id, user_id=bot_info.get("id"))
+        if not member.get("ok"):
+            operators_group = {
+                "status": "error",
+                "detail": str(member.get("description") or "getChatMember failed"),
+            }
+        else:
+            member_status = str((member.get("result") or {}).get("status") or "")
+            if member_status in {"left", "kicked"}:
+                operators_group = {
+                    "status": "error",
+                    "detail": f"бот больше не в группе (status={member_status})",
+                }
+            else:
+                operators_group = {"status": "ok", "detail": f"доступ есть, status={member_status}"}
+
+        return {
+            "enabled": True,
+            "bot_token": {"status": "ok", "detail": f"bot username: @{bot_info.get('username')}"},
+            "operators_group": operators_group,
+        }
+
     async def post_operator_queue_card(
         self,
         *,

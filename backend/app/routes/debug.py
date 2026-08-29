@@ -396,6 +396,27 @@ async def debug_trace(
     }
 
 
+@router.get("/api/debug/telegram-check")
+async def debug_telegram_check(
+    request: Request,
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Side-effect-free проверка "жива ли доставка в Telegram" — getMe + getChatMember, оба
+    read-only Bot API методы. Ручной прогон (например сразу после деплоя), не для
+    автоматического опроса — см. TelegramBridgeService.health_check для деталей и почему это
+    не часть /health."""
+
+    verify_operator_token(request, x_operator_token)
+    bridge = getattr(request.app.state, "telegram_bridge_service", None)
+    if bridge is None:
+        return {
+            "enabled": False,
+            "bot_token": {"status": "skip", "detail": "telegram_bridge_service не сконфигурирован"},
+            "operators_group": {"status": "skip", "detail": "—"},
+        }
+    return await bridge.health_check()
+
+
 @router.post("/api/debug/rag-search")
 async def debug_rag_search(
     payload: RagSearchRequest,

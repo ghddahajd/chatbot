@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.llm.mock import MockLLMClient
-from app.models import Message, MessageRole, Session
+from app.models import DaySchedule, Message, MessageRole, Session
 from app.services.chat_service import ChatService
 
 
@@ -816,6 +816,30 @@ def test_engagement_offer_ignores_small_talk(test_client) -> None:
     assert _quick_action_labels(payload) != ["Передать администратору", "Продолжить тут"]
 
 
+def test_engagement_offer_skipped_after_hours(test_client) -> None:
+    # Живой баг (ручное тестирование, 2026-08-29): это предложение бот делает САМ, без запроса
+    # клиента — ночью нет смысла незапрошенно звать администратора, которого физически нет.
+    # Решение (пользователь): не показывать честный ночной вариант текста, а просто не
+    # предлагать вообще — бот продолжает отвечать как обычно, threshold не продвигается.
+    _close_company_all_day(test_client)
+    session_id = None
+    payload = {}
+    for message in [
+        "покажи услуги",
+        "сколько стоит Консультация косметолога",
+        "расскажи про Консультация косметолога",
+        "сколько стоит Консультация дерматолога",
+        "расскажи про Консультация дерматолога",
+    ]:
+        payload = _post_chat(test_client, message=message, session_id=session_id)
+        session_id = payload["session_id"]
+
+    assert "диалог уже длинный" not in payload["answer"]
+    assert _quick_action_labels(payload) != ["Передать администратору", "Продолжить тут"]
+    stored_session = test_client.app.state.session_store._sessions[session_id]
+    assert stored_session.engagement_offer_count == 0
+
+
 def test_engagement_offer_does_not_interrupt_booking_contact_prompt(test_client) -> None:
     session_id = None
     for message in [
@@ -958,6 +982,67 @@ def test_regulated_soft_offer_without_referral_keeps_default_buttons(test_client
         "Оставить телефон",
         "Подключить менеджера",
     ]
+
+
+def _close_company_all_day(test_client, company_id: str = "rosh_demo") -> None:
+    knowledge_base = test_client.app.state.knowledge_base_resolver.get(company_id)
+    knowledge_base.company.working_hours_schedule = {
+        "mon": None,
+        "tue": None,
+        "wed": None,
+        "thu": None,
+        "fri": None,
+        "sat": None,
+        "sun": None,
+    }
+    knowledge_base.company.timezone = "Europe/Moscow"
+
+
+def test_regulated_soft_offer_after_hours_does_not_promise_operator_now(test_client) -> None:
+    # Живой баг (ручное тестирование, 2026-08-29): раньше здесь БЕЗ проверки часов писалось
+    # "могу подключить его сейчас", а на подтверждение того же предложения (общий
+    # operator_requested-гейт в policy) честно отвечало "недоступен, нерабочее время" —
+    # предложил и тут же отказал в одном разговоре, calm-вариант (без 103).
+    _close_company_all_day(test_client)
+    payload = _post_chat(test_client, message="у меня воспаление что делать")
+
+    assert payload["action"] == "clarify"
+    assert "нерабочее время" in payload["answer"]
+    assert "сейчас" not in payload["answer"]
+    assert "подключить" not in payload["answer"].lower()
+    # "Подключить менеджера" схлопывается в "Оставить телефон" тем же общим механизмом
+    # (format_quick_actions), что и обычная кнопка "Позвать менеджера" — не второй спецкейс.
+    assert _quick_action_labels(payload) == ["Оставить телефон"]
+
+
+def test_regulated_soft_offer_after_hours_urgent_keeps_ambulance_number(test_client) -> None:
+    # 103 — реальная круглосуточная линия скорой помощи, не зависит от часов работы клиники,
+    # поэтому urgent-вариант обязан её сохранить даже ночью, в отличие от "подключить сейчас".
+    _close_company_all_day(test_client)
+    payload = _post_chat(test_client, message="у меня кровотечение после процедуры")
+
+    assert payload["action"] == "clarify"
+    assert "нерабочее время" in payload["answer"]
+    assert "103" in payload["answer"]
+    assert "подключить его сейчас" not in payload["answer"]
+    assert _quick_action_labels(payload) == ["Оставить телефон"]
+
+
+def test_regulated_soft_offer_during_business_hours_unaffected_by_hours_check(test_client) -> None:
+    # Регрессия: сам факт наличия working_hours_schedule (даже когда сейчас открыто) не должен
+    # менять дневной ответ — только реально закрытое расписание.
+    knowledge_base = test_client.app.state.knowledge_base_resolver.get("rosh_demo")
+    knowledge_base.company.working_hours_schedule = {
+        day: DaySchedule(open="00:00", close="23:59")
+        for day in ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    }
+    knowledge_base.company.timezone = "Europe/Moscow"
+    payload = _post_chat(test_client, message="у меня воспаление что делать")
+
+    # Текст сам по себе рандомизирован по 3 вариантам (seed от session_id) — проверяем не
+    # конкретную фразу, а то, что это НЕ ночной вариант, и кнопки остались обе (не схлопнулись).
+    assert "нерабочее время" not in payload["answer"]
+    assert _quick_action_labels(payload) == ["Оставить телефон", "Подключить менеджера"]
 
 
 def test_regulated_soft_contact_creates_flagged_lead(test_client, managed_env) -> None:

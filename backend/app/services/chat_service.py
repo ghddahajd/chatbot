@@ -9,6 +9,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from ..delivery import _escape_markdown, _lead_short_id
+from ..hours import is_currently_open
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
 from ..telegram_bridge import client_label_for_session
 from ..knowledge import is_consultation_only_service, normalize_text, phrasebook_value_to_text
@@ -162,6 +163,7 @@ class ChatService:
         *,
         session_store,
         session,
+        knowledge_base,
         answer: str,
         quick_actions,
     ) -> tuple[str, list[dict[str, str]] | object]:
@@ -174,6 +176,14 @@ class ChatService:
             return answer, quick_actions
         threshold = ENGAGEMENT_OFFER_THRESHOLDS[offer_count]
         if int(session.substantive_message_count or 0) < threshold:
+            return answer, quick_actions
+        # Живой баг (ручное тестирование, 2026-08-29): это проактивное предложение бот делает
+        # САМ, без запроса клиента — ночью нет смысла вызывать администратора, которого
+        # физически нет, тем более незапрошенно. Не заменяем текст на честный ночной вариант,
+        # а просто не предлагаем вообще (бот продолжает отвечать как обычно) — решение
+        # пользователя, не самая честная формулировка тут не нужна, раз без неё можно
+        # обойтись. Порог не продвигаем: тот же оффер честно предложится в рабочее время.
+        if not is_currently_open(knowledge_base.company.working_hours_schedule, knowledge_base.company.timezone):
             return answer, quick_actions
 
         offer_text = self._engagement_offer_text(offer_count)
@@ -257,20 +267,51 @@ class ChatService:
         # вызывающих путей (аудит §2026-08-22 — раньше LLM-риск-путь её не считал вообще).
         # Дефолт urgent=True в сигнатуре — страховка на случай будущего третьего вызывающего
         # пути, который забудет посчитать срочность явно, не то, на что полагаются сейчас.
-        phrase_key = "regulated_soft_offer" if urgent else "regulated_soft_offer_calm"
-        answer = self._phrase(
-            phrase_key,
-            (
-                "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
-                "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
+        #
+        # Живой баг (ручное тестирование, 2026-08-29): этот soft-offer — отдельный код-путь от
+        # "хочу поговорить с менеджером" (там уже есть after-hours хук, policy/__init__.py) —
+        # раньше здесь БЕЗ проверки часов писалось "могу подключить его сейчас", а на
+        # подтверждение (тот же общий operator_requested-гейт) честно отвечало "недоступен,
+        # нерабочее время" — предложил и тут же отказал в одном разговоре. 103 — реальная
+        # круглосуточная линия, её оставляем даже ночью для действительно срочных случаев.
+        is_open = is_currently_open(knowledge_base.company.working_hours_schedule, knowledge_base.company.timezone)
+        if not is_open:
+            phrase_key = "regulated_soft_offer_after_hours_urgent" if urgent else "regulated_soft_offer_after_hours"
+            answer = self._phrase(
+                phrase_key,
+                (
+                    "Это важный вопрос, и его лучше обсудить со специалистом. Сейчас нерабочее "
+                    "время (часы работы: {working_hours}) — если срочно, звоните нам напрямую "
+                    "или в скорую (103); если может подождать, оставьте, пожалуйста, контакт — "
+                    "свяжемся в начале рабочего дня."
+                )
+                if urgent
+                else (
+                    "Заочно тут лучше не гадать — точнее подскажет специалист. Сейчас нерабочее "
+                    "время (часы работы: {working_hours}) — оставьте, пожалуйста, контакт, и с "
+                    "вами свяжутся в начале рабочего дня."
+                ),
+                seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
             )
-            if urgent
-            else (
-                "Заочно тут лучше не гадать — это уточнит специалист. Могу передать ваш контакт "
-                "менеджеру или подключить его сейчас."
-            ),
-            seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
-        )
+            try:
+                answer = answer.format(working_hours=knowledge_base.company.working_hours)
+            except (KeyError, ValueError):
+                pass
+        else:
+            phrase_key = "regulated_soft_offer" if urgent else "regulated_soft_offer_calm"
+            answer = self._phrase(
+                phrase_key,
+                (
+                    "Это лучше обсудить со специалистом. Могу передать ваш контакт менеджеру "
+                    "или подключить его сейчас. Если вопрос срочный — позвоните нам напрямую или в скорую (103)."
+                )
+                if urgent
+                else (
+                    "Заочно тут лучше не гадать — это уточнит специалист. Могу передать ваш контакт "
+                    "менеджеру или подключить его сейчас."
+                ),
+                seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
+            )
         # Живой баг (аудит §2026-08-22, "Ниже"): "я в ПАНИКЕ", "😱😱 помогите... боюсь",
         # "боюсь идти к врачу вообще" — 16/16 проб получали одинаковый холодный процедурный
         # текст без единого элемента эмоционального отклика, "Понимаю" из шаблона сразу
@@ -1689,6 +1730,7 @@ class ChatService:
         answer, response_quick_actions = await self._apply_engagement_offer_if_due(
             session_store=session_store,
             session=session,
+            knowledge_base=knowledge_base,
             answer=answer,
             quick_actions=response_quick_actions,
         )

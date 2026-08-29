@@ -111,6 +111,12 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
     clients_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "clients")
     defaults_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "defaults")
+    # 2026-08-29 ("Настройки"-таб, TSK-06): СОЗНАТЕЛЬНО не внутри clients/<id> — docker-
+    # entrypoint.sh на каждом деплое делает rm -rf ИМЕННО на /app/data/clients/<id> целиком
+    # (см. entrypoint), прежде чем перекопировать свежее из git. Файл здесь, рядом с
+    # clients/, а не внутри неё — тот же приём, что уже используется для
+    # session_snapshot_file (тоже прямо в data/, не в clients/).
+    overrides_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "overrides")
     logs_dir: Path = Field(default_factory=lambda: BASE_DIR / "logs")
     leads_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads.jsonl")
     leads_archive_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "leads_archive.jsonl")

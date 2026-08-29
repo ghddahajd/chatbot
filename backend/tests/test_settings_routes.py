@@ -1,0 +1,131 @@
+"""GET/POST /api/settings/company — "Настройки"-таб (TSK-06, 2026-08-29). Персистентность
+через реальный docker-entrypoint.sh-стиль rm -rf уже проверена на уровне
+config_overrides.py (test_config_overrides.py) — тут проверяем HTTP-слой: auth, валидацию,
+и что сохранение реально доезжает до следующего же GET без рестарта (сброс кэша resolver'а)."""
+
+OPERATOR_HEADERS = {"x-operator-token": "demo-operator-token"}
+
+_VALID_PAYLOAD = {
+    "phone": "+7 999 000-00-00",
+    "address": "Новый адрес",
+    "telegram_url": "https://t.me/example",
+    "website_url": "https://example.com",
+    "working_hours_schedule": {
+        "mon": {"open": "09:00", "close": "20:00"},
+        "tue": {"open": "09:00", "close": "20:00"},
+        "wed": {"open": "09:00", "close": "20:00"},
+        "thu": {"open": "09:00", "close": "20:00"},
+        "fri": {"open": "09:00", "close": "20:00"},
+        "sat": None,
+        "sun": None,
+    },
+    "widget": {
+        "primary_color": "#111111",
+        "button_color": "#222222",
+        "header_title": "Новый заголовок",
+        "header_subtitle": "Новый подзаголовок",
+        "position": "bottom-left",
+        "avatar_emoji": "🩺",
+    },
+    "facts": {
+        "oms": True,
+        "dms": False,
+        "ambulance_brings": True,
+        "sells_products": False,
+        "discloses_doctor_schedule": True,
+    },
+}
+
+
+def test_get_settings_requires_operator_token(test_client) -> None:
+    response = test_client.get("/api/settings/company?company_id=rosh_demo")
+    assert response.status_code == 403
+
+
+def test_get_settings_returns_current_effective_values(test_client) -> None:
+    response = test_client.get(
+        "/api/settings/company?company_id=rosh_demo", headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "phone" in payload
+    assert "working_hours_schedule" in payload
+    assert "widget" in payload
+    assert "facts" in payload
+
+
+def test_get_settings_404_for_unknown_company(test_client) -> None:
+    response = test_client.get(
+        "/api/settings/company?company_id=does_not_exist", headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 404
+
+
+def test_post_settings_requires_operator_token(test_client) -> None:
+    response = test_client.post("/api/settings/company?company_id=rosh_demo", json=_VALID_PAYLOAD)
+    assert response.status_code == 403
+
+
+def test_post_settings_rejects_bad_time_format(test_client) -> None:
+    payload = dict(_VALID_PAYLOAD)
+    payload["working_hours_schedule"] = dict(payload["working_hours_schedule"])
+    payload["working_hours_schedule"]["mon"] = {"open": "9am", "close": "20:00"}
+    response = test_client.post(
+        "/api/settings/company?company_id=rosh_demo", json=payload, headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 422
+
+
+def test_post_settings_rejects_empty_phone(test_client) -> None:
+    payload = dict(_VALID_PAYLOAD)
+    payload["phone"] = ""
+    response = test_client.post(
+        "/api/settings/company?company_id=rosh_demo", json=payload, headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 422
+
+
+def test_post_settings_rejects_unknown_widget_position(test_client) -> None:
+    payload = dict(_VALID_PAYLOAD)
+    payload["widget"] = dict(payload["widget"])
+    payload["widget"]["position"] = "top-center"
+    response = test_client.post(
+        "/api/settings/company?company_id=rosh_demo", json=payload, headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 422
+
+
+def test_post_settings_saves_and_next_get_reflects_it_without_restart(test_client) -> None:
+    """Ключевая проверка: после сохранения СЛЕДУЮЩИЙ же GET (тот же процесс, без рестарта)
+    видит новые значения — то есть resolver.invalidate() реально сбрасывает кэш."""
+
+    post_response = test_client.post(
+        "/api/settings/company?company_id=rosh_demo", json=_VALID_PAYLOAD, headers=OPERATOR_HEADERS
+    )
+    assert post_response.status_code == 200
+
+    get_response = test_client.get(
+        "/api/settings/company?company_id=rosh_demo", headers=OPERATOR_HEADERS
+    )
+    payload = get_response.json()
+    assert payload["phone"] == "+7 999 000-00-00"
+    assert payload["address"] == "Новый адрес"
+    assert payload["working_hours_schedule"]["sat"] is None
+    assert payload["working_hours_schedule"]["mon"] == {"open": "09:00", "close": "20:00"}
+    assert payload["widget"]["header_title"] == "Новый заголовок"
+    assert payload["facts"]["oms"] is True
+
+
+def test_post_settings_change_is_visible_in_a_real_chat_reply(test_client) -> None:
+    """Не просто GET после POST — реальный разговор с ботом должен увидеть новый адрес без
+    рестарта, ровно так, как его увидит настоящий клиент. Адрес, не телефон — keyword-путь
+    для локации детерминирован и не зависит от классификации LLM (в тестах она mock)."""
+
+    test_client.post(
+        "/api/settings/company?company_id=rosh_demo", json=_VALID_PAYLOAD, headers=OPERATOR_HEADERS
+    )
+    response = test_client.post(
+        "/api/chat/message",
+        json={"company_id": "rosh_demo", "session_id": None, "message": "какой у вас адрес"},
+    )
+    assert "Новый адрес" in response.json()["answer"]

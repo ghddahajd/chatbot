@@ -99,6 +99,7 @@ def managed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.setenv("DEFAULT_COMPANY_ID", "rosh_demo")
     monkeypatch.setenv("CLIENTS_DATA_DIR", str(clients_dir))
+    monkeypatch.setenv("OVERRIDES_DIR", str(tmp_path / "overrides"))
     monkeypatch.setenv("LEADS_FILE", str(tmp_path / "leads.jsonl"))
     monkeypatch.setenv("ANALYTICS_FILE", str(tmp_path / "analytics.jsonl"))
     monkeypatch.setenv("DELIVERY_OUTBOX_FILE", str(tmp_path / "delivery_outbox.jsonl"))

@@ -17,6 +17,15 @@ def _copy_rosh_import_demo_for_chat_test(test_client, managed_env) -> None:
     if not target_dir.exists():
         shutil.copytree(source_dir, target_dir)
     test_client.app.state.knowledge_base_resolver._cache.clear()
+    # Живой баг (найден 2026-08-29 в 21:06 МСК — ровно после реального закрытия клиники):
+    # эта копия тащит НАСТОЯЩЕЕ расписание rosh_import_demo (10:00-21:00) — тесты, что
+    # проверяют quick_actions с "Позвать/Подключить менеджера", становились hastily flaky
+    # в зависимости от того, в какой момент реального времени суток их запускали (после
+    # after-hours фикса эта кнопка честно схлопывается ночью). Форсируем always-open
+    # (пустое расписание — по контракту is_currently_open) сразу после копирования, чтобы
+    # эти тесты не зависели от реальных часов на машине, где их гоняют.
+    knowledge_base = test_client.app.state.knowledge_base_resolver.get("rosh_import_demo", fallback=False)
+    knowledge_base.company.working_hours_schedule = {}
 
 
 def _quick_action_labels(payload: dict) -> list[str]:

@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from . import config_overrides
 from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, QuickFaqItem, Service
 
 
@@ -869,15 +870,26 @@ class KnowledgeBaseResolver:
         clients_data_dir: Path,
         defaults_data_dir: Optional[Path] = None,
         default_company_id: str = "rosh_demo",
+        overrides_dir: Optional[Path] = None,
     ) -> None:
         self.data_dir = data_dir
         self.clients_data_dir = clients_data_dir
         self.defaults_data_dir = defaults_data_dir
         self.default_company_id = default_company_id
+        # None (не задан) — оверрайды сознательно отключены (большинство тестов, легаси-путь),
+        # не то же самое, что "директория задана, но пока пуста" (нормальный прод-случай).
+        self.overrides_dir = overrides_dir
         self._cache: dict[str, KnowledgeBase] = {}
         self._legacy_cache: Optional[KnowledgeBase] = None
         self._domain_index: dict[str, list[str]] = {}
         self._domain_index_built = False
+
+    def invalidate(self, company_id: str) -> None:
+        """Сбрасывает кэш одного клиента — вызывается после успешного сохранения через
+        "Настройки", чтобы новые значения подхватились со следующего же запроса, без
+        рестарта контейнера."""
+
+        self._cache.pop(company_id, None)
 
     def _client_dir(self, company_id: str) -> Path:
         clean_company_id = company_id.strip()
@@ -971,6 +983,15 @@ class KnowledgeBaseResolver:
                 )
                 knowledge_base.phrasebook = self.phrasebook(target_company_id)
                 knowledge_base.domain_profile = self.domain_profile(target_company_id)
+                if self.overrides_dir is not None:
+                    override = config_overrides.load_overrides(self.overrides_dir, target_company_id)
+                    if override:
+                        config_overrides.apply_company_overrides(
+                            knowledge_base.company, override.get("company", {})
+                        )
+                        config_overrides.apply_config_payload_overrides(
+                            knowledge_base.config_payload, override
+                        )
                 self._cache[target_company_id] = knowledge_base
             return self._cache[target_company_id]
 
@@ -1013,18 +1034,34 @@ class KnowledgeBaseResolver:
         return features
 
     def widget_config(self, company_id: str) -> dict[str, object]:
-        """возвращает настройки внешнего вида виджета из optional config.yaml."""
+        """возвращает настройки внешнего вида виджета из optional config.yaml.
+
+        Живой баг (найден при пере-проверке "Настройки"-таба, 2026-08-29): этот метод читает
+        config.yaml ЗАНОВО С ДИСКА при каждом вызове (см. _client_config) — в обход кэша
+        KnowledgeBaseResolver._cache, где как раз и лежит config_payload с уже наложенным
+        оверрайдом (см. apply_config_payload_overrides в .get()). /api/widget/bootstrap
+        (реальный виджет на сайте клиента) вызывает именно этот метод — без явного мержа
+        оверрайда здесь, смена брендинга через "Настройки" была бы видна в самой админке
+        (там читается knowledge_base.config_payload напрямую), но НИКОГДА не долетала бы
+        до настоящего виджета клиента."""
 
         config = dict(DEFAULT_WIDGET_CONFIG)
         payload = self._client_config(company_id)
         raw_widget = payload.get("widget") if isinstance(payload, dict) else None
-        if not isinstance(raw_widget, dict):
-            return config
+        if isinstance(raw_widget, dict):
+            for key in config:
+                value = raw_widget.get(key)
+                if isinstance(value, str) and value.strip():
+                    config[key] = value.strip()
 
-        for key in config:
-            value = raw_widget.get(key)
-            if isinstance(value, str) and value.strip():
-                config[key] = value.strip()
+        if self.overrides_dir is not None:
+            override = config_overrides.load_overrides(self.overrides_dir, company_id)
+            widget_override = override.get("widget") if isinstance(override, dict) else None
+            if isinstance(widget_override, dict):
+                for key in config:
+                    value = widget_override.get(key)
+                    if isinstance(value, str) and value.strip():
+                        config[key] = value.strip()
 
         if config["position"] not in {"bottom-right", "bottom-left"}:
             config["position"] = DEFAULT_WIDGET_CONFIG["position"]

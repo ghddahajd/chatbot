@@ -118,3 +118,49 @@ def test_widget_config_from_client_config(test_client, managed_env) -> None:
         "position": "bottom-left",
         "avatar_emoji": "👩‍⚕️",
     }
+
+
+def test_settings_widget_override_reaches_real_widget_bootstrap(test_client) -> None:
+    """Живой баг (найден при пере-проверке "Настройки"-таба, 2026-08-29): widget_config()
+    читает config.yaml заново с диска при каждом вызове, в обход кэша, где лежит уже
+    смерженный с оверрайдом config_payload — без явного мержа оверрайда прямо в
+    widget_config() смена брендинга через "Настройки" была бы видна только в самой
+    админке (POST/GET /api/settings/company), но никогда не долетала бы до настоящего
+    виджета на сайте клиента."""
+
+    save_response = test_client.post(
+        "/api/settings/company?company_id=rosh_demo",
+        json={
+            "phone": "+7 000 000-00-00",
+            "address": None,
+            "telegram_url": None,
+            "website_url": None,
+            "working_hours_schedule": {day: None for day in
+                                       ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]},
+            "widget": {
+                "primary_color": "#111111",
+                "button_color": "#222222",
+                "header_title": "Тестовый заголовок",
+                "header_subtitle": "Тестовый подзаголовок",
+                "position": "bottom-left",
+                "avatar_emoji": "🧪",
+            },
+            "facts": {
+                "oms": False, "dms": False, "ambulance_brings": False,
+                "sells_products": False, "discloses_doctor_schedule": False,
+            },
+        },
+        headers={"x-operator-token": "demo-operator-token"},
+    )
+    assert save_response.status_code == 200
+
+    bootstrap_response = test_client.get(
+        "/api/widget/bootstrap?company_id=rosh_demo",
+        headers={"origin": "http://localhost:5500"},
+    )
+
+    assert bootstrap_response.status_code == 200
+    widget_config = bootstrap_response.json()["widget_config"]
+    assert widget_config["header_title"] == "Тестовый заголовок"
+    assert widget_config["primary_color"] == "#111111"
+    assert widget_config["position"] == "bottom-left"

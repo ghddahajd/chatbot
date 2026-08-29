@@ -21,6 +21,12 @@ backend/data/session_snapshot.json
 backend/data/clients/*
 !backend/data/clients/.gitkeep
 
+# 2026-08-29 ("Настройки"-таб, TSK-06): локальные оверрайды базовых настроек клиента
+# (app/config_overrides.py) — та же реальная клиентская информация (адрес/телефон/etc), что и
+# clients/ выше, никогда не должна коммититься в этот репозиторий.
+backend/data/overrides/*
+!backend/data/overrides/.gitkeep
+
 # 2026-08-29: реальный клон приватного rosh-client-data репо (см. reference_rosh_client_data_repo
 # в памяти) — backend/data/clients/rosh_import_demo теперь symlink сюда. Локальная git-папка,
 # не относится к этому проекту и не должна сюда коммититься.

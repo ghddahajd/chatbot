@@ -25,6 +25,7 @@ from .policy import analyze_message
 from .rate_limit import RateLimiter
 from .services.rag_search import rag_corpus_status
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
+from .routes import settings as settings_routes
 from .sessions import SessionStore, archive_session
 from .telegram_bridge import TelegramBridgeService
 from .ws_manager import ConnectionManager
@@ -135,6 +136,7 @@ async def lifespan(app: FastAPI):
         clients_data_dir=settings.clients_data_dir,
         defaults_data_dir=settings.defaults_data_dir,
         default_company_id=settings.default_company_id,
+        overrides_dir=settings.overrides_dir,
     )
     app.state.knowledge_base_resolver.build_domain_index()
     app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
@@ -304,6 +306,7 @@ app.include_router(delivery.router)
 app.include_router(operator.router)
 app.include_router(widget.router)
 app.include_router(ws.router)
+app.include_router(settings_routes.router)
 
 app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), name="static")
 

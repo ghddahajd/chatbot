@@ -290,6 +290,30 @@ def render_analytics_panel(
     .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .filter-btn:hover:not(.active) { background: var(--border-soft); }
 
+    /* ── вкладка "Настройки" ── */
+    .settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; max-width: 420px; }
+    .settings-field label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+    .settings-field input[type="text"], .settings-field input[type="time"], .settings-field select {
+      font: inherit; font-size: 14px; padding: 9px 12px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+    .settings-checkbox { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; }
+    .hours-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+    .hours-day-label { width: 32px; font-weight: 700; font-size: 13px; color: var(--text-secondary); }
+    .hours-row input[type="time"] {
+      font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+    .hours-closed-toggle { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+    .settings-save-btn {
+      font: inherit; font-size: 14px; font-weight: 700; padding: 11px 22px; border-radius: 999px;
+      border: none; background: var(--accent-deep); color: #fff; cursor: pointer;
+    }
+    .settings-save-btn:disabled { opacity: .6; cursor: default; }
+    .settings-status { margin-left: 12px; font-size: 13px; font-weight: 600; }
+    .settings-status.success { color: var(--accent-deep); }
+    .settings-status.error { color: #c0392b; }
+
     .chat-row { padding: 14px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
     .chat-row:last-child { border-bottom: 0; }
     .chat-row:hover { background: var(--border-soft); }
@@ -339,6 +363,7 @@ def render_analytics_panel(
     <div class="tabs">
       <button type="button" class="tab-btn active" id="tabDashboardBtn">Дашборд</button>
       <button type="button" class="tab-btn" id="tabChatsBtn">Чаты</button>
+      <button type="button" class="tab-btn" id="tabSettingsBtn">Настройки</button>
     </div>
 
     <div id="content">
@@ -354,6 +379,75 @@ def render_analytics_panel(
       </div>
       <div class="card" id="chatsList">
         <div class="loading">Загрузка…</div>
+      </div>
+    </div>
+
+    <div id="settingsContent" style="display:none">
+      <div class="card">
+        <h2>Часы работы</h2>
+        <p class="card-hint">Отметьте "выходной" для дней, когда клиника не работает</p>
+        <div id="hoursGrid"><div class="loading">Загрузка…</div></div>
+      </div>
+      <div class="card">
+        <h2>Контакты</h2>
+        <div class="settings-field">
+          <label for="settingsPhone">Телефон</label>
+          <input type="text" id="settingsPhone" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsAddress">Адрес</label>
+          <input type="text" id="settingsAddress" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsTelegram">Telegram</label>
+          <input type="text" id="settingsTelegram" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsWebsite">Сайт</label>
+          <input type="text" id="settingsWebsite" />
+        </div>
+      </div>
+      <div class="card">
+        <h2>Виджет</h2>
+        <div class="settings-field">
+          <label for="settingsHeaderTitle">Заголовок чата</label>
+          <input type="text" id="settingsHeaderTitle" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsHeaderSubtitle">Подсказка под заголовком</label>
+          <input type="text" id="settingsHeaderSubtitle" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsPrimaryColor">Основной цвет</label>
+          <input type="text" id="settingsPrimaryColor" placeholder="#1F7A5C" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsButtonColor">Цвет кнопки</label>
+          <input type="text" id="settingsButtonColor" placeholder="#1F7A5C" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsPosition">Расположение</label>
+          <select id="settingsPosition">
+            <option value="bottom-right">Справа снизу</option>
+            <option value="bottom-left">Слева снизу</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="settingsAvatarEmoji">Эмодзи в чате</label>
+          <input type="text" id="settingsAvatarEmoji" maxlength="4" />
+        </div>
+      </div>
+      <div class="card">
+        <h2>Факты о клинике</h2>
+        <label class="settings-checkbox"><input type="checkbox" id="factOms" /> Работаем по ОМС</label>
+        <label class="settings-checkbox"><input type="checkbox" id="factDms" /> Работаем по ДМС</label>
+        <label class="settings-checkbox"><input type="checkbox" id="factAmbulance" /> Скорая помощь привозит к нам</label>
+        <label class="settings-checkbox"><input type="checkbox" id="factSells" /> Продаём товары/косметику</label>
+        <label class="settings-checkbox"><input type="checkbox" id="factDoctorSchedule" /> Раскрываем расписание врачей</label>
+      </div>
+      <div class="card">
+        <button type="button" class="settings-save-btn" id="settingsSaveBtn">Сохранить</button>
+        <span class="settings-status" id="settingsStatus"></span>
       </div>
     </div>
   </main>
@@ -854,12 +948,153 @@ def render_analytics_panel(
     }
 
     function switchTab(tab) {
-      const isDashboard = tab === "dashboard";
-      document.getElementById("tabDashboardBtn").classList.toggle("active", isDashboard);
-      document.getElementById("tabChatsBtn").classList.toggle("active", !isDashboard);
-      document.getElementById("content").style.display = isDashboard ? "" : "none";
-      document.getElementById("chatsContent").style.display = isDashboard ? "none" : "";
-      if (!isDashboard) loadChats();
+      document.getElementById("tabDashboardBtn").classList.toggle("active", tab === "dashboard");
+      document.getElementById("tabChatsBtn").classList.toggle("active", tab === "chats");
+      document.getElementById("tabSettingsBtn").classList.toggle("active", tab === "settings");
+      document.getElementById("content").style.display = tab === "dashboard" ? "" : "none";
+      document.getElementById("chatsContent").style.display = tab === "chats" ? "" : "none";
+      document.getElementById("settingsContent").style.display = tab === "settings" ? "" : "none";
+      if (tab === "chats") loadChats();
+      if (tab === "settings") loadSettings();
+    }
+
+    const WEEKDAY_LABELS = { mon: "Пн", tue: "Вт", wed: "Ср", thu: "Чт", fri: "Пт", sat: "Сб", sun: "Вс" };
+    const WEEKDAY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+    function renderHoursGrid(schedule) {
+      return WEEKDAY_ORDER.map((day) => {
+        const entry = schedule[day];
+        const closed = entry === null || entry === undefined;
+        const open = entry ? entry.open : "10:00";
+        const close = entry ? entry.close : "20:00";
+        return `
+          <div class="hours-row" data-day="${day}">
+            <span class="hours-day-label">${WEEKDAY_LABELS[day]}</span>
+            <input type="time" class="hours-open" value="${open}" ${closed ? "disabled" : ""} />
+            <span>—</span>
+            <input type="time" class="hours-close" value="${close}" ${closed ? "disabled" : ""} />
+            <label class="hours-closed-toggle">
+              <input type="checkbox" class="hours-closed" ${closed ? "checked" : ""} /> выходной
+            </label>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function bindHoursClosedToggles() {
+      document.querySelectorAll(".hours-closed").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const row = checkbox.closest(".hours-row");
+          row.querySelector(".hours-open").disabled = checkbox.checked;
+          row.querySelector(".hours-close").disabled = checkbox.checked;
+        });
+      });
+    }
+
+    function collectHoursSchedule() {
+      const schedule = {};
+      document.querySelectorAll(".hours-row").forEach((row) => {
+        const day = row.dataset.day;
+        const closed = row.querySelector(".hours-closed").checked;
+        schedule[day] = closed
+          ? null
+          : {
+              open: row.querySelector(".hours-open").value,
+              close: row.querySelector(".hours-close").value,
+            };
+      });
+      return schedule;
+    }
+
+    function settingsCompanyId() {
+      return document.getElementById("companySelect").value || "rosh_import_demo";
+    }
+
+    async function loadSettings() {
+      const status = document.getElementById("settingsStatus");
+      status.textContent = "";
+      status.className = "settings-status";
+      try {
+        const response = await fetch(
+          `/api/settings/company?company_id=${encodeURIComponent(settingsCompanyId())}`
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        document.getElementById("hoursGrid").innerHTML = renderHoursGrid(data.working_hours_schedule);
+        bindHoursClosedToggles();
+        document.getElementById("settingsPhone").value = data.phone || "";
+        document.getElementById("settingsAddress").value = data.address || "";
+        document.getElementById("settingsTelegram").value = data.telegram_url || "";
+        document.getElementById("settingsWebsite").value = data.website_url || "";
+        document.getElementById("settingsHeaderTitle").value = data.widget.header_title || "";
+        document.getElementById("settingsHeaderSubtitle").value = data.widget.header_subtitle || "";
+        document.getElementById("settingsPrimaryColor").value = data.widget.primary_color || "";
+        document.getElementById("settingsButtonColor").value = data.widget.button_color || "";
+        document.getElementById("settingsPosition").value = data.widget.position || "bottom-right";
+        document.getElementById("settingsAvatarEmoji").value = data.widget.avatar_emoji || "";
+        document.getElementById("factOms").checked = Boolean(data.facts.oms);
+        document.getElementById("factDms").checked = Boolean(data.facts.dms);
+        document.getElementById("factAmbulance").checked = Boolean(data.facts.ambulance_brings);
+        document.getElementById("factSells").checked = Boolean(data.facts.sells_products);
+        document.getElementById("factDoctorSchedule").checked = Boolean(data.facts.discloses_doctor_schedule);
+      } catch (error) {
+        document.getElementById("hoursGrid").innerHTML = "";
+        status.textContent = `Не удалось загрузить: ${escapeHtml(error.message)}`;
+        status.className = "settings-status error";
+      }
+    }
+
+    async function saveSettings() {
+      const status = document.getElementById("settingsStatus");
+      const button = document.getElementById("settingsSaveBtn");
+      button.disabled = true;
+      status.textContent = "Сохраняю…";
+      status.className = "settings-status";
+      const payload = {
+        phone: document.getElementById("settingsPhone").value,
+        address: document.getElementById("settingsAddress").value,
+        telegram_url: document.getElementById("settingsTelegram").value,
+        website_url: document.getElementById("settingsWebsite").value,
+        working_hours_schedule: collectHoursSchedule(),
+        widget: {
+          primary_color: document.getElementById("settingsPrimaryColor").value,
+          button_color: document.getElementById("settingsButtonColor").value,
+          header_title: document.getElementById("settingsHeaderTitle").value,
+          header_subtitle: document.getElementById("settingsHeaderSubtitle").value,
+          position: document.getElementById("settingsPosition").value,
+          avatar_emoji: document.getElementById("settingsAvatarEmoji").value,
+        },
+        facts: {
+          oms: document.getElementById("factOms").checked,
+          dms: document.getElementById("factDms").checked,
+          ambulance_brings: document.getElementById("factAmbulance").checked,
+          sells_products: document.getElementById("factSells").checked,
+          discloses_doctor_schedule: document.getElementById("factDoctorSchedule").checked,
+        },
+      };
+      try {
+        const response = await fetch(
+          `/api/settings/company?company_id=${encodeURIComponent(settingsCompanyId())}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => ({}));
+          throw new Error(
+            typeof errorBody.detail === "string" ? errorBody.detail : `HTTP ${response.status}`
+          );
+        }
+        status.textContent = "Сохранено";
+        status.className = "settings-status success";
+      } catch (error) {
+        status.textContent = `Ошибка: ${escapeHtml(error.message)}`;
+        status.className = "settings-status error";
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function load() {
@@ -904,11 +1139,14 @@ def render_analytics_panel(
     document.getElementById("companySelect").addEventListener("change", () => {
       load();
       if (document.getElementById("chatsContent").style.display !== "none") loadChats();
+      if (document.getElementById("settingsContent").style.display !== "none") loadSettings();
     });
     document.getElementById("daysSelect").addEventListener("change", load);
 
     document.getElementById("tabDashboardBtn").addEventListener("click", () => switchTab("dashboard"));
     document.getElementById("tabChatsBtn").addEventListener("click", () => switchTab("chats"));
+    document.getElementById("tabSettingsBtn").addEventListener("click", () => switchTab("settings"));
+    document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
     document.querySelectorAll(".filter-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));

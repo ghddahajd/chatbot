@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import Request
 
+from ..hours import is_currently_open
 from ..knowledge import KnowledgeBase
 from ..llm import MockLLMClient
 from ..knowledge import normalize_text
@@ -89,20 +90,39 @@ def format_quick_actions(
     }
     normalized_values = {label.casefold(): value for label, value in values_by_label.items()}
 
+    # TSK-02 продолжение (2026-08-29): "Позвать менеджера" — это ~48 мест в policy/__init__.py,
+    # ни одно из них не знает про часы работы. Вместо правки каждого — единая точка форматирования
+    # уже видит company (working_hours_schedule/timezone), поэтому именно здесь ночью подменяем
+    # ЛЕЙБЛ (не value: сообщение всё так же уходит как "Хочу поговорить с менеджером", чтобы
+    # сработал честный after-hours хук в policy, а не generic contact_prompt). Не обещаем живого
+    # менеджера, когда физически некому ответить — та же кнопка "Оставить телефон", что клиент уже
+    # видит в других местах, а не третья, специально для ночи придуманная формулировка.
+    is_open = is_currently_open(company.working_hours_schedule, company.timezone)
+
     actions: list[QuickAction] = []
+    seen_labels: set[str] = set()
     for item in labels:
         if isinstance(item, dict):
             label = str(item.get("label") or "").strip()
             action_type = str(item.get("type") or "message").strip()
             value = str(item.get("value") or label).strip()
-            if label and value:
-                actions.append(QuickAction(label=label, type=action_type, value=value))
-            continue
+            if not label or not value:
+                continue
+        else:
+            label = str(item)
+            action_type, value = normalized_values.get(label.casefold(), ("message", label))
+            if action_type == "link" and not value:
+                continue
 
-        label = str(item)
-        action_type, value = normalized_values.get(label.casefold(), ("message", label))
-        if action_type == "link" and not value:
+        if not is_open and label == "Позвать менеджера":
+            label = "Оставить телефон"
+
+        # Дедуп по итоговому лейблу — не спецкейс под конкретную пару кнопок, а общая защита:
+        # если после подмены выше (или по любой другой причине) в одном ответе оказались две
+        # кнопки с одинаковой подписью, показываем только первую вместо видимого дубля.
+        if label.casefold() in seen_labels:
             continue
+        seen_labels.add(label.casefold())
         actions.append(QuickAction(label=label, type=action_type, value=value))
     return actions
 

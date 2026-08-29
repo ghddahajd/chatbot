@@ -313,6 +313,37 @@ def render_analytics_panel(
     .settings-status { margin-left: 12px; font-size: 13px; font-weight: 600; }
     .settings-status.success { color: var(--accent-deep); }
     .settings-status.error { color: #c0392b; }
+    .doctor-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .doctor-row input[type="text"] {
+      font: inherit; font-size: 14px; padding: 8px 11px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+    .doctor-row .doctor-name { flex: 1 1 180px; min-width: 140px; }
+    .doctor-row .doctor-specialty { flex: 1 1 160px; min-width: 130px; }
+    .doctor-row .doctor-schedule { flex: 1 1 180px; min-width: 150px; }
+    .doctor-remove-btn {
+      flex: 0 0 auto; font: inherit; font-size: 16px; line-height: 1; width: 32px; height: 32px;
+      border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+      color: #c0392b; cursor: pointer;
+    }
+    .doctor-remove-btn:hover { background: var(--border-soft); }
+    .doctor-add-btn {
+      font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 16px; border-radius: 999px;
+      border: 1px dashed var(--border); background: transparent; color: var(--accent-deep);
+      cursor: pointer; margin-top: 4px;
+    }
+    .doctor-add-btn:hover { background: var(--border-soft); }
+    .settings-card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .settings-card-header h2 { margin: 0; }
+    .settings-reset-btn {
+      flex: 0 0 auto; font: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 12px;
+      border-radius: 999px; border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); cursor: pointer;
+    }
+    .settings-reset-btn:hover:not(:disabled) { background: var(--border-soft); color: var(--text); }
+    .settings-reset-btn:disabled { opacity: .45; cursor: default; }
 
     .chat-row { padding: 14px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
     .chat-row:last-child { border-bottom: 0; }
@@ -384,12 +415,18 @@ def render_analytics_panel(
 
     <div id="settingsContent" style="display:none">
       <div class="card">
-        <h2>Часы работы</h2>
+        <div class="settings-card-header">
+          <h2>Часы работы</h2>
+          <button type="button" class="settings-reset-btn" data-block="hours" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
         <p class="card-hint">Отметьте "выходной" для дней, когда клиника не работает</p>
         <div id="hoursGrid"><div class="loading">Загрузка…</div></div>
       </div>
       <div class="card">
-        <h2>Контакты</h2>
+        <div class="settings-card-header">
+          <h2>Контакты</h2>
+          <button type="button" class="settings-reset-btn" data-block="contacts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
         <div class="settings-field">
           <label for="settingsPhone">Телефон</label>
           <input type="text" id="settingsPhone" />
@@ -408,7 +445,10 @@ def render_analytics_panel(
         </div>
       </div>
       <div class="card">
-        <h2>Виджет</h2>
+        <div class="settings-card-header">
+          <h2>Виджет</h2>
+          <button type="button" class="settings-reset-btn" data-block="widget" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
         <div class="settings-field">
           <label for="settingsHeaderTitle">Заголовок чата</label>
           <input type="text" id="settingsHeaderTitle" />
@@ -438,12 +478,24 @@ def render_analytics_panel(
         </div>
       </div>
       <div class="card">
-        <h2>Факты о клинике</h2>
+        <div class="settings-card-header">
+          <h2>Факты о клинике</h2>
+          <button type="button" class="settings-reset-btn" data-block="facts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
         <label class="settings-checkbox"><input type="checkbox" id="factOms" /> Работаем по ОМС</label>
         <label class="settings-checkbox"><input type="checkbox" id="factDms" /> Работаем по ДМС</label>
         <label class="settings-checkbox"><input type="checkbox" id="factAmbulance" /> Скорая помощь привозит к нам</label>
         <label class="settings-checkbox"><input type="checkbox" id="factSells" /> Продаём товары/косметику</label>
         <label class="settings-checkbox"><input type="checkbox" id="factDoctorSchedule" /> Раскрываем расписание врачей</label>
+      </div>
+      <div class="card">
+        <div class="settings-card-header">
+          <h2>Врачи</h2>
+          <button type="button" class="settings-reset-btn" data-block="doctors" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
+        <p class="card-hint">Имя обязательно, специализация и расписание — по желанию</p>
+        <div id="doctorsList"></div>
+        <button type="button" class="doctor-add-btn" id="doctorAddBtn">+ Добавить врача</button>
       </div>
       <div class="card">
         <button type="button" class="settings-save-btn" id="settingsSaveBtn">Сохранить</button>
@@ -1006,6 +1058,52 @@ def render_analytics_panel(
       return schedule;
     }
 
+    function doctorRowHtml(doctor) {
+      const name = doctor && doctor.name ? doctor.name : "";
+      const specialty = doctor && doctor.specialty ? doctor.specialty : "";
+      const schedule = doctor && doctor.schedule ? doctor.schedule : "";
+      return `
+        <div class="doctor-row">
+          <input type="text" class="doctor-name" placeholder="Имя" value="${escapeHtml(name)}" />
+          <input type="text" class="doctor-specialty" placeholder="Специализация" value="${escapeHtml(specialty)}" />
+          <input type="text" class="doctor-schedule" placeholder="Расписание" value="${escapeHtml(schedule)}" />
+          <button type="button" class="doctor-remove-btn" title="Удалить">×</button>
+        </div>
+      `;
+    }
+
+    function renderDoctorsList(doctors) {
+      return (doctors || []).map(doctorRowHtml).join("");
+    }
+
+    function addDoctorRow() {
+      const list = document.getElementById("doctorsList");
+      list.insertAdjacentHTML("beforeend", doctorRowHtml(null));
+      const rows = list.querySelectorAll(".doctor-row");
+      rows[rows.length - 1].querySelector(".doctor-name").focus();
+    }
+
+    function collectDoctors() {
+      const doctors = [];
+      document.querySelectorAll(".doctor-row").forEach((row) => {
+        const name = row.querySelector(".doctor-name").value.trim();
+        if (!name) return;
+        doctors.push({
+          name,
+          specialty: row.querySelector(".doctor-specialty").value.trim(),
+          schedule: row.querySelector(".doctor-schedule").value.trim(),
+        });
+      });
+      return doctors;
+    }
+
+    document.getElementById("doctorsList").addEventListener("click", (event) => {
+      if (event.target.classList.contains("doctor-remove-btn")) {
+        event.target.closest(".doctor-row").remove();
+      }
+    });
+    document.getElementById("doctorAddBtn").addEventListener("click", addDoctorRow);
+
     function settingsCompanyId() {
       return document.getElementById("companySelect").value || "rosh_import_demo";
     }
@@ -1037,8 +1135,10 @@ def render_analytics_panel(
         document.getElementById("factAmbulance").checked = Boolean(data.facts.ambulance_brings);
         document.getElementById("factSells").checked = Boolean(data.facts.sells_products);
         document.getElementById("factDoctorSchedule").checked = Boolean(data.facts.discloses_doctor_schedule);
+        document.getElementById("doctorsList").innerHTML = renderDoctorsList(data.doctors);
       } catch (error) {
         document.getElementById("hoursGrid").innerHTML = "";
+        document.getElementById("doctorsList").innerHTML = "";
         status.textContent = `Не удалось загрузить: ${escapeHtml(error.message)}`;
         status.className = "settings-status error";
       }
@@ -1071,6 +1171,7 @@ def render_analytics_panel(
           sells_products: document.getElementById("factSells").checked,
           discloses_doctor_schedule: document.getElementById("factDoctorSchedule").checked,
         },
+        doctors: collectDoctors(),
       };
       try {
         const response = await fetch(
@@ -1088,6 +1189,38 @@ def render_analytics_panel(
           );
         }
         status.textContent = "Сохранено";
+        status.className = "settings-status success";
+      } catch (error) {
+        status.textContent = `Ошибка: ${escapeHtml(error.message)}`;
+        status.className = "settings-status error";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function resetSettingsBlock(block, button) {
+      // Один уровень отмены на блок ("Часы работы", "Контакты" и т.д.) — откатывает
+      // ИМЕННО этот блок к состоянию перед последним сохранением (бэкап пишет
+      // save_overrides_atomic на каждое сохранение), остальные блоки не трогает, даже
+      // если их сохраняли позже. Обсуждено с пользователем 2026-08-29 — полной истории
+      // версий сознательно нет, только один шаг назад.
+      const status = document.getElementById("settingsStatus");
+      button.disabled = true;
+      status.textContent = "Отменяю…";
+      status.className = "settings-status";
+      try {
+        const response = await fetch(
+          `/api/settings/company/reset-block?company_id=${encodeURIComponent(settingsCompanyId())}&block=${encodeURIComponent(block)}`,
+          { method: "POST" }
+        );
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => ({}));
+          throw new Error(
+            typeof errorBody.detail === "string" ? errorBody.detail : `HTTP ${response.status}`
+          );
+        }
+        await loadSettings();
+        status.textContent = "Отменено";
         status.className = "settings-status success";
       } catch (error) {
         status.textContent = `Ошибка: ${escapeHtml(error.message)}`;
@@ -1147,6 +1280,9 @@ def render_analytics_panel(
     document.getElementById("tabChatsBtn").addEventListener("click", () => switchTab("chats"));
     document.getElementById("tabSettingsBtn").addEventListener("click", () => switchTab("settings"));
     document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
+    document.querySelectorAll(".settings-reset-btn").forEach((btn) => {
+      btn.addEventListener("click", () => resetSettingsBlock(btn.dataset.block, btn));
+    });
     document.querySelectorAll(".filter-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));

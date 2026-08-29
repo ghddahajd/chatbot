@@ -18,6 +18,9 @@ from ..knowledge import DEFAULT_WIDGET_CONFIG
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+# Карточки "Настроек", для которых доступна кнопка "↺ Отменить" (см. config_overrides.reset_block).
+_RESET_BLOCK_NAMES = ("hours", "contacts", "widget", "facts", "doctors")
+
 _HH_MM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _DEFAULT_FACTS = {
@@ -66,6 +69,12 @@ class FactsInput(BaseModel):
     discloses_doctor_schedule: bool = False
 
 
+class DoctorInput(BaseModel):
+    name: str = Field(min_length=1)
+    specialty: str = ""
+    schedule: str = ""
+
+
 class CompanySettingsInput(BaseModel):
     phone: str = Field(min_length=1)
     address: Optional[str] = None
@@ -74,6 +83,8 @@ class CompanySettingsInput(BaseModel):
     working_hours_schedule: dict[str, Optional[DayScheduleInput]]
     widget: WidgetInput
     facts: FactsInput
+    # Список целиком, не точечный мёрж — см. apply_config_payload_overrides.
+    doctors: list[DoctorInput] = Field(default_factory=list)
 
     @field_validator("working_hours_schedule")
     @classmethod
@@ -97,6 +108,20 @@ def _current_settings(knowledge_base) -> dict[str, object]:
     if isinstance(raw_facts, dict):
         facts.update({key: bool(raw_facts[key]) for key in facts if key in raw_facts})
 
+    raw_doctors = clinic_info.get("doctors") if isinstance(clinic_info, dict) else None
+    doctors = []
+    if isinstance(raw_doctors, list):
+        for item in raw_doctors:
+            if not isinstance(item, dict):
+                continue
+            doctors.append(
+                {
+                    "name": str(item.get("name") or ""),
+                    "specialty": str(item.get("specialty") or ""),
+                    "schedule": str(item.get("schedule") or ""),
+                }
+            )
+
     return {
         "phone": company.phone,
         "address": company.address,
@@ -110,6 +135,7 @@ def _current_settings(knowledge_base) -> dict[str, object]:
         else {day: None for day in _WEEKDAY_KEYS},
         "widget": widget,
         "facts": facts,
+        "doctors": doctors,
     }
 
 
@@ -155,9 +181,39 @@ async def save_company_settings(
         },
         "widget": payload.widget.model_dump(),
         "facts": payload.facts.model_dump(),
+        "doctors": [doctor.model_dump() for doctor in payload.doctors],
     }
     settings = request.app.state.settings
     config_overrides.save_overrides_atomic(settings.overrides_dir, company_id, override)
+    resolver.invalidate(company_id)
+
+    return _current_settings(resolver.get(company_id, fallback=False))
+
+
+@router.post("/company/reset-block")
+async def reset_company_settings_block(
+    request: Request,
+    company_id: str = Query(...),
+    block: str = Query(...),
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict[str, object]:
+    """Кнопка "↺ Отменить" у отдельной карточки — один шаг назад для ЭТОГО блока (см.
+    config_overrides.reset_block: использует бэкап "предыдущей версии", который
+    save_overrides_atomic пишет на каждое сохранение). Другие блоки не трогает, даже если их
+    сохраняли позже."""
+
+    verify_operator_token(request, x_operator_token)
+    if block not in _RESET_BLOCK_NAMES:
+        raise HTTPException(status_code=422, detail=f"unknown block: {block!r}")
+
+    resolver = request.app.state.knowledge_base_resolver
+    try:
+        resolver.get(company_id, fallback=False)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown company") from error
+
+    settings = request.app.state.settings
+    config_overrides.reset_block(settings.overrides_dir, company_id, block)
     resolver.invalidate(company_id)
 
     return _current_settings(resolver.get(company_id, fallback=False))

@@ -13,6 +13,8 @@ from app.config_overrides import (
     apply_config_payload_overrides,
     format_working_hours_text,
     load_overrides,
+    load_previous_backup,
+    reset_block,
     save_overrides_atomic,
 )
 from app.models import CompanyConfig, DaySchedule
@@ -62,8 +64,13 @@ def test_load_overrides_survives_non_dict_json(tmp_path) -> None:
 
 
 def test_save_overrides_atomic_leaves_no_tmp_file_behind(tmp_path) -> None:
+    # rosh_import_demo.previous.json — бэкап "предыдущей версии" (см. блок тестов reset_block
+    # ниже), тоже законный итоговый файл, не мусор — важно, что НЕТ файлов .tmp.
     save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"phone": "+7 999"}})
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["rosh_import_demo.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "rosh_import_demo.json",
+        "rosh_import_demo.previous.json",
+    ]
 
 
 def test_save_overrides_survives_client_dir_wipe(tmp_path) -> None:
@@ -173,3 +180,142 @@ def test_save_overrides_raises_on_path_traversal_company_id(tmp_path) -> None:
 
     with pytest.raises(ValueError):
         save_overrides_atomic(tmp_path, "../../etc/passwd", {"company": {}})
+
+
+def test_apply_config_payload_overrides_replaces_doctors_list_entirely() -> None:
+    """doctors — ИСКЛЮЧЕНИЕ из общего правила точечного мёржа: список целиком, не по полям."""
+
+    config_payload = {
+        "clinic_info": {"doctors": [{"name": "Старый Врач", "specialty": "", "schedule": ""}]}
+    }
+    apply_config_payload_overrides(
+        config_payload,
+        {"doctors": [{"name": "Новый Врач", "specialty": "гинеколог", "schedule": "Пн 10:00-18:00"}]},
+    )
+    assert config_payload["clinic_info"]["doctors"] == [
+        {"name": "Новый Врач", "specialty": "гинеколог", "schedule": "Пн 10:00-18:00"}
+    ]
+
+
+def test_apply_config_payload_overrides_doctors_creates_clinic_info_if_absent() -> None:
+    config_payload: dict = {}
+    apply_config_payload_overrides(config_payload, {"doctors": [{"name": "Врач"}]})
+    assert config_payload["clinic_info"]["doctors"] == [{"name": "Врач"}]
+
+
+def test_apply_config_payload_overrides_empty_doctors_list_clears_roster() -> None:
+    """Пустой список — тоже валидный оверрайд (удалили всех врачей через форму), а не
+    "оверрайда нет, оставляем как было"."""
+
+    config_payload = {"clinic_info": {"doctors": [{"name": "Старый Врач"}]}}
+    apply_config_payload_overrides(config_payload, {"doctors": []})
+    assert config_payload["clinic_info"]["doctors"] == []
+
+
+# ── "↺ Отменить" по блокам (2026-08-29) — один уровень отмены на карточку в "Настройках" ──
+
+
+def test_save_overrides_atomic_backs_up_previous_content(tmp_path) -> None:
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"phone": "+7 111"}})
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"phone": "+7 222"}})
+    assert load_previous_backup(tmp_path, "rosh_import_demo") == {"company": {"phone": "+7 111"}}
+    assert load_overrides(tmp_path, "rosh_import_demo") == {"company": {"phone": "+7 222"}}
+
+
+def test_save_overrides_atomic_first_save_backs_up_empty_dict(tmp_path) -> None:
+    """Самое первое сохранение — до него оверрайдов не было вообще, бэкап должен быть {}
+    (а не отсутствовать/падать), чтобы reset_block корректно откатывал на данные из гита."""
+
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"phone": "+7 111"}})
+    assert load_previous_backup(tmp_path, "rosh_import_demo") == {}
+
+
+def test_load_previous_backup_returns_empty_dict_when_file_missing(tmp_path) -> None:
+    assert load_previous_backup(tmp_path, "rosh_import_demo") == {}
+
+
+def test_load_previous_backup_survives_corrupt_file_without_raising(tmp_path) -> None:
+    path = tmp_path / "rosh_import_demo.previous.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    assert load_previous_backup(tmp_path, "rosh_import_demo") == {}
+
+
+def test_reset_block_restores_hours_from_previous_save(tmp_path) -> None:
+    """Ровно сценарий пользователя: часы 21→22, потом 22→23, reset блока часов — назад к 22."""
+
+    schedule_22 = {"mon": {"open": "10:00", "close": "22:00"}}
+    schedule_23 = {"mon": {"open": "10:00", "close": "23:00"}}
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"working_hours_schedule": schedule_22}})
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"working_hours_schedule": schedule_23}})
+
+    result = reset_block(tmp_path, "rosh_import_demo", "hours")
+
+    assert result["company"]["working_hours_schedule"] == schedule_22
+
+
+def test_reset_block_contacts_does_not_touch_hours_saved_in_same_blob(tmp_path) -> None:
+    """company в оверрайде общий для двух карточек (часы + контакты) — reset одной не должен
+    задевать поля другой, даже если их сохраняли в одном и том же POST."""
+
+    save_overrides_atomic(
+        tmp_path, "rosh_import_demo",
+        {"company": {"phone": "+7 111", "working_hours_schedule": {"mon": {"open": "10:00", "close": "20:00"}}}},
+    )
+    save_overrides_atomic(
+        tmp_path, "rosh_import_demo",
+        {"company": {"phone": "+7 222", "working_hours_schedule": {"mon": {"open": "10:00", "close": "21:00"}}}},
+    )
+
+    result = reset_block(tmp_path, "rosh_import_demo", "contacts")
+
+    assert result["company"]["phone"] == "+7 111"
+    assert result["company"]["working_hours_schedule"] == {"mon": {"open": "10:00", "close": "21:00"}}
+
+
+def test_reset_block_removes_field_when_absent_in_first_ever_save(tmp_path) -> None:
+    """Самое первое сохранение вообще (бэкап пуст) — reset должен убрать поле целиком, откатив
+    на данные из гита, а не оставить пустой словарь."""
+
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"company": {"phone": "+7 111"}})
+
+    result = reset_block(tmp_path, "rosh_import_demo", "contacts")
+
+    assert "phone" not in result.get("company", {})
+
+
+def test_reset_block_widget_replaces_whole_section(tmp_path) -> None:
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"widget": {"header_title": "Старый"}})
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"widget": {"header_title": "Новый"}})
+
+    result = reset_block(tmp_path, "rosh_import_demo", "widget")
+
+    assert result["widget"] == {"header_title": "Старый"}
+
+
+def test_reset_block_doctors_replaces_whole_list(tmp_path) -> None:
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"doctors": [{"name": "Старый Врач"}]})
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"doctors": [{"name": "Новый Врач"}]})
+
+    result = reset_block(tmp_path, "rosh_import_demo", "doctors")
+
+    assert result["doctors"] == [{"name": "Старый Врач"}]
+
+
+def test_reset_block_raises_on_unknown_block_name(tmp_path) -> None:
+    with pytest.raises(ValueError):
+        reset_block(tmp_path, "rosh_import_demo", "not_a_real_block")
+
+
+def test_reset_block_is_reversible_because_it_creates_a_fresh_backup(tmp_path) -> None:
+    """reset сам проходит через save_overrides_atomic — значит создаёт свой собственный бэкап.
+    Повторный reset того же блока просто качнёт значение обратно. Осознанное поведение, не
+    баг (обсуждено с пользователем 2026-08-29)."""
+
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"widget": {"header_title": "A"}})
+    save_overrides_atomic(tmp_path, "rosh_import_demo", {"widget": {"header_title": "B"}})
+
+    first_reset = reset_block(tmp_path, "rosh_import_demo", "widget")
+    assert first_reset["widget"] == {"header_title": "A"}
+
+    second_reset = reset_block(tmp_path, "rosh_import_demo", "widget")
+    assert second_reset["widget"] == {"header_title": "B"}

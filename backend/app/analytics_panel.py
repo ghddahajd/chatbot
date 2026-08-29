@@ -157,7 +157,12 @@ def render_analytics_panel(
       gap: 16px;
       margin-bottom: 16px;
     }
-    @media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      .chats-layout { flex-direction: column; }
+      .chats-list-pane { flex-basis: auto; width: 100%; max-height: 320px; }
+      .chats-detail-pane { max-height: none; }
+    }
 
     .card {
       background: var(--card);
@@ -223,6 +228,13 @@ def render_analytics_panel(
     tbody tr:last-child td { border-bottom: 0; }
     .operator-name { font-weight: 700; }
     .empty-state { color: var(--text-muted); font-size: 13.5px; padding: 12px 2px; }
+    .bot-banner {
+      display: flex; align-items: center; gap: 10px; padding: 12px 16px; margin-bottom: 14px;
+      border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-soft) 22%, var(--card));
+    }
+    .bot-banner-icon { font-size: 18px; line-height: 1; }
+    .bot-banner-text { font-size: 13.5px; color: var(--text-secondary); }
+    .bot-banner-text strong { color: var(--text); font-size: 15px; }
 
     /* ── топ услуг: горизонтальные бары ── */
     .service-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
@@ -290,64 +302,94 @@ def render_analytics_panel(
     .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .filter-btn:hover:not(.active) { background: var(--border-soft); }
 
-    /* ── вкладка "Настройки" ── */
-    .settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; max-width: 420px; }
+    /* ── вкладка "Настройки" ──
+       Единая система полей ниже (один padding/radius/border/focus на все input/select,
+       что бы их ни отрисовывало — settings-field/hours-row/doctor-row) — раньше у каждого
+       блока были свои чуть-чуть разные padding/radius (9px/12px/10px vs 7px/10px/8px vs
+       8px/11px/8px) и ни у одного не было :focus — расползалось на глаз и подсвечивалось
+       голым синим браузерным аутлайном при клике. 2026-08-29, по фидбеку "как будто из 1С". */
+    .settings-field,
+    .hours-row,
+    .doctor-row {
+      --field-radius: 10px;
+    }
+    .settings-field input[type="text"],
+    .settings-field input[type="time"],
+    .settings-field select,
+    .hours-row input[type="time"],
+    .doctor-row input[type="text"] {
+      font: inherit; font-size: 14px; padding: 9px 12px; border-radius: var(--field-radius);
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .settings-field input[type="text"]:focus,
+    .settings-field input[type="time"]:focus,
+    .settings-field select:focus,
+    .hours-row input[type="time"]:focus,
+    .doctor-row input[type="text"]:focus {
+      outline: none; border-color: var(--accent-deep);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-deep) 18%, transparent);
+    }
+    .settings-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; max-width: 420px; }
     .settings-field label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
-    .settings-field input[type="text"], .settings-field input[type="time"], .settings-field select {
-      font: inherit; font-size: 14px; padding: 9px 12px; border-radius: 10px;
-      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    .settings-checkbox {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; cursor: pointer;
     }
-    .settings-checkbox { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; }
-    .hours-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+    .settings-checkbox input[type="checkbox"] { accent-color: var(--accent-deep); width: 16px; height: 16px; cursor: pointer; }
+    .hours-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
     .hours-day-label { width: 32px; font-weight: 700; font-size: 13px; color: var(--text-secondary); }
-    .hours-row input[type="time"] {
-      font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px;
-      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    .hours-closed-toggle {
+      font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer;
     }
-    .hours-closed-toggle { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+    .hours-closed-toggle input[type="checkbox"] { accent-color: var(--accent-deep); width: 15px; height: 15px; cursor: pointer; }
     .settings-save-btn {
       font: inherit; font-size: 14px; font-weight: 700; padding: 11px 22px; border-radius: 999px;
       border: none; background: var(--accent-deep); color: #fff; cursor: pointer;
+      transition: background .15s, transform .1s;
     }
+    .settings-save-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-deep) 88%, black); }
+    .settings-save-btn:active:not(:disabled) { transform: scale(.98); }
     .settings-save-btn:disabled { opacity: .6; cursor: default; }
     .settings-status { margin-left: 12px; font-size: 13px; font-weight: 600; }
     .settings-status.success { color: var(--accent-deep); }
     .settings-status.error { color: #c0392b; }
     .doctor-row {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
-    }
-    .doctor-row input[type="text"] {
-      font: inherit; font-size: 14px; padding: 8px 11px; border-radius: 8px;
-      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
     }
     .doctor-row .doctor-name { flex: 1 1 180px; min-width: 140px; }
     .doctor-row .doctor-specialty { flex: 1 1 160px; min-width: 130px; }
     .doctor-row .doctor-schedule { flex: 1 1 180px; min-width: 150px; }
     .doctor-remove-btn {
       flex: 0 0 auto; font: inherit; font-size: 16px; line-height: 1; width: 32px; height: 32px;
-      border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
-      color: #c0392b; cursor: pointer;
+      border-radius: var(--field-radius); border: 1px solid var(--border); background: var(--bg);
+      color: #c0392b; cursor: pointer; transition: background .15s, border-color .15s;
     }
-    .doctor-remove-btn:hover { background: var(--border-soft); }
+    .doctor-remove-btn:hover { background: #fdeceb; border-color: #f3c6c2; }
     .doctor-add-btn {
       font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 16px; border-radius: 999px;
       border: 1px dashed var(--border); background: transparent; color: var(--accent-deep);
-      cursor: pointer; margin-top: 4px;
+      cursor: pointer; margin-top: 4px; transition: background .15s, border-color .15s;
     }
-    .doctor-add-btn:hover { background: var(--border-soft); }
+    .doctor-add-btn:hover { background: var(--border-soft); border-color: var(--accent-deep); }
     .settings-card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .settings-card-header h2 { margin: 0; }
     .settings-reset-btn {
       flex: 0 0 auto; font: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 12px;
       border-radius: 999px; border: 1px solid var(--border); background: transparent;
-      color: var(--text-secondary); cursor: pointer;
+      color: var(--text-secondary); cursor: pointer; transition: background .15s, color .15s;
     }
     .settings-reset-btn:hover:not(:disabled) { background: var(--border-soft); color: var(--text); }
     .settings-reset-btn:disabled { opacity: .45; cursor: default; }
 
-    .chat-row { padding: 14px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
-    .chat-row:last-child { border-bottom: 0; }
+    /* ── чаты: список слева / переписка справа (master-detail) ── */
+    .chats-layout { display: flex; gap: 16px; align-items: flex-start; }
+    .chats-list-pane { flex: 0 0 320px; max-height: 74vh; overflow-y: auto; padding: 8px; }
+    .chats-detail-pane { flex: 1 1 auto; min-width: 0; max-height: 74vh; overflow-y: auto; }
+
+    .chat-row { padding: 11px 12px; border-radius: 12px; cursor: pointer; }
+    .chat-row + .chat-row { margin-top: 2px; }
     .chat-row:hover { background: var(--border-soft); }
+    .chat-row.active { background: color-mix(in srgb, var(--accent-soft) 32%, var(--card)); }
     .chat-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
     .chat-id { font-size: 12px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
     .chat-badge {
@@ -359,8 +401,10 @@ def render_analytics_panel(
     .chat-time { font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
     .chat-preview { font-size: 13.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    .chat-transcript { padding: 4px 4px 16px; border-bottom: 1px solid var(--border-soft); }
-    .chat-transcript .loading { padding: 20px; }
+    .chat-detail-header {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 2px 6px 16px; margin-bottom: 14px; border-bottom: 1px solid var(--border-soft);
+    }
     .t-msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; margin-bottom: 8px; font-size: 13.5px; line-height: 1.4; }
     .t-msg-role { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .6; margin-bottom: 2px; }
     .t-msg.user { background: var(--border-soft); margin-right: auto; }
@@ -408,8 +452,13 @@ def render_analytics_panel(
         <button type="button" class="filter-btn" data-scope="operator">С оператором</button>
         <button type="button" class="filter-btn" data-scope="lead">Успешные лиды</button>
       </div>
-      <div class="card" id="chatsList">
-        <div class="loading">Загрузка…</div>
+      <div class="chats-layout">
+        <div class="card chats-list-pane" id="chatsList">
+          <div class="loading">Загрузка…</div>
+        </div>
+        <div class="card chats-detail-pane" id="chatDetail">
+          <div class="empty-state">Выберите диалог слева</div>
+        </div>
       </div>
     </div>
 
@@ -685,12 +734,47 @@ def render_analytics_panel(
       `;
     }
 
+    function pluralRu(n, one, few, many) {
+      const mod10 = n % 10;
+      const mod100 = n % 100;
+      if (mod10 === 1 && mod100 !== 11) return one;
+      if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+      return many;
+    }
+
     function renderOperators(operators) {
-      const entries = Object.entries(operators).sort((a, b) => (b[1].leads || 0) - (a[1].leads || 0));
-      if (!entries.length) {
-        return `<div class="card"><h2>Операторы</h2><p class="card-hint">За всё время</p><div class="empty-state">Пока нет ни одного взятого в работу диалога</div></div>`;
+      // "Бот" — синтетическая запись (см. analytics.py:operator_summary), не человек-оператор:
+      // claimed/closed/avg_dialog_minutes для него всегда пустые, только leads осмысленный.
+      // Раньше сидел строкой в общей таблице вперемешку с людьми — 0/0/"—" в трёх колонках
+      // выглядело как мусор. Теперь отдельная плашка сверху, люди — в таблице ниже (2026-08-29).
+      const botStats = operators["Бот"];
+      const humanEntries = Object.entries(operators)
+        .filter(([name]) => name !== "Бот")
+        .sort((a, b) => (b[1].leads || 0) - (a[1].leads || 0));
+
+      const botBanner = botStats
+        ? `
+          <div class="bot-banner">
+            <span class="bot-banner-icon">🤖</span>
+            <span class="bot-banner-text">
+              Бот — <strong>${fmt(botStats.leads)}</strong> ${pluralRu(botStats.leads, "лид", "лида", "лидов")}
+              самостоятельно, без оператора
+            </span>
+          </div>
+        `
+        : "";
+
+      if (!humanEntries.length) {
+        return `
+          <div class="card">
+            <h2>Операторы</h2>
+            <p class="card-hint">За всё время</p>
+            ${botBanner}
+            <div class="empty-state">Пока нет ни одного взятого в работу диалога</div>
+          </div>
+        `;
       }
-      const rows = entries.map(([name, stats]) => `
+      const rows = humanEntries.map(([name, stats]) => `
         <tr>
           <td class="operator-name">${escapeHtml(name)}</td>
           <td class="num">${fmt(stats.claimed)}</td>
@@ -703,6 +787,7 @@ def render_analytics_panel(
         <div class="card">
           <h2>Операторы</h2>
           <p class="card-hint">За всё время</p>
+          ${botBanner}
           <table>
             <thead><tr><th>Оператор</th><th class="num">Взято</th><th class="num">Закрыто</th><th class="num">Лидов</th><th class="num">Ср. время</th></tr></thead>
             <tbody>${rows}</tbody>
@@ -746,7 +831,11 @@ def render_analytics_panel(
       service_mention: "Упоминание услуги", service_explanation: "Объяснение услуги",
       duration_question: "Вопрос про сроки", faq_question: "Частый вопрос", quick_faq: "Быстрый ответ (FAQ)",
       objection_handled: "Возражение", objection_backoff: "Возражение (повтор)",
-      complaint: "Жалоба", self_harm_crisis: "Кризис (самоповреждение)", out_of_scope: "Вне зоны ответственности",
+      // self_harm_crisis: нейтральная подпись в чарте намеренно — "Кризис (самоповреждение)"
+      // рядом со "Смолток"/"Цена" в общем bar-чарте читалось как ещё одна маркетинговая
+      // метрика, резало глаз (обсуждено с пользователем 2026-08-29). Сам intent-ключ и вся
+      // обработка в policy/ не менялись, только отображаемая строка на дашборде.
+      complaint: "Жалоба", self_harm_crisis: "Особое внимание", out_of_scope: "Вне зоны ответственности",
       unknown: "Неизвестно",
     };
 
@@ -951,49 +1040,75 @@ def render_analytics_panel(
       `).join("");
     }
 
-    async function toggleChatTranscript(sessionId) {
-      const box = document.getElementById(`transcript-${sessionId}`);
-      if (!box) return;
-      const isOpen = box.style.display === "block";
-      box.style.display = isOpen ? "none" : "block";
-      if (isOpen || box.dataset.loaded === "1") return;
-      box.innerHTML = '<div class="loading">Загрузка…</div>';
-      try {
-        const detail = chatTranscriptCache[sessionId] || await fetchChatDetail(sessionId);
-        chatTranscriptCache[sessionId] = detail;
-        box.innerHTML = renderTranscriptMessages(detail.messages);
-        box.dataset.loaded = "1";
-      } catch (error) {
-        box.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
-      }
-    }
+    // Список слева / полная переписка справа (master-detail, "как в диалогах") — раньше
+    // список раскрывался инлайн под каждой строкой, приходилось листать всю ленту. Теперь
+    // строка только выделяется, транскрипт всегда справа. chatRowsById — метаданные строки
+    // (бейджи/время) для шапки детали, отдельно от chatTranscriptCache (сами сообщения,
+    // по-прежнему кэшируются, чтобы повторный клик на уже открытый чат не бил по сети).
+    let chatRowsById = {};
+    let activeChatSessionId = null;
 
     function renderChatRow(item) {
       const time = (item.updated_at || "").replace("T", " ").slice(0, 16);
       return `
-        <div>
-          <div class="chat-row" data-session-id="${escapeHtml(item.session_id)}">
-            <div class="chat-row-top">
-              <span class="chat-id">${escapeHtml(item.session_id.slice(0, 8))}</span>
-              ${chatBadges(item)}
-              <span class="chat-time">${escapeHtml(time)}</span>
-            </div>
-            <div class="chat-preview">${escapeHtml(item.last_message || "—")}</div>
+        <div class="chat-row" data-session-id="${escapeHtml(item.session_id)}">
+          <div class="chat-row-top">
+            <span class="chat-id">${escapeHtml(item.session_id.slice(0, 8))}</span>
+            ${chatBadges(item)}
+            <span class="chat-time">${escapeHtml(time)}</span>
           </div>
-          <div class="chat-transcript" id="transcript-${escapeHtml(item.session_id)}" style="display:none"></div>
+          <div class="chat-preview">${escapeHtml(item.last_message || "—")}</div>
         </div>
       `;
+    }
+
+    function chatDetailHeader(sessionId) {
+      const item = chatRowsById[sessionId];
+      if (!item) return "";
+      const time = (item.updated_at || "").replace("T", " ").slice(0, 16);
+      return `
+        <div class="chat-detail-header">
+          <span class="chat-id">${escapeHtml(sessionId.slice(0, 8))}</span>
+          ${chatBadges(item)}
+          <span class="chat-time">${escapeHtml(time)}</span>
+        </div>
+      `;
+    }
+
+    async function selectChat(sessionId) {
+      activeChatSessionId = sessionId;
+      document.querySelectorAll(".chat-row").forEach((row) => {
+        row.classList.toggle("active", row.dataset.sessionId === sessionId);
+      });
+      const detail = document.getElementById("chatDetail");
+      const header = chatDetailHeader(sessionId);
+      detail.innerHTML = header + '<div class="loading">Загрузка…</div>';
+      try {
+        const data = chatTranscriptCache[sessionId] || await fetchChatDetail(sessionId);
+        chatTranscriptCache[sessionId] = data;
+        // пока грузилось — могли кликнуть на другой чат, не перетираем чужой выбор
+        if (activeChatSessionId !== sessionId) return;
+        detail.innerHTML = header + renderTranscriptMessages(data.messages);
+      } catch (error) {
+        if (activeChatSessionId !== sessionId) return;
+        detail.innerHTML = header + `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
+      }
     }
 
     async function loadChats() {
       const list = document.getElementById("chatsList");
       const companyId = document.getElementById("companySelect").value;
       list.innerHTML = '<div class="loading">Загрузка…</div>';
+      activeChatSessionId = null;
+      document.getElementById("chatDetail").innerHTML = '<div class="empty-state">Выберите диалог слева</div>';
       try {
         const data = await fetchChats(companyId, currentChatScope);
+        chatRowsById = {};
+        data.conversations.forEach((item) => { chatRowsById[item.session_id] = item; });
         list.innerHTML = data.conversations.length
           ? data.conversations.map(renderChatRow).join("")
           : '<div class="empty-state">Диалогов не найдено</div>';
+        if (data.conversations.length) selectChat(data.conversations[0].session_id);
       } catch (error) {
         list.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
       }
@@ -1293,7 +1408,7 @@ def render_analytics_panel(
     });
     document.getElementById("chatsList").addEventListener("click", (event) => {
       const row = event.target.closest(".chat-row");
-      if (row) toggleChatTranscript(row.dataset.sessionId);
+      if (row) selectChat(row.dataset.sessionId);
     });
 
     load();

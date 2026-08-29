@@ -504,6 +504,10 @@ def test_conversion_funnel_counts_each_stage_and_step_percent(tmp_path) -> None:
     assert stages["Чат открыт"]["count"] == 20
     assert stages["Чат открыт"]["percent_of_previous"] == 20.0
     assert stages["Есть переписка"]["count"] == 5
+    # "Чат открыт"→"Есть переписка" сравнивает client-side маячок (часто режется адблокерами)
+    # с server-side счётчиком — разной надёжности метрики, честно нечего сравнивать (см.
+    # analytics.py:conversion_funnel, обсуждено с пользователем 2026-08-29).
+    assert stages["Есть переписка"]["percent_of_previous"] is None
     assert stages["Стал лидом"]["count"] == 1
     assert stages["Стал лидом"]["percent_of_previous"] == 20.0
 

@@ -877,6 +877,15 @@ class AnalyticsService:
             previous = stages[index - 1]["count"]
             stage["percent_of_previous"] = round(stage["count"] / previous * 100, 1) if previous else None
 
+        # "Чат открыт" → "Есть переписка" сравнивает две метрики РАЗНОЙ надёжности: первые две
+        # стадии — client-side маячки (fetch без keepalive на /api/analytics/track/... — то,
+        # что чаще всего режут адблокеры), "Есть переписка" же считается на сервере по
+        # message_answered и адблокером не режется. В проде это дало 7011.8% (обсуждено с
+        # пользователем 2026-08-29) — не баг арифметики, а честно нечего сравнивать, проценты
+        # с разных весов. Убираем именно ЭТОТ переход, остальные — Виджет→Чат (обе client-side)
+        # и Переписка→Лид (обе server-side) — внутри своего яруса сравнимы, оставляем как есть.
+        stages[2]["percent_of_previous"] = None
+
         return {"company_id": company_id, "days": days, "stages": stages}
 
 

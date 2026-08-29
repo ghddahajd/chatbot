@@ -192,20 +192,27 @@ def test_operator_summary_attributes_leads_to_claiming_operator(tmp_path) -> Non
 
 
 def test_operator_summary_days_filter_still_attributes_lead_and_close_outside_window(tmp_path) -> None:
-    """Живой баг (код-ревью, 2026-08-27): claim внутри days-окна, но лид/закрытие той же
-    сессии легли СНАРУЖИ окна (нормальная ситуация на границе — claim под конец окна, лид/
-    close чуть позже) — раньше молча терялись из "лидов"/"закрыто", хотя claim честно
-    посчитан. Джойн по session_id должен работать независимо от того, где именно во времени
-    легли сами лид/закрытие — days фильтрует только то, какие claim'ы вообще "в отчёте"."""
+    """Живой баг (код-ревью, 2026-08-27): close/лид той же сессии не должны молча теряться
+    из "лидов"/"закрыто" только из-за того, что days фильтрует ОТДЕЛЬНО СЧИТАННЫЙ список
+    claim-событий — closes/leads всегда читаются из полной истории, независимо от days,
+    только claim обязан попасть в days-окно, чтобы вообще "войти в отчёт".
+
+    2026-08-29: даты сделаны причинно реалистичными (close/лид СТРОГО после claim) — старая
+    версия теста ставила closed_at РАНЬШЕ claimed_at (закрытие на 10 дней раньше клейма),
+    что математически не может произойти по-настоящему и с новой логикой (лид засчитывается
+    оператору только если он попал реально между claim и close) не проходит не из-за
+    регрессии, а потому что перевёрнутые во времени данные больше не изображают валидный
+    сценарий, который эта логика должна поддерживать."""
 
     analytics_file = tmp_path / "analytics.jsonl"
     leads_file = tmp_path / "leads.jsonl"
     now = datetime.utcnow()
-    claimed_at = now - timedelta(days=2)  # внутри days=7
-    closed_at = now - timedelta(days=10)  # СНАРУЖИ days=7 (часы сдвинулись, редкий, но возможный случай)
+    claimed_at = now - timedelta(days=6, hours=23)  # внутри days=7, у самой границы
+    lead_at = claimed_at + timedelta(minutes=5)
+    closed_at = claimed_at + timedelta(minutes=10)
     append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=claimed_at))
     append_jsonl(analytics_file, _closed_event(session_id="s-1", claimed_by="masha", timestamp=closed_at))
-    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=now - timedelta(days=9)))
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=lead_at))
 
     service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
     result = service.operator_summary(days=7)
@@ -213,6 +220,92 @@ def test_operator_summary_days_filter_still_attributes_lead_and_close_outside_wi
     assert result["operators"]["masha"]["claimed"] == 1
     assert result["operators"]["masha"]["closed"] == 1
     assert result["operators"]["masha"]["leads"] == 1
+
+
+def test_operator_summary_lead_before_first_claim_goes_to_bot(tmp_path) -> None:
+    """2026-08-29, живой баг (ручное тестирование пользователем): бот сам собрал контакт до
+    того, как кто-либо вообще взял сессию в работу — засчитывать этот лид оператору,
+    который позже заклеймил диалог по другому поводу, нечестно. Идёт в "Бот"."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=t0))
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0 + timedelta(minutes=10)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["masha"]["leads"] == 0
+    assert result["operators"]["Бот"]["leads"] == 1
+    assert result["operators"]["Бот"]["claimed"] == 0
+    assert result["operators"]["Бот"]["avg_dialog_minutes"] is None
+
+
+def test_operator_summary_lead_after_close_goes_to_bot(tmp_path) -> None:
+    """Клиент вернулся к боту уже ПОСЛЕ того, как оператор закрыл диалог — это снова работа
+    бота, не оператора, даже несмотря на общий session_id."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0))
+    append_jsonl(analytics_file, _closed_event(session_id="s-1", claimed_by="masha", timestamp=t0 + timedelta(minutes=10)))
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=t0 + timedelta(minutes=20)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["masha"]["leads"] == 0
+    assert result["operators"]["Бот"]["leads"] == 1
+
+
+def test_operator_summary_lead_never_claimed_at_all_goes_to_bot(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=datetime.utcnow()))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert "operators" in result
+    assert result["operators"]["Бот"]["leads"] == 1
+
+
+def test_operator_summary_no_bot_entry_when_every_lead_is_attributed(tmp_path) -> None:
+    """Не захламляем таблицу пустой строкой "Бот", если реально не на что её показывать."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0))
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=t0 + timedelta(minutes=5)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert "Бот" not in result["operators"]
+
+
+def test_operator_summary_reclaim_after_close_attributes_by_active_window(tmp_path) -> None:
+    """Сессию заклеймили, закрыли, потом заклеймили СНОВА (уже другим оператором) — лид,
+    случившийся во втором окне, должен достаться второму оператору, не первому и не боту,
+    хотя session_id один и тот же на всю жизнь диалога."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 1, 5, 10, 0, 0)
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="masha", timestamp=t0))
+    append_jsonl(analytics_file, _closed_event(session_id="s-1", claimed_by="masha", timestamp=t0 + timedelta(minutes=10)))
+    append_jsonl(analytics_file, _claim_event(session_id="s-1", claimed_by="petya", timestamp=t0 + timedelta(hours=2)))
+    append_jsonl(leads_file, _lead(session_id="s-1", timestamp=t0 + timedelta(hours=2, minutes=5)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=leads_file)
+    result = service.operator_summary()
+
+    assert result["operators"]["masha"]["leads"] == 0
+    assert result["operators"]["petya"]["leads"] == 1
+    assert "Бот" not in result["operators"]
 
 
 def test_operator_summary_claim_without_close_has_no_avg_duration(tmp_path) -> None:

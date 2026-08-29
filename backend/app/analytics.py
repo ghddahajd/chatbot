@@ -264,8 +264,10 @@ class AnalyticsService:
     def operator_summary(self, company_id: Optional[str] = None, days: Optional[int] = None) -> dict[str, Any]:
         """Аналитика "по манагерам" (2026-08-27) — считает operator_claimed/operator_closed
         события (см. telegram_bridge._track_operator_event) и attribute'ит лиды к оператору
-        через тот же session_id, ничего не меняя в самой модели Lead (лид создаётся ДО клейма,
-        связи в другую сторону в данных нет — джойним тут, на чтении, не на записи).
+        через тот же session_id И временное окно claim→close (2026-08-29: лид засчитывается
+        оператору, только если случился реально пока диалог был у него в работе — иначе идёт
+        в синтетическую запись "Бот", см. _operator_for_lead), ничего не меняя в самой модели
+        Lead (связи в другую сторону в данных нет — джойним тут, на чтении, не на записи).
         days — общий date-range фильтр дашборда (None = за всё время)."""
 
         all_events = read_jsonl(self.analytics_file)
@@ -288,17 +290,84 @@ class AnalyticsService:
             # норме, но не даёт задвоить duration, если всё-таки прилетело)
             close_by_session[str(event.get("session_id"))] = event
 
-        operator_by_session: dict[str, str] = {
-            str(claim.get("session_id")): str((claim.get("metadata") or {}).get("claimed_by") or "unknown")
-            for claim in claims
-        }
+        # Живой баг (ручное тестирование пользователем, 2026-08-29): раньше лид засчитывался
+        # ЛЮБОМУ, кто когда-либо клеймил эту сессию — включая лид, который бот сам собрал ДО
+        # клейма (человек ещё даже не подключился), просто потому что оператор позже забрал
+        # тот же диалог по совершенно другому поводу. Нечестно: оператор получал кредит за
+        # работу бота. Теперь лид засчитывается оператору, только если он реально случился
+        # МЕЖДУ его claim и close этой сессии (сессию можно клеймить несколько раз за жизнь —
+        # берём клейм, актуальный на момент лида, не первый и не последний). Всё, что вне
+        # какого-либо окна (до первого клейма или после закрытия) — идёт в "Бот", не теряется
+        # молча и не приписывается случайному оператору.
+        claims_by_session: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for claim in claims:
+            claims_by_session[str(claim.get("session_id"))].append(claim)
+        for session_claims in claims_by_session.values():
+            session_claims.sort(key=lambda claim: str(claim.get("timestamp") or ""))
+
+        # Отдельный, полный (не last-wins, в отличие от close_by_session выше — тот годится
+        # только для claimed/closed/avg_dialog_minutes per-claim, где задвоение не страшно)
+        # список закрытий на сессию — нужен, чтобы найти ИМЕННО то закрытие, которое реально
+        # завершает окно активного клейма, а не последнее закрытие сессии вообще. Без этого
+        # переклейм после close (сессию заново эскалировали) ошибочно считал бы её уже
+        # закрытой на момент лида, случившегося уже во ВТОРОМ, ещё открытом окне.
+        closes_by_session: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in all_events:
+            if event.get("event_type") != "operator_closed":
+                continue
+            if company_id is not None and event.get("company_id") != company_id:
+                continue
+            closes_by_session[str(event.get("session_id"))].append(event)
+        for session_closes in closes_by_session.values():
+            session_closes.sort(key=lambda close: str(close.get("timestamp") or ""))
+
+        def _operator_for_lead(lead: dict[str, Any]) -> Optional[str]:
+            session_id = str(lead.get("session_id"))
+            session_claims = claims_by_session.get(session_id)
+            if not session_claims:
+                return None
+            try:
+                lead_at = datetime.fromisoformat(str(lead.get("timestamp")))
+            except (TypeError, ValueError):
+                # Не смогли понять, когда случился лид — не гадаем, кому его приписать.
+                return None
+            active_claim: Optional[dict[str, Any]] = None
+            active_claimed_at: Optional[datetime] = None
+            for claim in session_claims:
+                try:
+                    claimed_at = datetime.fromisoformat(str(claim.get("timestamp")))
+                except (TypeError, ValueError):
+                    continue
+                if claimed_at <= lead_at:
+                    active_claim, active_claimed_at = claim, claimed_at
+                else:
+                    break
+            if active_claim is None:
+                return None
+            # Первое закрытие НЕ РАНЬШЕ активного клейма — то самое, что завершает именно
+            # его окно (закрытия от более старых циклов клейм-close той же сессии пропускаем).
+            for close in closes_by_session.get(session_id, []):
+                try:
+                    closed_at = datetime.fromisoformat(str(close.get("timestamp")))
+                except (TypeError, ValueError):
+                    continue
+                if closed_at < active_claimed_at:
+                    continue
+                if closed_at < lead_at:
+                    return None
+                break
+            return str((active_claim.get("metadata") or {}).get("claimed_by") or "unknown")
+
         leads_by_operator: Counter[str] = Counter()
+        bot_leads = 0
         for lead in self._all_leads():
             if company_id is not None and lead.get("company_id") != company_id:
                 continue
-            operator = operator_by_session.get(str(lead.get("session_id")))
+            operator = _operator_for_lead(lead)
             if operator:
                 leads_by_operator[operator] += 1
+            else:
+                bot_leads += 1
 
         per_operator: dict[str, dict[str, Any]] = {}
         for claim in claims:
@@ -329,6 +398,16 @@ class AnalyticsService:
             durations = stats.pop("_durations")
             stats["avg_dialog_minutes"] = round(sum(durations) / len(durations) / 60, 1) if durations else None
             operators[operator] = stats
+        if bot_leads:
+            # claimed/closed/avg_dialog_minutes не имеют смысла для бота — не оператор, не
+            # берёт диалоги в работу, только считаем лиды, до которых руки оператора не
+            # дошли (или ещё не дошли, или уже отпустил).
+            operators["Бот"] = {
+                "claimed": 0,
+                "closed": 0,
+                "leads": bot_leads,
+                "avg_dialog_minutes": None,
+            }
 
         return {"company_id": company_id, "operators": operators}
 

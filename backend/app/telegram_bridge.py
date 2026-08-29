@@ -17,15 +17,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from .delivery import _escape_markdown, _iso, _utcnow
 from .models import MessageRole, SessionStatus
 from .sessions import SessionStore
-from .utils.jsonl import append_jsonl
+from .utils.jsonl import append_jsonl, read_jsonl
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,19 @@ logger = logging.getLogger(__name__)
 CLAIM_CALLBACK_PREFIX = "claim:"
 CLOSE_CALLBACK_PREFIX = "close:"
 GET_UPDATES_TIMEOUT_SECONDS = 30
+
+# 2026-08-29: заголовок темы читаемый для оператора (#ДДММГГ-порядковый · эмодзи-тип ·
+# claimed_by) вместо голого "Сессия <кусок uuid>" — см. TOPIC_TYPE_EMOJI ниже. Имя клиента
+# сознательно НЕ включаем — PII в заголовке темы видно даже в превью уведомлений на
+# заблокированном телефоне оператора, а само имя никуда не девается — оно всё так же в
+# самом лиде/архиве/сессии, просто не торчит в заголовке.
+_TOPIC_DISPLAY_TIMEZONE = ZoneInfo("Europe/Moscow")
+TOPIC_TYPE_EMOJI = {
+    "complaint": "🔴",
+    "self_harm_crisis": "🆘",
+    "regulated_advice": "🟡",
+}
+TOPIC_TYPE_EMOJI_DEFAULT = "🟢"
 HTTP_TIMEOUT_SECONDS = 40.0
 _MAX_RATE_LIMIT_RETRIES = 3
 # Живой баг (ручное тестирование пользователем, 2026-08-26): любая ошибка КРОМЕ 429 (сетевой
@@ -406,11 +421,52 @@ class TelegramBridgeService:
         )
         await self.close_topic(session_id)
 
-    async def _create_session_topic(self, session: Any, *, claimed_by: str) -> int | None:
-        """Создаёт тему сессии в момент клейма — имя сразу содержит и клиента, и оператора,
-        не нужно отдельно переименовывать после."""
+    def _next_daily_topic_index(self, today: datetime) -> int:
+        """Порядковый номер темы за сегодня — не отдельный счётчик в памяти (пропал бы при
+        рестарте сервера, задваивая номера уже в первый же день), а количество
+        operator_claimed-событий за сегодня в analytics.jsonl: тот же файл, что уже
+        используется для intent_breakdown/unanswered_trend — read_jsonl там уже не проблема
+        по объёму данных одной клиники, тот же trade-off, не новый.
+        Без +1: к моменту вызова событие ТЕКУЩЕГО клейма уже дозаписано в файл
+        (_track_operator_event вызывается раньше _create_session_topic в
+        _handle_callback_query), так что подсчёт уже включает сам этот клейм."""
 
-        topic_name = f"{client_label_for_session(session)} · {claimed_by}"[:128]
+        analytics_file = getattr(self.analytics_service, "analytics_file", None)
+        if analytics_file is None:
+            return 1
+        try:
+            count = 0
+            for event in read_jsonl(analytics_file):
+                if event.get("event_type") != "operator_claimed":
+                    continue
+                timestamp = str(event.get("timestamp") or "")
+                try:
+                    event_time = datetime.fromisoformat(timestamp)
+                except ValueError:
+                    continue
+                if event_time.tzinfo is None:
+                    event_time = event_time.replace(tzinfo=timezone.utc)
+                if event_time.astimezone(_TOPIC_DISPLAY_TIMEZONE).date() == today.date():
+                    count += 1
+            return max(count, 1)
+        except Exception as error:
+            # Красивый номер в заголовке — не то, ради чего стоит рисковать самим клеймом:
+            # любая неожиданность тут (битый файл, права на чтение) не должна ронять
+            # реальное создание темы, только откатываемся на "номер 1".
+            logger.warning("topic index computation failed error=%s", type(error).__name__)
+            return 1
+
+    def _topic_display_index(self) -> str:
+        now = datetime.now(_TOPIC_DISPLAY_TIMEZONE)
+        index = self._next_daily_topic_index(now)
+        return f"#{now:%d%m%y}{index:03d}"
+
+    async def _create_session_topic(self, session: Any, *, claimed_by: str) -> int | None:
+        """Создаёт тему сессии в момент клейма — заголовок сразу содержит читаемый номер,
+        эмодзи-тип обращения и оператора, не нужно отдельно переименовывать после."""
+
+        emoji = TOPIC_TYPE_EMOJI.get(getattr(session, "last_intent", None), TOPIC_TYPE_EMOJI_DEFAULT)
+        topic_name = f"{self._topic_display_index()} {emoji} · {claimed_by}"[:128]
         result = await self._call("createForumTopic", chat_id=self.group_chat_id, name=topic_name)
         if not result.get("ok"):
             return None

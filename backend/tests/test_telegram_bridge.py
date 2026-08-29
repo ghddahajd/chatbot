@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -516,8 +517,9 @@ def test_post_client_lead_card_noop_without_clients_topic_configured(monkeypatch
 
 def test_claim_creates_topic_named_after_client_and_operator_with_transcript(monkeypatch) -> None:
     """Тема создаётся ТОЛЬКО в момент клейма (не раньше — иначе плодим темы на заявки,
-    которые никто не забрал), и сразу называется и клиентом, и оператором — не нужно
-    отдельно переименовывать после."""
+    которые никто не забрал). Заголовок (2026-08-29): читаемый номер + эмодзи-тип + оператор
+    — сознательно БЕЗ имени клиента (PII видно даже в превью уведомлений на заблокированном
+    телефоне оператора; само имя никуда не девается — оно всё так же в лиде/архиве/сессии)."""
 
     _reset_fake_client(monkeypatch)
     store = SessionStore()
@@ -544,7 +546,9 @@ def test_claim_creates_topic_named_after_client_and_operator_with_transcript(mon
 
     create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
     assert len(create_calls) == 1
-    assert create_calls[0]["json"]["name"] == "Мария Петровна · masha"
+    topic_name = create_calls[0]["json"]["name"]
+    assert re.match(r"^#\d{9} 🟢 · masha$", topic_name), topic_name
+    assert "Мария Петровна" not in topic_name
 
     send_calls = [call for call in FakeAsyncClient.calls if call["method"] == "sendMessage"]
     assert any("хочу оставить телефон" in call["json"]["text"] for call in send_calls)
@@ -885,12 +889,16 @@ def test_close_button_callback_closes_session_same_as_slash_command(monkeypatch)
     assert any(call["json"]["callback_query_id"] == "cb2" for call in answer_calls)
 
 
-def test_claim_falls_back_to_session_id_when_no_contact_known(monkeypatch) -> None:
+def test_claim_topic_name_is_the_same_shape_with_or_without_known_contact(monkeypatch) -> None:
+    """2026-08-29: заголовок темы больше не зависит от того, известно ли имя/телефон
+    клиента — раньше был отдельный фолбэк "Сессия <id>", теперь формат один и тот же всегда
+    (номер+эмодзи+оператор), потому что персональные данные в заголовке не показываем вообще."""
+
     _reset_fake_client(monkeypatch)
     store = SessionStore()
     ws_manager = FakeWsManager()
 
-    async def run() -> str:
+    async def run() -> None:
         session = await store.get_or_create(None, "rosh_demo")
         await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
         FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
@@ -903,12 +911,11 @@ def test_claim_falls_back_to_session_id_when_no_contact_known(monkeypatch) -> No
                 "message": {"message_id": 100},
             }
         )
-        return session.session_id
 
-    session_id = anyio.run(run)
+    anyio.run(run)
 
     create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
-    assert create_calls[0]["json"]["name"] == f"Сессия {session_id[:8]} · masha"
+    assert re.match(r"^#\d{9} 🟢 · masha$", create_calls[0]["json"]["name"])
 
 
 def test_claim_reuses_existing_topic_without_recreating(monkeypatch) -> None:
@@ -1255,3 +1262,95 @@ def test_claim_topic_name_stays_compact_with_long_username(monkeypatch) -> None:
 
     create_calls = [call for call in FakeAsyncClient.calls if call["method"] == "createForumTopic"]
     assert len(create_calls[0]["json"]["name"]) <= 45
+
+
+def test_claim_topic_emoji_reflects_last_intent(monkeypatch) -> None:
+    """2026-08-29: эмодзи в заголовке темы — по session.last_intent (то же поле, что уже
+    используется в "Разбивка по темам" в аналитике), не по имени/тексту заново."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run(last_intent: str) -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        await store.update_context(session.session_id, last_intent=last_intent)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager)
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+        create_calls = [c for c in FakeAsyncClient.calls if c["method"] == "createForumTopic"]
+        return create_calls[-1]["json"]["name"]
+
+    complaint_name = anyio.run(run, "complaint")
+    assert "🔴" in complaint_name
+
+    FakeAsyncClient.calls = []
+    crisis_name = anyio.run(run, "self_harm_crisis")
+    assert "🆘" in crisis_name
+
+    FakeAsyncClient.calls = []
+    regulated_name = anyio.run(run, "regulated_advice")
+    assert "🟡" in regulated_name
+
+    FakeAsyncClient.calls = []
+    plain_name = anyio.run(run, "operator_requested")
+    assert "🟢" in plain_name
+
+
+def test_claim_topic_index_increments_from_todays_claims_in_analytics_file(tmp_path, monkeypatch) -> None:
+    """2026-08-29: номер темы за сегодня считается из уже накопленных operator_claimed за
+    сегодня в analytics.jsonl (не отдельный счётчик в памяти — тот пропал бы при рестарте и
+    задваивал бы номера)."""
+
+    from datetime import datetime, timezone
+
+    from app.analytics import AnalyticsService
+    from app.utils.jsonl import append_jsonl
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+    analytics_file = tmp_path / "analytics.jsonl"
+    today = datetime.now(timezone.utc)
+    # 2 уже "случившихся" сегодня клейма — новый должен получить номер 3.
+    for _ in range(2):
+        append_jsonl(
+            analytics_file,
+            {
+                "timestamp": today.isoformat(),
+                "company_id": "rosh_demo",
+                "session_id": "some-other-session",
+                "event_type": "operator_claimed",
+                "message": "",
+                "metadata": {},
+            },
+        )
+    analytics_service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        service = _service(store, ws_manager, analytics_service=analytics_service)
+        await service._handle_callback_query(
+            {
+                "id": "cb1",
+                "data": f"claim:{session.session_id}",
+                "from": {"username": "masha"},
+                "message": {"message_id": 100},
+            }
+        )
+
+    anyio.run(run)
+
+    create_calls = [c for c in FakeAsyncClient.calls if c["method"] == "createForumTopic"]
+    topic_name = create_calls[0]["json"]["name"]
+    assert re.match(r"^#\d{6}003 🟢 · masha$", topic_name), topic_name

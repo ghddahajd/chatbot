@@ -675,7 +675,7 @@ def render_analytics_panel() -> str:
       // спама ("аааа…") — без обрезки такая строка разносила вёрстку карточки целиком.
       const rows = items.map((item) => `
         <div class="feed-item">
-          <div class="feed-text">${escapeHtml(truncate(item.message, 160))}</div>
+          <div class="feed-text">${escapeHtml(truncate(item.message, 80))}</div>
           <div class="feed-meta">${fmt(item.count)} раз${item.count === 1 ? "" : "а"}</div>
         </div>
       `).join("");

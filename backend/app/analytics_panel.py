@@ -6,8 +6,46 @@
 из проверенной валидатором дефолтной палитры дата-виз скилла (CVD-safe, не "на глаз")."""
 
 
-def render_analytics_panel() -> str:
-    return """
+def render_analytics_panel(
+    *,
+    default_company_id: str = "rosh_import_demo",
+    show_company_selector: bool = True,
+) -> str:
+    """default_company_id/show_company_selector (2026-08-29) — /analytics (для клиента,
+    когда/если отдадим доступ) вызывает это с show_company_selector=False: дропдаун скрыт,
+    клиент никогда не узнает, что вообще существует второй company_id для тестового трафика
+    (см. /backstage в main.py). Сам JS-код (loadChats/load/companySelect-listener) не тронут —
+    он как читал .value у #companySelect, так и читает; при show_company_selector=False это
+    просто select с одним вариантом и без визуального намёка на выбор."""
+
+    if show_company_selector:
+        # Живой баг (найден при живой проверке в браузере, 2026-08-29): раньше "rosh_test"
+        # было захардкожено вторым вариантом безусловно — при default_company_id="rosh_test"
+        # (ровно случай /backstage) это давало ДВЕ одинаковые опции и ни одной для
+        # rosh_import_demo. Теперь берём оба известных id, ставим default_company_id первым/
+        # выбранным, остальные — следом, без дублей независимо от того, что передали дефолтом.
+        known_company_ids = ["rosh_test", "rosh_import_demo"]
+        ordered_ids = [default_company_id] + [
+            company_id for company_id in known_company_ids if company_id != default_company_id
+        ]
+        options_html = "".join(
+            f'<option value="{company_id}"{" selected" if company_id == default_company_id else ""}>'
+            f"{company_id}</option>"
+            for company_id in ordered_ids
+        )
+        company_select_html = (
+            f'<select class="company-select" id="companySelect">{options_html}'
+            f'<option value="">Все компании</option>'
+            f"</select>"
+        )
+    else:
+        company_select_html = (
+            f'<select id="companySelect" style="display:none">'
+            f'<option value="{default_company_id}" selected>{default_company_id}</option>'
+            f"</select>"
+        )
+
+    html = """
 <!doctype html>
 <html lang="ru">
 <head>
@@ -291,10 +329,7 @@ def render_analytics_panel() -> str:
           <option value="90">90 дней</option>
           <option value="3650">Всё время</option>
         </select>
-        <select class="company-select" id="companySelect">
-          <option value="rosh_import_demo">rosh_import_demo</option>
-          <option value="">Все компании</option>
-        </select>
+        __COMPANY_SELECT_HTML__
         <form method="post" action="/logout">
           <button type="submit" class="logout-btn">Выйти</button>
         </form>
@@ -892,3 +927,4 @@ def render_analytics_panel() -> str:
 </body>
 </html>
 """
+    return html.replace("__COMPANY_SELECT_HTML__", company_select_html)

@@ -211,6 +211,44 @@ def test_analytics_page_renders_with_token(test_client) -> None:
     assert "Аналитика" in response.text
 
 
+def test_analytics_page_hides_company_selector_and_never_mentions_rosh_test(test_client) -> None:
+    """2026-08-29: /analytics — для клиента (если/когда отдадим доступ), он не должен ни
+    видеть переключатель компаний, ни узнать, что вообще существует rosh_test (наш
+    изолированный company_id для тестового трафика, см. /backstage)."""
+
+    response = test_client.get("/analytics?token=demo-operator-token")
+    assert response.status_code == 200
+    assert "rosh_test" not in response.text
+    assert 'style="display:none"' in response.text
+
+
+def test_backstage_page_requires_auth_same_as_analytics(test_client) -> None:
+    response = test_client.get("/backstage", follow_redirects=False)
+    assert response.status_code in (302, 307)
+    assert response.headers["location"].startswith("/login")
+
+
+def test_backstage_page_shows_selector_defaulting_to_rosh_test(test_client) -> None:
+    """Тот же render_analytics_panel, что и /analytics (не копия кода) — просто по умолчанию
+    смотрит на rosh_test и показывает дропдаун, только для внутреннего использования."""
+
+    response = test_client.get("/backstage?token=demo-operator-token")
+    assert response.status_code == 200
+    assert "rosh_test" in response.text
+    assert "rosh_import_demo" in response.text
+    assert "Аналитика" in response.text
+
+
+def test_backstage_dropdown_has_no_duplicate_options(test_client) -> None:
+    """Живой баг (найден в браузере, 2026-08-29): default_company_id="rosh_test" совпадал с
+    захардкоженным вторым вариантом — на экране было два одинаковых "rosh_test" и ни одного
+    "rosh_import_demo". Считаем реальные <option> в дропдауне, не просто ищем подстроку."""
+
+    response = test_client.get("/backstage?token=demo-operator-token")
+    assert response.text.count('<option value="rosh_test"') == 1
+    assert response.text.count('<option value="rosh_import_demo"') == 1
+
+
 def test_login_page_renders(test_client) -> None:
     response = test_client.get("/login")
     assert response.status_code == 200

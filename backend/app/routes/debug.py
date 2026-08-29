@@ -417,6 +417,43 @@ async def debug_telegram_check(
     return await bridge.health_check()
 
 
+@router.get("/api/debug/domain-check")
+async def debug_domain_check(
+    request: Request,
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Side-effect-free проверка "каждый настроенный домен резолвится ровно в одного
+    клиента" — переиспользует KnowledgeBaseResolver.build_domain_index() (тот же индекс,
+    что и реальный автодетект по Origin в /api/widget/bootstrap), никаких сетевых вызовов.
+
+    2026-08-29: идея пользователя после живого разбора истории с scratchwidgettestsite.
+    vercel.app — быстрый взгляд "все ли домены на своих местах" вместо ручного curl/захода
+    на каждый сайт по отдельности. localhost сознательно исключён из отчёта — у него
+    заведомо несколько локальных тестовых клиентов (rosh_demo и т.д.), это старый, известный
+    и не мешающий факт (localhost и так никогда не спутаешь с реальным доменом), а не то,
+    что стоит показывать в этом отчёте как проблему."""
+
+    verify_operator_token(request, x_operator_token)
+    resolver = request.app.state.knowledge_base_resolver
+    domain_index = resolver.build_domain_index()
+
+    domains = []
+    for domain, company_ids in sorted(domain_index.items()):
+        if domain == "localhost":
+            continue
+        if len(company_ids) > 1:
+            domains.append(
+                {
+                    "domain": domain,
+                    "status": "error",
+                    "detail": f"домен задублирован между: {', '.join(company_ids)}",
+                }
+            )
+        else:
+            domains.append({"domain": domain, "status": "ok", "company_id": company_ids[0]})
+    return {"domains": domains}
+
+
 @router.post("/api/debug/rag-search")
 async def debug_rag_search(
     payload: RagSearchRequest,

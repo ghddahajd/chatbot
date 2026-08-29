@@ -21,6 +21,17 @@ backend/data/session_snapshot.json
 backend/data/clients/*
 !backend/data/clients/.gitkeep
 
+# 2026-08-29: реальный клон приватного rosh-client-data репо (см. reference_rosh_client_data_repo
+# в памяти) — backend/data/clients/rosh_import_demo теперь symlink сюда. Локальная git-папка,
+# не относится к этому проекту и не должна сюда коммититься.
+/rosh-client-data/
+# Локальный volume-маунт для symlink'а внутри Docker (см. комментарий в самом
+# docker-compose.override.yml) — не коммитим: на сервере такой папки на диске нет, а тихо
+# создать пустую и смонтировать её поверх реальных клиентских данных из docker-entrypoint.sh
+# было бы серьёзной регрессией. Базовый docker-compose.yml (общий для локалки и сервера) этот
+# фикс сознательно не трогает вообще.
+docker-compose.override.yml
+
 # Local client eval phrases
 evals/clients/*
 !evals/clients/.gitkeep

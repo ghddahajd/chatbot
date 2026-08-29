@@ -592,6 +592,34 @@ def render_analytics_panel() -> str:
       `;
     }
 
+    const OBJECTION_TOPIC_LABELS = {
+      price: "Цена", hesitation: "Сомнение / надо подумать", competitor: "Сравнение с конкурентом",
+      guarantee: "Вопрос про гарантию", pain_fear: "Страх боли / побочек", unknown: "Неизвестно",
+    };
+
+    function renderObjectionBreakdown(items) {
+      if (!items.length) {
+        return `<div class="card"><h2>Возражения по теме</h2><p class="card-hint">За период</p><div class="empty-state">Пока нет данных</div></div>`;
+      }
+      const max = Math.max(...items.map((i) => i.count));
+      const rows = items.map((item, i) => `
+        <div class="service-row">
+          <div class="service-name" title="${escapeHtml(item.topic)}">${escapeHtml(OBJECTION_TOPIC_LABELS[item.topic] || item.topic)}</div>
+          <div class="service-bar-track">
+            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%; background:${seriesColors[i % seriesColors.length]}"></div>
+          </div>
+          <div class="service-count">${fmt(item.count)}</div>
+        </div>
+      `).join("");
+      return `
+        <div class="card">
+          <h2>Возражения по теме</h2>
+          <p class="card-hint">С чем чаще всего спорят/сомневаются</p>
+          ${rows}
+        </div>
+      `;
+    }
+
     function renderUnansweredTrend(trend) {
       const max = Math.max(1, ...trend.map((d) => d.count));
       const bars = trend.map((d) => {
@@ -822,6 +850,7 @@ def render_analytics_panel() -> str:
             ${renderActivityByWeekday(data.activity_by_weekday)}
           </div>
           ${renderIntentBreakdown(data.intent_breakdown)}
+          ${renderObjectionBreakdown(data.objection_breakdown)}
           <div class="grid-2">
             ${renderTopQuestions("Топ непонятых вопросов", "По частоте точного текста", data.top_unanswered_questions)}
             ${renderTopQuestions("Топ частых вопросов", "По частоте точного текста", data.top_answered_questions)}

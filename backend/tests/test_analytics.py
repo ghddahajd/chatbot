@@ -858,6 +858,68 @@ def test_intent_breakdown_counts_message_answered_by_policy_reason(tmp_path) -> 
     ]
 
 
+def test_objection_breakdown_counts_objection_raised_by_topic(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    now = datetime.utcnow()
+    for topic, session_id in [("price", "s-1"), ("price", "s-2"), ("hesitation", "s-3")]:
+        append_jsonl(
+            analytics_file,
+            {
+                "timestamp": now.isoformat(),
+                "company_id": "rosh_import_demo",
+                "session_id": session_id,
+                "event_type": "objection_raised",
+                "message": "дорого",
+                "metadata": {"policy_reason": "objection_handled", "objection_topic": topic},
+            },
+        )
+    # другой event_type — не должен попасть в разбивку
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": now.isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-4",
+            "event_type": "message_answered",
+            "message": "привет",
+            "metadata": {"policy_reason": "small_talk"},
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    result = service.objection_breakdown()
+
+    assert result == [
+        {"topic": "price", "count": 2},
+        {"topic": "hesitation", "count": 1},
+    ]
+
+
+def test_objection_breakdown_missing_topic_falls_back_to_unknown(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    append_jsonl(
+        analytics_file,
+        {
+            "timestamp": datetime.utcnow().isoformat(),
+            "company_id": "rosh_import_demo",
+            "session_id": "s-1",
+            "event_type": "objection_raised",
+            "message": "не уверен",
+            "metadata": {"policy_reason": "objection_handled", "objection_topic": None},
+        },
+    )
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    result = service.objection_breakdown()
+
+    assert result == [{"topic": "unknown", "count": 1}]
+
+
+def test_objection_breakdown_empty_when_no_events(tmp_path) -> None:
+    service = AnalyticsService(analytics_file=tmp_path / "analytics.jsonl", leads_file=tmp_path / "leads.jsonl")
+    assert service.objection_breakdown() == []
+
+
 def test_list_conversations_merges_live_and_archived_and_filters_by_scope(tmp_path) -> None:
     from app.models import Message, MessageRole, Session, SessionStatus
 

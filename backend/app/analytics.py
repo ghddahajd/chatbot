@@ -474,6 +474,21 @@ class AnalyticsService:
             counts[reason] += 1
         return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
 
+    def objection_breakdown(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+        """Разбивка возражений по теме (price/hesitation/competitor/guarantee/pain_fear) —
+        тот же паттерн, что intent_breakdown выше, только по objection_raised.metadata.
+        objection_topic (инструментация 2026-08-29, см. track_policy_result) — данные
+        копятся с этой даты, историю назад не восстановить."""
+
+        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        counts: Counter[str] = Counter()
+        for event in events:
+            if event.get("event_type") != "objection_raised":
+                continue
+            topic = str((event.get("metadata") or {}).get("objection_topic") or "unknown")
+            counts[topic] += 1
+        return [{"topic": topic, "count": count} for topic, count in counts.most_common()]
+
     def _archived_conversations(self, company_id: Optional[str] = None) -> list[dict[str, Any]]:
         if self.conversations_archive_file is None:
             return []

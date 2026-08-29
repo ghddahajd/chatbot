@@ -173,6 +173,7 @@ async def analytics_dashboard(
         "funnel": analytics_service.conversion_funnel(company_id=company_id, days=funnel_days),
         "unanswered_trend": analytics_service.unanswered_trend(company_id=company_id, days=min(days, 30)),
         "intent_breakdown": analytics_service.intent_breakdown(company_id=company_id, days=days),
+        "objection_breakdown": analytics_service.objection_breakdown(company_id=company_id, days=days),
         "top_unanswered_questions": analytics_service.top_unanswered_questions(company_id=company_id, days=days),
         "top_answered_questions": analytics_service.top_answered_questions(company_id=company_id, days=days),
         "activity_by_hour": analytics_service.activity_by_hour(company_id=company_id, days=days),

@@ -1,6 +1,6 @@
 """проверки API операторской панели."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import anyio
 
@@ -309,9 +309,9 @@ def test_analytics_dashboard_resolves_service_name_and_shape(test_client) -> Non
 
     assert response.status_code == 200
     assert set(result.keys()) == {
-        "company_id", "days", "summary", "operators", "leads_by_month", "leads_by_reason", "top_services",
-        "funnel", "unanswered_trend", "intent_breakdown", "objection_breakdown", "top_unanswered_questions",
-        "top_answered_questions", "activity_by_hour", "activity_by_weekday",
+        "company_id", "days", "range_label", "summary", "operators", "leads_by_month", "leads_by_reason",
+        "top_services", "funnel", "unanswered_trend", "intent_breakdown", "objection_breakdown",
+        "top_unanswered_questions", "top_answered_questions", "activity_by_hour", "activity_by_weekday",
         "queue_wait", "period_comparison",
     }
     assert result["summary"]["leads"]["total"] >= 1
@@ -351,6 +351,150 @@ def test_analytics_dashboard_days_filter_excludes_old_leads(test_client) -> None
 
     assert sum(entry["count"] for entry in narrow["leads_by_reason"]) == 0
     assert sum(entry["count"] for entry in wide["leads_by_reason"]) == 1
+
+
+# ── кастомный диапазон дат (2026-08-30) ──
+
+
+def test_analytics_dashboard_custom_range_filters_leads(test_client) -> None:
+    from app.utils.jsonl import append_jsonl
+
+    in_range_lead = {
+        "timestamp": "2026-08-15T10:00:00", "company_id": "rosh_demo", "session_id": "in-range",
+        "name": "Иван", "phone": "+79990000000", "summary": "", "reason": "booking", "service_id": None,
+    }
+    out_of_range_lead = {
+        "timestamp": "2026-07-01T10:00:00", "company_id": "rosh_demo", "session_id": "out-of-range",
+        "name": "Пётр", "phone": "+79990000001", "summary": "", "reason": "booking", "service_id": None,
+    }
+    append_jsonl(test_client.app.state.settings.leads_file, in_range_lead)
+    append_jsonl(test_client.app.state.settings.leads_file, out_of_range_lead)
+
+    response = test_client.get(
+        "/api/analytics/dashboard?company_id=rosh_demo&start_date=2026-08-01&end_date=2026-08-31",
+        headers=OPERATOR_HEADERS,
+    )
+    result = response.json()
+
+    assert response.status_code == 200
+    assert sum(entry["count"] for entry in result["leads_by_reason"]) == 1
+    assert result["days"] is None
+    assert result["range_label"] == "01.08.2026–31.08.2026"
+    assert result["period_comparison"] is None
+
+
+def test_analytics_dashboard_custom_range_requires_both_dates(test_client) -> None:
+    response = test_client.get(
+        "/api/analytics/dashboard?company_id=rosh_demo&start_date=2026-08-01", headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 422
+
+
+def test_analytics_dashboard_custom_range_rejects_end_before_start(test_client) -> None:
+    response = test_client.get(
+        "/api/analytics/dashboard?company_id=rosh_demo&start_date=2026-08-31&end_date=2026-08-01",
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+def test_analytics_dashboard_custom_range_rejects_too_long(test_client) -> None:
+    response = test_client.get(
+        "/api/analytics/dashboard?company_id=rosh_demo&start_date=2020-01-01&end_date=2026-08-30",
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+def test_analytics_dashboard_custom_range_funnel_clamp_uses_midnight_not_time_max(test_client) -> None:
+    """Живой баг (код-ревью, 2026-08-30): клэмп воронки для широкого кастомного периода
+    раньше наследовал time.max (23:59:59.999999) от end — граничный день почти целиком
+    выпадал из подсчёта. Событие рано утром граничного дня должно попасть в воронку."""
+
+    from app.utils.jsonl import append_jsonl
+
+    end_date = date(2026, 8, 30)
+    start_date = end_date - timedelta(days=89)  # шире 55 дней — клэмп реально сработает
+    clamp_date = end_date - timedelta(days=54)  # ровно граничный день после клэмпа
+    early_morning = datetime.combine(clamp_date, datetime.min.time()) + timedelta(minutes=30)
+
+    impression = {
+        "timestamp": early_morning.isoformat(), "company_id": "rosh_demo", "session_id": "s-clamp",
+        "event_type": "widget_impression", "message": None, "metadata": {},
+    }
+    append_jsonl(test_client.app.state.settings.analytics_file, impression)
+
+    response = test_client.get(
+        f"/api/analytics/dashboard?company_id=rosh_demo&start_date={start_date.isoformat()}"
+        f"&end_date={end_date.isoformat()}",
+        headers=OPERATOR_HEADERS,
+    )
+    stages = {stage["label"]: stage["count"] for stage in response.json()["funnel"]["stages"]}
+
+    assert stages["Виджет загружен"] == 1
+
+
+def test_analytics_dashboard_preset_days_unaffected_by_custom_range_code(test_client) -> None:
+    """Пресетный путь (days=N без start_date/end_date) должен вести себя ровно как раньше —
+    days число, range_label осмысленный, period_comparison присутствует."""
+
+    response = test_client.get(
+        "/api/analytics/dashboard?company_id=rosh_demo&days=30", headers=OPERATOR_HEADERS
+    )
+    result = response.json()
+
+    assert response.status_code == 200
+    assert result["days"] == 30
+    assert result["range_label"] == "30 дн."
+    assert result["period_comparison"] is not None
+
+
+# ── лиды, "уровень 0" (2026-08-30) — таблица без персональных данных ──
+
+
+def test_analytics_leads_requires_token(test_client) -> None:
+    response = test_client.get("/api/analytics/leads?company_id=rosh_demo")
+    assert response.status_code == 403
+
+
+def test_analytics_leads_returns_no_pii_over_the_wire(test_client) -> None:
+    from app.utils.jsonl import append_jsonl
+
+    lead = {
+        "timestamp": datetime.utcnow().isoformat(), "company_id": "rosh_demo", "session_id": "s-1",
+        "name": "Секретное Имя", "phone": "+79991234567", "summary": "секретная сводка",
+        "reason": "booking", "service_id": None,
+    }
+    append_jsonl(test_client.app.state.settings.leads_file, lead)
+
+    response = test_client.get("/api/analytics/leads?company_id=rosh_demo", headers=OPERATOR_HEADERS)
+    raw_body = response.text
+
+    assert response.status_code == 200
+    assert "Секретное Имя" not in raw_body
+    assert "+79991234567" not in raw_body
+    assert "секретная сводка" not in raw_body
+    result = response.json()
+    assert len(result["leads"]) == 1
+    forbidden = {"name", "phone", "summary", "recent_messages"}
+    assert forbidden.isdisjoint(result["leads"][0].keys())
+
+
+def test_analytics_leads_resolves_service_name(test_client) -> None:
+    from app.utils.jsonl import append_jsonl
+
+    lead = {
+        "timestamp": datetime.utcnow().isoformat(), "company_id": "rosh_demo", "session_id": "s-1",
+        "name": "Иван", "phone": "+79990000000", "summary": "", "reason": "booking",
+        "service_id": "chistka_lica",
+    }
+    append_jsonl(test_client.app.state.settings.leads_file, lead)
+
+    response = test_client.get("/api/analytics/leads?company_id=rosh_demo", headers=OPERATOR_HEADERS)
+    result = response.json()
+
+    assert result["leads"][0]["service_id"] == "chistka_lica"
+    assert isinstance(result["leads"][0]["service_name"], str)
 
 
 def test_track_impression_writes_analytics_event(test_client) -> None:

@@ -1132,3 +1132,133 @@ def test_top_answered_questions_uses_message_answered_events(tmp_path) -> None:
     result = service.top_answered_questions()
 
     assert result == [{"message": "какие есть услуги", "count": 2}]
+
+
+# ── кастомный диапазон дат (2026-08-30) ──
+
+
+def test_within_range_filters_by_explicit_start_and_end() -> None:
+    from app.analytics import _within_range
+
+    entries = [
+        {"timestamp": "2026-08-01T10:00:00", "company_id": "c"},
+        {"timestamp": "2026-08-15T10:00:00", "company_id": "c"},
+        {"timestamp": "2026-08-31T10:00:00", "company_id": "c"},
+    ]
+    result = _within_range(entries, start=datetime(2026, 8, 10), end=datetime(2026, 8, 20), company_id=None)
+    assert [entry["timestamp"] for entry in result] == ["2026-08-15T10:00:00"]
+
+
+def test_within_range_boundaries_are_inclusive() -> None:
+    from app.analytics import _within_range
+
+    entries = [{"timestamp": "2026-08-10T00:00:00", "company_id": "c"}, {"timestamp": "2026-08-20T00:00:00", "company_id": "c"}]
+    result = _within_range(entries, start=datetime(2026, 8, 10), end=datetime(2026, 8, 20), company_id=None)
+    assert len(result) == 2
+
+
+def test_within_range_no_bounds_keeps_everything_including_unparseable_timestamps() -> None:
+    from app.analytics import _within_range
+
+    entries = [{"timestamp": "not-a-date", "company_id": "c"}]
+    result = _within_range(entries, start=None, end=None, company_id=None)
+    assert result == entries
+
+
+def test_unanswered_trend_preset_first_day_not_undercounted_by_time_of_day(tmp_path) -> None:
+    """Живой баг (код-ревью, 2026-08-30): было `now - timedelta(days=days-1)` без округления
+    до полуночи — событие рано утром первого отображаемого дня терялось из окна фильтра."""
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    now = datetime.utcnow()
+    first_day_early_morning = (now - timedelta(days=4)).replace(hour=0, minute=15, second=0, microsecond=0)
+    append_jsonl(
+        analytics_file,
+        _event(event_type="unknown_question", timestamp=first_day_early_morning, action=None),
+    )
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+
+    result = service.unanswered_trend(days=5)
+
+    assert result[0]["count"] == 1
+
+
+def test_unanswered_trend_custom_range_builds_day_series_from_start_to_end(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    append_jsonl(
+        analytics_file,
+        _event(event_type="unknown_question", timestamp=datetime(2026, 8, 15, 12, 0), action=None),
+    )
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+
+    result = service.unanswered_trend(start=datetime(2026, 8, 13), end=datetime(2026, 8, 16))
+
+    assert [row["date"] for row in result] == ["2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16"]
+    assert {row["date"]: row["count"] for row in result}["2026-08-15"] == 1
+
+
+def test_conversion_funnel_accepts_explicit_start_end_instead_of_days(tmp_path) -> None:
+    analytics_file = tmp_path / "analytics.jsonl"
+    append_jsonl(analytics_file, _impression(timestamp=datetime(2026, 8, 15, 12, 0)))
+
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    result = service.conversion_funnel(start=datetime(2026, 8, 10), end=datetime(2026, 8, 20))
+
+    stages = {stage["label"]: stage["count"] for stage in result["stages"]}
+    assert stages["Виджет загружен"] == 1
+
+
+# ── лиды, "уровень 0" (2026-08-30) — таблица без персональных данных ──
+
+
+def test_leads_feed_never_includes_pii_fields(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    append_jsonl(leads_file, _lead(session_id="s-1"))  # исходный Lead содержит name/phone/summary
+
+    service = AnalyticsService(analytics_file=tmp_path / "analytics.jsonl", leads_file=leads_file)
+    result = service.leads_feed()
+
+    assert len(result) == 1
+    forbidden = {"name", "phone", "summary", "recent_messages", "unresolved_query", "operator_url"}
+    assert forbidden.isdisjoint(result[0].keys())
+    assert set(result[0].keys()) == {
+        "timestamp", "session_id", "service_id", "reason", "needs_operator", "lead_trigger",
+    }
+
+
+def test_leads_feed_filters_by_reason(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    booking = _lead(session_id="s-1")
+    booking["reason"] = "booking"
+    price = _lead(session_id="s-2")
+    price["reason"] = "price_question"
+    append_jsonl(leads_file, booking)
+    append_jsonl(leads_file, price)
+
+    service = AnalyticsService(analytics_file=tmp_path / "analytics.jsonl", leads_file=leads_file)
+    result = service.leads_feed(reason="booking")
+
+    assert [lead["session_id"] for lead in result] == ["s-1"]
+
+
+def test_leads_feed_sorted_newest_first_and_respects_limit(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    t0 = datetime(2026, 8, 1)
+    append_jsonl(leads_file, _lead(session_id="old", timestamp=t0))
+    append_jsonl(leads_file, _lead(session_id="new", timestamp=t0 + timedelta(days=5)))
+
+    service = AnalyticsService(analytics_file=tmp_path / "analytics.jsonl", leads_file=leads_file)
+    result = service.leads_feed(limit=1)
+
+    assert [lead["session_id"] for lead in result] == ["new"]
+
+
+def test_leads_feed_respects_custom_date_range(tmp_path) -> None:
+    leads_file = tmp_path / "leads.jsonl"
+    append_jsonl(leads_file, _lead(session_id="in-range", timestamp=datetime(2026, 8, 15)))
+    append_jsonl(leads_file, _lead(session_id="out-of-range", timestamp=datetime(2026, 7, 1)))
+
+    service = AnalyticsService(analytics_file=tmp_path / "analytics.jsonl", leads_file=leads_file)
+    result = service.leads_feed(start=datetime(2026, 8, 1), end=datetime(2026, 8, 31))
+
+    assert [lead["session_id"] for lead in result] == ["in-range"]

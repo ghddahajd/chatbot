@@ -38,26 +38,60 @@ FUNNEL_WINDOW_DAYS = 30
 WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
+def _within_range(
+    entries: list[dict[str, Any]],
+    *,
+    start: Optional[datetime],
+    end: Optional[datetime],
+    company_id: Optional[str],
+) -> list[dict[str, Any]]:
+    """Общий фильтр "компания + временной диапазон" — обобщение _within_days на явные
+    границы (2026-08-30, кастомный период на дашборде). start/end независимы: только start
+    = "не раньше X", только end = "не позже Y", оба None = без ограничения по дате вообще."""
+
+    def _keep(entry: dict[str, Any]) -> bool:
+        if company_id is not None and entry.get("company_id") != company_id:
+            return False
+        if start is None and end is None:
+            return True
+        try:
+            timestamp = datetime.fromisoformat(str(entry.get("timestamp")))
+        except (TypeError, ValueError):
+            return False
+        if start is not None and timestamp < start:
+            return False
+        if end is not None and timestamp > end:
+            return False
+        return True
+
+    return [entry for entry in entries if _keep(entry)]
+
+
 def _within_days(
     entries: list[dict[str, Any]], *, days: Optional[int], company_id: Optional[str]
 ) -> list[dict[str, Any]]:
     """Общий фильтр "компания + не старше N дней" — переиспользуется везде, где раньше
     каждый метод сам городил свою версию (2026-08-27, общий date-range фильтр на дашборде).
-    days=None — без ограничения по дате (только company_id, если задан)."""
+    days=None — без ограничения по дате (только company_id, если задан). Частный случай
+    _within_range: скользящее окно от "сейчас", без верхней границы — сохранён как отдельная
+    функция ради обратной совместимости (много вызовов/тестов уже завязаны на days=int)."""
 
-    cutoff = datetime.utcnow() - timedelta(days=days) if days is not None else None
+    start = datetime.utcnow() - timedelta(days=days) if days is not None else None
+    return _within_range(entries, start=start, end=None, company_id=company_id)
 
-    def _keep(entry: dict[str, Any]) -> bool:
-        if company_id is not None and entry.get("company_id") != company_id:
-            return False
-        if cutoff is None:
-            return True
-        try:
-            return datetime.fromisoformat(str(entry.get("timestamp"))) >= cutoff
-        except (TypeError, ValueError):
-            return False
 
-    return [entry for entry in entries if _keep(entry)]
+def _resolve_range(
+    *, days: Optional[int], start: Optional[datetime], end: Optional[datetime]
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Явные start/end (кастомный период, 2026-08-30) побеждают days, если хоть один задан.
+    Иначе — старое поведение days: скользящее окно от "сейчас", без верхней границы.
+    days=None и start/end оба None — вообще без ограничения по дате ("всё время")."""
+
+    if start is not None or end is not None:
+        return start, end
+    if days is not None:
+        return datetime.utcnow() - timedelta(days=days), None
+    return None, None
 
 
 class AnalyticsService:
@@ -261,17 +295,26 @@ class AnalyticsService:
             "unanswered": unanswered,
         }
 
-    def operator_summary(self, company_id: Optional[str] = None, days: Optional[int] = None) -> dict[str, Any]:
+    def operator_summary(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> dict[str, Any]:
         """Аналитика "по манагерам" (2026-08-27) — считает operator_claimed/operator_closed
         события (см. telegram_bridge._track_operator_event) и attribute'ит лиды к оператору
         через тот же session_id И временное окно claim→close (2026-08-29: лид засчитывается
         оператору, только если случился реально пока диалог был у него в работе — иначе идёт
         в синтетическую запись "Бот", см. _operator_for_lead), ничего не меняя в самой модели
         Lead (связи в другую сторону в данных нет — джойним тут, на чтении, не на записи).
-        days — общий date-range фильтр дашборда (None = за всё время)."""
+        days — общий date-range фильтр дашборда (None = за всё время). start/end (2026-08-30,
+        кастомный период) — явные границы, побеждают days, если заданы."""
 
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
         all_events = read_jsonl(self.analytics_file)
-        events = _within_days(all_events, days=days, company_id=company_id)
+        events = _within_range(all_events, start=range_start, end=range_end, company_id=company_id)
         claims = [event for event in events if event.get("event_type") == "operator_claimed"]
         # closes/leads: живой баг (код-ревью, 2026-08-27) — раньше closes и leads фильтровались
         # ПО ОТДЕЛЬНОСТИ тем же days-окном, что и claims. Клейм внутри окна, чьё закрытие или
@@ -438,12 +481,19 @@ class AnalyticsService:
         return result
 
     def top_services(
-        self, company_id: Optional[str] = None, limit: int = 8, days: Optional[int] = None
+        self,
+        company_id: Optional[str] = None,
+        limit: int = 8,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         """Топ услуг по числу лидов — service_id без человекочитаемого имени (аналитика не
         знает о KnowledgeBase намеренно, имя резолвит вызывающий route, у которого он есть)."""
 
-        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for lead in leads:
             service_id = lead.get("service_id")
@@ -451,21 +501,72 @@ class AnalyticsService:
                 counts[str(service_id)] += 1
         return [{"service_id": service_id, "count": count} for service_id, count in counts.most_common(limit)]
 
-    def leads_by_reason(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+    def leads_by_reason(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         """Разбивка лидов по reason (booking/price_question/medical_risk/commercial_interest,
         см. classify_lead_reason в leads.py) — уже есть на каждом Lead, новых полей не надо,
         для донат-чарта "какие лиды приходят"."""
 
-        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter(str(lead.get("reason") or "commercial_interest") for lead in leads)
         return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
 
-    def intent_breakdown(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+    def leads_feed(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Построчный список лидов БЕЗ персональных данных — "уровень 0" таблицы лидов
+        (2026-08-30, обсуждено с пользователем: минимальный показ данных, вместо ожидания
+        решения клиента про имя/телефон). Намеренно НЕ читает и не отдаёт name/phone/summary/
+        recent_messages — это не "скрыто на фронте", их физически нет в этом ответе. Так и
+        должно оставаться, пока клиент явно не разрешит уровень 1 (см. память
+        project_rosh_analytics_dashboard_backlog) — тогда это будет отдельный, осознанный
+        аддитивный шаг (ещё 2 поля), не переделка."""
+
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
+        if reason is not None:
+            leads = [lead for lead in leads if str(lead.get("reason") or "commercial_interest") == reason]
+        leads.sort(key=lambda lead: str(lead.get("timestamp") or ""), reverse=True)
+        return [
+            {
+                "timestamp": lead.get("timestamp"),
+                "session_id": lead.get("session_id"),
+                "service_id": lead.get("service_id"),
+                "reason": str(lead.get("reason") or "commercial_interest"),
+                "needs_operator": bool(lead.get("needs_operator")),
+                "lead_trigger": str(lead.get("lead_trigger") or "ask_contact"),
+            }
+            for lead in leads[:limit]
+        ]
+
+    def intent_breakdown(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         """Разбивка по категориям сообщений (smalltalk/price_question/off_topic и т.д.) — для
         вкладки "Чаты" (TSK-05). Данные уже есть в message_answered.metadata.policy_reason
         (см. track_answer) — только агрегация, новой инструментации не потребовалось."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for event in events:
             if event.get("event_type") != "message_answered":
@@ -474,13 +575,21 @@ class AnalyticsService:
             counts[reason] += 1
         return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
 
-    def objection_breakdown(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+    def objection_breakdown(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         """Разбивка возражений по теме (price/hesitation/competitor/guarantee/pain_fear) —
         тот же паттерн, что intent_breakdown выше, только по objection_raised.metadata.
         objection_topic (инструментация 2026-08-29, см. track_policy_result) — данные
         копятся с этой даты, историю назад не восстановить."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for event in events:
             if event.get("event_type") != "objection_raised":
@@ -594,12 +703,35 @@ class AnalyticsService:
                 return record
         return None
 
-    def unanswered_trend(self, company_id: Optional[str] = None, days: int = 14) -> list[dict[str, Any]]:
+    def unanswered_trend(
+        self,
+        company_id: Optional[str] = None,
+        days: int = 14,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         """Дневная динамика unknown_question — растёт база знаний или деградирует. Не
         подчиняется MESSAGE_RETENTION_EVENT_TYPES (хранится вечно), так что честно работает и
-        для длинных окон, в отличие от unanswered_trend/conversion_funnel-класса метрик."""
+        для длинных окон, в отличие от unanswered_trend/conversion_funnel-класса метрик.
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        Кастомный период (2026-08-30): start и end нужны ОБА, чтобы честно нарисовать ось
+        дней — без верхней границы непонятно, на каком дне заканчивать ряд. Если задан только
+        один из них или ни одного — старое поведение, последние `days` дней, кончая сегодня."""
+
+        now = datetime.utcnow()
+        if start is not None and end is not None:
+            range_start, range_end = start, end
+        else:
+            # Живой баг (код-ревью, 2026-08-30): было `now - timedelta(days=days-1)` без
+            # округления до полуночи — первый отображаемый день терял события до текущего
+            # часа (старый код по факту брал cutoff на день шире дисплея, гарантируя запас;
+            # тут запаса не было). Округляем начало вниз до 00:00 — конец (range_end=now)
+            # намеренно НЕ округляем, "сегодня ещё не закончилось" — это честно, не баг.
+            range_end = now
+            range_start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for event in events:
             if event.get("event_type") != "unknown_question":
@@ -609,9 +741,12 @@ class AnalyticsService:
                 counts[day_key] += 1
 
         result: list[dict[str, Any]] = []
-        for offset in range(days - 1, -1, -1):
-            day = (datetime.utcnow() - timedelta(days=offset)).strftime("%Y-%m-%d")
-            result.append({"date": day, "count": counts.get(day, 0)})
+        day = range_start.date()
+        last_day = range_end.date()
+        while day <= last_day:
+            key = day.strftime("%Y-%m-%d")
+            result.append({"date": key, "count": counts.get(key, 0)})
+            day += timedelta(days=1)
         return result
 
     def _top_messages_by_text(
@@ -621,13 +756,16 @@ class AnalyticsService:
         company_id: Optional[str] = None,
         days: Optional[int] = None,
         limit: int = 10,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         """Топ-N по частоте текста сообщения — группировка по НОРМАЛИЗОВАННОМУ (lower+strip)
         тексту, ловит буквальные повторы одного вопроса. Разные формулировки одного смысла
         ("сколько стоит ботокс" vs "почём ботокс") НЕ объединяются — это отдельная задача
         (кластеризация по смыслу), сознательно не делаем сейчас, см. память по TSK-05."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         examples: dict[str, str] = {}
         for event in events:
@@ -642,43 +780,79 @@ class AnalyticsService:
         return [{"message": examples[key], "count": count} for key, count in counts.most_common(limit)]
 
     def top_unanswered_questions(
-        self, company_id: Optional[str] = None, days: Optional[int] = None, limit: int = 10
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 10,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
-        return self._top_messages_by_text("unknown_question", company_id=company_id, days=days, limit=limit)
+        return self._top_messages_by_text(
+            "unknown_question", company_id=company_id, days=days, limit=limit, start=start, end=end
+        )
 
     def top_answered_questions(
-        self, company_id: Optional[str] = None, days: Optional[int] = None, limit: int = 10
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 10,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
-        return self._top_messages_by_text("message_answered", company_id=company_id, days=days, limit=limit)
+        return self._top_messages_by_text(
+            "message_answered", company_id=company_id, days=days, limit=limit, start=start, end=end
+        )
 
     def _rollup_message_answered_rows(
-        self, company_id: Optional[str], days: Optional[int]
+        self,
+        company_id: Optional[str],
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         """rollup_file строками "дата+час" для message_answered — переживает ретеншн
         analytics_file (2026-08-27). event_type пишется явно с сегодняшнего дня; строка без
         него (гипотетический старый формат, до этого изменения ничего, кроме message_answered,
-        в rollup не попадало) по умолчанию тоже считается message_answered."""
+        в rollup не попадало) по умолчанию тоже считается message_answered.
+
+        start/end (2026-08-30, кастомный период) — верхняя граница нужна, если период
+        заканчивается раньше "сейчас" (раньше был только нижний cutoff, без верхней границы —
+        для скользящего окна от сегодня она и не нужна была)."""
 
         if self.rollup_file is None:
             return []
-        cutoff_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d") if days is not None else None
+        start_date = start.strftime("%Y-%m-%d") if start is not None else None
+        end_date = end.strftime("%Y-%m-%d") if end is not None else None
         rows = []
         for row in read_jsonl(self.rollup_file):
             if row.get("event_type", "message_answered") != "message_answered":
                 continue
             if company_id is not None and row.get("company_id") != company_id:
                 continue
-            if cutoff_date is not None and str(row.get("date") or "") < cutoff_date:
+            row_date = str(row.get("date") or "")
+            if start_date is not None and row_date < start_date:
+                continue
+            if end_date is not None and row_date > end_date:
                 continue
             rows.append(row)
         return rows
 
-    def activity_by_hour(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+    def activity_by_hour(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         """Сколько сообщений приходит в каждый час суток (UTC) — для планирования смен
         операторов. Сырые message_answered (недавние) + rollup (то, что уже сжато под
         ретеншном) — иначе окно дальше 60 дней молча показывало бы неполную картину."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[int] = Counter()
         for event in events:
             if event.get("event_type") != "message_answered":
@@ -688,7 +862,7 @@ class AnalyticsService:
             except (TypeError, ValueError):
                 continue
             counts[hour] += 1
-        for row in self._rollup_message_answered_rows(company_id, days):
+        for row in self._rollup_message_answered_rows(company_id, start=range_start, end=range_end):
             try:
                 # Живой баг (код-ревью, 2026-08-27): int(count) раньше жил СНАРУЖИ этого
                 # try/except (тот ловил только парсинг часа) — битое/нецелое значение count
@@ -701,12 +875,20 @@ class AnalyticsService:
             counts[hour] += count
         return [{"hour": hour, "count": counts.get(hour, 0)} for hour in range(24)]
 
-    def activity_by_weekday(self, company_id: Optional[str] = None, days: Optional[int] = None) -> list[dict[str, Any]]:
+    def activity_by_weekday(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         """Та же идея, но по дню недели (0=Пн ... 6=Вс) — на пару с activity_by_hour. День
         недели не хранится отдельно ни в сырых событиях, ни в rollup — всегда вычисляется из
         даты, это чистая функция, дублировать в схеме незачем."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[int] = Counter()
         for event in events:
             if event.get("event_type") != "message_answered":
@@ -716,7 +898,7 @@ class AnalyticsService:
             except (TypeError, ValueError):
                 continue
             counts[weekday] += 1
-        for row in self._rollup_message_answered_rows(company_id, days):
+        for row in self._rollup_message_answered_rows(company_id, start=range_start, end=range_end):
             try:
                 # Живой баг (код-ревью, 2026-08-27): та же дыра, что в activity_by_hour —
                 # int(count) вне try/except мог уронить весь дашборд на одной плохой строке.
@@ -730,14 +912,22 @@ class AnalyticsService:
             for weekday in range(7)
         ]
 
-    def queue_wait_stats(self, company_id: Optional[str] = None, days: Optional[int] = None) -> dict[str, Any]:
+    def queue_wait_stats(
+        self,
+        company_id: Optional[str] = None,
+        days: Optional[int] = None,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> dict[str, Any]:
         """Сколько реально ждут оператора — от operator_requested (клиент попросил) до
         operator_claimed (кто-то взял в работу). Не путать с avg_dialog_minutes в
         operator_summary — та мерит claimed→closed, время самого разговора, не очереди.
         Оба события хранятся вечно (не в MESSAGE_RETENTION_EVENT_TYPES), так что это честно
         работает на любом окне, включая "всё время" (days=None)."""
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
 
         requested_at_by_session: dict[str, datetime] = {}
         for event in events:
@@ -836,16 +1026,28 @@ class AnalyticsService:
             "leads": {"current": current_leads, "previous": previous_leads},
         }
 
-    def conversion_funnel(self, company_id: Optional[str] = None, days: int = FUNNEL_WINDOW_DAYS) -> dict[str, Any]:
+    def conversion_funnel(
+        self,
+        company_id: Optional[str] = None,
+        days: int = FUNNEL_WINDOW_DAYS,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> dict[str, Any]:
         """Воронка виджет-загружен → чат-открыт → есть-переписка → лид, за последние `days`
         дней (см. FUNNEL_WINDOW_DAYS — специально короче ретеншна widget_impression/
         chat_opened/message_answered, иначе стадии молча теряют сырые данные на границе окна).
         "Есть переписка" — уникальные session_id в message_answered, не отдельное событие:
         conversation is what happens when a real message gets answered, so a fresh event
-        would only duplicate data already collected."""
+        would only duplicate data already collected.
 
-        events = _within_days(read_jsonl(self.analytics_file), days=days, company_id=company_id)
-        leads = _within_days(self._all_leads(), days=days, company_id=company_id)
+        start/end (2026-08-30, кастомный период) — вызывающий (routes/analytics.py) сам
+        отвечает за клэмп 55-дневным окном, если диапазон шире — тут просто честно считаем
+        по тому, что передали."""
+
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
 
         impressions = sum(1 for event in events if event.get("event_type") == "widget_impression")
         chat_opened = sum(1 for event in events if event.get("event_type") == "chat_opened")
@@ -886,7 +1088,17 @@ class AnalyticsService:
         # и Переписка→Лид (обе server-side) — внутри своего яруса сравнимы, оставляем как есть.
         stages[2]["percent_of_previous"] = None
 
-        return {"company_id": company_id, "days": days, "stages": stages}
+        # Честное число дней для хинта на дашборде ("За последние N дней") — не просто эхо
+        # входного `days`: при кастомном периоде (2026-08-30), клэмпнутом до 55 дней вызывающим
+        # (routes/analytics.py), это реально посчитанное окно, а не то, что запросил
+        # пользователь. Живой баг найден при живой проверке: считать так же и для обычного
+        # пресета (range_end здесь всегда None) даёт "31 день" вместо "30" — скользящее окно
+        # "N дней назад от сейчас" считает ЧАСЫ (ровно N*24ч), а не календарные даты, разница
+        # на дробный день округлением в date() и давала лишний +1. Пересчитываем ТОЛЬКО когда
+        # range_end реально задан явно (кастом/клэмп) — иначе оставляем исходный `days` как есть.
+        effective_days = (range_end.date() - range_start.date()).days + 1 if range_end is not None else days
+
+        return {"company_id": company_id, "days": effective_days, "stages": stages}
 
 
 def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retention_days: int) -> int:

@@ -118,6 +118,14 @@ def render_analytics_panel(
       color: var(--text);
       cursor: pointer;
     }
+    .custom-range-inputs { display: flex; align-items: center; gap: 6px; }
+    .custom-range-inputs input[type="date"] {
+      font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 10px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--card); color: var(--text);
+    }
+    .custom-range-dash { color: var(--text-muted); }
+    .leads-filters { margin-bottom: 14px; }
+    .leads-table-empty { color: var(--text-muted); font-size: 13.5px; padding: 12px 2px; }
 
     .tiles {
       display: grid;
@@ -427,7 +435,13 @@ def render_analytics_panel(
           <option value="30" selected>30 дней</option>
           <option value="90">90 дней</option>
           <option value="3650">Всё время</option>
+          <option value="custom">Свой период</option>
         </select>
+        <span class="custom-range-inputs" id="customRangeInputs" style="display:none">
+          <input type="date" id="rangeStart" />
+          <span class="custom-range-dash">—</span>
+          <input type="date" id="rangeEnd" />
+        </span>
         __COMPANY_SELECT_HTML__
         <form method="post" action="/logout">
           <button type="submit" class="logout-btn">Выйти</button>
@@ -438,6 +452,7 @@ def render_analytics_panel(
     <div class="tabs">
       <button type="button" class="tab-btn active" id="tabDashboardBtn">Дашборд</button>
       <button type="button" class="tab-btn" id="tabChatsBtn">Чаты</button>
+      <button type="button" class="tab-btn" id="tabLeadsBtn">Лиды</button>
       <button type="button" class="tab-btn" id="tabSettingsBtn">Настройки</button>
     </div>
 
@@ -459,6 +474,26 @@ def render_analytics_panel(
         <div class="card chats-detail-pane" id="chatDetail">
           <div class="empty-state">Выберите диалог слева</div>
         </div>
+      </div>
+    </div>
+
+    <div id="leadsContent" style="display:none">
+      <div class="card">
+        <h2>Лиды</h2>
+        <p class="card-hint">
+          Без персональных данных — имя и телефон видны в Telegram-теме диалога, тут только метаданные заявки.
+        </p>
+        <div class="leads-filters">
+          <select class="company-select" id="leadsReasonFilter">
+            <option value="">Все типы</option>
+            <option value="booking">Запись</option>
+            <option value="price_question">Вопрос о цене</option>
+            <option value="medical_risk">Консультация</option>
+            <option value="commercial_interest">Интерес к услуге</option>
+            <option value="unknown_service">Неизвестная услуга</option>
+          </select>
+        </div>
+        <div id="leadsTableWrap"><div class="loading">Загрузка…</div></div>
       </div>
     </div>
 
@@ -570,7 +605,28 @@ def render_analytics_panel(
       return names[parseInt(m, 10) - 1] + " " + y.slice(2);
     }
 
-    async function fetchDashboard(companyId, days) {
+    // Диапазон дат (2026-08-30) — пресеты (days) или "Свой период" (start_date/end_date),
+    // общий для вкладок "Дашборд" и "Лиды", поэтому вынесен отдельно, а не зашит в fetchDashboard.
+    function currentRangeParams() {
+      const select = document.getElementById("daysSelect");
+      if (select.value === "custom") {
+        const start = document.getElementById("rangeStart").value;
+        const end = document.getElementById("rangeEnd").value;
+        // обе даты нужны вместе (см. _resolve_date_range на бэкенде) — пока не выбраны обе,
+        // не шлём запрос с половиной диапазона (backend всё равно откажет 422-й)
+        if (start && end) return { start_date: start, end_date: end };
+        return null;
+      }
+      return { days: select.value };
+    }
+
+    function applyRangeParams(rangeParams, target) {
+      if (rangeParams.days !== undefined) target.set("days", rangeParams.days);
+      if (rangeParams.start_date !== undefined) target.set("start_date", rangeParams.start_date);
+      if (rangeParams.end_date !== undefined) target.set("end_date", rangeParams.end_date);
+    }
+
+    async function fetchDashboard(companyId, rangeParams) {
       // Живой баг (код-ревью, 2026-08-27): токен раньше читался из ?token= в URL и
       // подставлялся в каждый запрос — та самая утечка (nginx-логи/история браузера),
       // ради ухода от которой и делался cookie-логин. Страница уже прошла проверку
@@ -578,10 +634,69 @@ def render_analytics_panel(
       // отправляется браузером сама на same-origin fetch, отдельно передавать больше нечего.
       const params = new URLSearchParams();
       if (companyId) params.set("company_id", companyId);
-      params.set("days", days);
+      applyRangeParams(rangeParams, params);
       const res = await fetch(`/api/analytics/dashboard?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
+    }
+
+    const LEAD_REASON_LABELS = {
+      booking: "Запись", price_question: "Вопрос о цене", medical_risk: "Консультация",
+      commercial_interest: "Интерес к услуге", unknown_service: "Неизвестная услуга",
+    };
+    const LEAD_TRIGGER_LABELS = {
+      ask_contact: "Оставил контакт", booking_request: "Запись",
+      regulated_advice: "Мед. вопрос", operator_handoff: "Передано оператору",
+    };
+
+    async function fetchLeads(companyId, rangeParams) {
+      const params = new URLSearchParams();
+      if (companyId) params.set("company_id", companyId);
+      applyRangeParams(rangeParams, params);
+      const reason = document.getElementById("leadsReasonFilter").value;
+      if (reason) params.set("reason", reason);
+      const res = await fetch(`/api/analytics/leads?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function renderLeadsTable(leads) {
+      if (!leads.length) return '<div class="leads-table-empty">Лидов за этот период не найдено</div>';
+      const rows = leads.map((lead) => `
+        <tr>
+          <td>${escapeHtml((lead.timestamp || "").replace("T", " ").slice(0, 16))}</td>
+          <td>${escapeHtml(lead.service_name || "—")}</td>
+          <td>${escapeHtml(LEAD_REASON_LABELS[lead.reason] || lead.reason)}</td>
+          <td>${escapeHtml(LEAD_TRIGGER_LABELS[lead.lead_trigger] || lead.lead_trigger)}</td>
+          <td>${lead.needs_operator ? "да" : "—"}</td>
+          <td class="chat-id">${escapeHtml((lead.session_id || "").slice(0, 8))}</td>
+        </tr>
+      `).join("");
+      return `
+        <table>
+          <thead>
+            <tr><th>Дата</th><th>Услуга</th><th>Тип</th><th>Как пришёл</th><th>Нужен оператор</th><th>Сессия</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    async function loadLeads() {
+      const wrap = document.getElementById("leadsTableWrap");
+      const rangeParams = currentRangeParams();
+      if (!rangeParams) {
+        wrap.innerHTML = '<div class="leads-table-empty">Выберите обе даты периода сверху</div>';
+        return;
+      }
+      wrap.innerHTML = '<div class="loading">Загрузка…</div>';
+      try {
+        const companyId = document.getElementById("companySelect").value;
+        const data = await fetchLeads(companyId, rangeParams);
+        wrap.innerHTML = renderLeadsTable(data.leads);
+      } catch (error) {
+        wrap.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
+      }
     }
 
     // signed % от previous->current; null, когда сравнивать не с чем (previous=0) — тогда
@@ -605,15 +720,27 @@ def render_analytics_panel(
       // 2026-08-27): раньше "текущее" брали из воронки (окно до 55 дней), а "предыдущее" —
       // отдельно из period_comparison (безопасно зажато до 30 дней ретеншном) — два разных
       // окна сравнивались друг с другом как одно, дельта могла быть технически неверной.
+      //
+      // Кастомный период (2026-08-30): period_comparison тут null — "N дней vs предыдущие N
+      // дней от сегодня" не имеет смысла для произвольного диапазона, backend его сознательно
+      // не считает (см. routes/analytics.py). Показываем тайлы без числа/дельты, а не врём.
       const pc = data.period_comparison;
-      const windowDays = pc.conversations_days != null ? pc.conversations_days : pc.days;
-      const conversations = pc.conversations.current;
-      const conversationsDelta = deltaBadge(pc.conversations.current, pc.conversations.previous);
-      const conversion = pc.conversations.current > 0
-        ? Math.round((pc.leads.current / pc.conversations.current) * 1000) / 10
-        : 0;
-      const prevConversion = pc.conversations.previous > 0 ? (pc.leads.previous / pc.conversations.previous) * 100 : 0;
-      const conversionDelta = deltaBadge(conversion, prevConversion);
+      let conversationsTile, conversionTile;
+      if (pc) {
+        const windowDays = pc.conversations_days != null ? pc.conversations_days : pc.days;
+        const conversations = pc.conversations.current;
+        const conversationsDelta = deltaBadge(pc.conversations.current, pc.conversations.previous);
+        const conversion = pc.conversations.current > 0
+          ? Math.round((pc.leads.current / pc.conversations.current) * 1000) / 10
+          : 0;
+        const prevConversion = pc.conversations.previous > 0 ? (pc.leads.previous / pc.conversations.previous) * 100 : 0;
+        const conversionDelta = deltaBadge(conversion, prevConversion);
+        conversationsTile = `<div class="tile"><div class="tile-label">Диалогов (${windowDays} дн.)</div><div class="tile-value">${fmt(conversations)}${conversationsDelta}</div></div>`;
+        conversionTile = `<div class="tile"><div class="tile-label">Конверсия (${windowDays} дн.)</div><div class="tile-value">${conversion}%${conversionDelta}</div></div>`;
+      } else {
+        conversationsTile = `<div class="tile"><div class="tile-label">Диалогов</div><div class="tile-value">—</div></div>`;
+        conversionTile = `<div class="tile"><div class="tile-label">Конверсия</div><div class="tile-value">—</div></div>`;
+      }
 
       const waitMinutes = data.queue_wait.avg_wait_minutes;
 
@@ -621,8 +748,8 @@ def render_analytics_panel(
         <div class="tiles">
           <div class="tile"><div class="tile-label">Всего лидов</div><div class="tile-value">${fmt(totalLeads)}</div></div>
           <div class="tile"><div class="tile-label">Лидов за месяц</div><div class="tile-value accent">${fmt(thisMonth ? thisMonth.count : 0)}</div></div>
-          <div class="tile"><div class="tile-label">Диалогов (${windowDays} дн.)</div><div class="tile-value">${fmt(conversations)}${conversationsDelta}</div></div>
-          <div class="tile"><div class="tile-label">Конверсия (${windowDays} дн.)</div><div class="tile-value">${conversion}%${conversionDelta}</div></div>
+          ${conversationsTile}
+          ${conversionTile}
           <div class="tile"><div class="tile-label">Ожидание оператора</div><div class="tile-value">${waitMinutes != null ? waitMinutes + " мин" : "—"}</div></div>
           <div class="tile"><div class="tile-label">Операторов</div><div class="tile-value">${fmt(operatorsCount)}</div></div>
         </div>
@@ -1117,11 +1244,14 @@ def render_analytics_panel(
     function switchTab(tab) {
       document.getElementById("tabDashboardBtn").classList.toggle("active", tab === "dashboard");
       document.getElementById("tabChatsBtn").classList.toggle("active", tab === "chats");
+      document.getElementById("tabLeadsBtn").classList.toggle("active", tab === "leads");
       document.getElementById("tabSettingsBtn").classList.toggle("active", tab === "settings");
       document.getElementById("content").style.display = tab === "dashboard" ? "" : "none";
       document.getElementById("chatsContent").style.display = tab === "chats" ? "" : "none";
+      document.getElementById("leadsContent").style.display = tab === "leads" ? "" : "none";
       document.getElementById("settingsContent").style.display = tab === "settings" ? "" : "none";
       if (tab === "chats") loadChats();
+      if (tab === "leads") loadLeads();
       if (tab === "settings") loadSettings();
     }
 
@@ -1348,10 +1478,14 @@ def render_analytics_panel(
     async function load() {
       const content = document.getElementById("content");
       const companyId = document.getElementById("companySelect").value;
-      const days = document.getElementById("daysSelect").value;
+      const rangeParams = currentRangeParams();
+      if (!rangeParams) {
+        content.innerHTML = '<div class="empty-state">Выберите обе даты периода сверху</div>';
+        return;
+      }
       content.innerHTML = '<div class="loading">Загрузка…</div>';
       try {
-        const data = await fetchDashboard(companyId, days);
+        const data = await fetchDashboard(companyId, rangeParams);
         content.innerHTML = `
           ${renderTiles(data)}
           ${renderFunnel(data.funnel)}
@@ -1387,12 +1521,27 @@ def render_analytics_panel(
     document.getElementById("companySelect").addEventListener("change", () => {
       load();
       if (document.getElementById("chatsContent").style.display !== "none") loadChats();
+      if (document.getElementById("leadsContent").style.display !== "none") loadLeads();
       if (document.getElementById("settingsContent").style.display !== "none") loadSettings();
     });
-    document.getElementById("daysSelect").addEventListener("change", load);
+    // "Свой период" (2026-08-30) — показывает/прячет поля дат, перезагружает и дашборд, и
+    // "Лиды", если та сейчас открыта (общий диапазон для обеих вкладок).
+    function reloadForActiveRangeTab() {
+      load();
+      if (document.getElementById("leadsContent").style.display !== "none") loadLeads();
+    }
+    document.getElementById("daysSelect").addEventListener("change", () => {
+      const isCustom = document.getElementById("daysSelect").value === "custom";
+      document.getElementById("customRangeInputs").style.display = isCustom ? "" : "none";
+      if (!isCustom) reloadForActiveRangeTab();
+    });
+    document.getElementById("rangeStart").addEventListener("change", reloadForActiveRangeTab);
+    document.getElementById("rangeEnd").addEventListener("change", reloadForActiveRangeTab);
+    document.getElementById("leadsReasonFilter").addEventListener("change", loadLeads);
 
     document.getElementById("tabDashboardBtn").addEventListener("click", () => switchTab("dashboard"));
     document.getElementById("tabChatsBtn").addEventListener("click", () => switchTab("chats"));
+    document.getElementById("tabLeadsBtn").addEventListener("click", () => switchTab("leads"));
     document.getElementById("tabSettingsBtn").addEventListener("click", () => switchTab("settings"));
     document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
     document.querySelectorAll(".settings-reset-btn").forEach((btn) => {

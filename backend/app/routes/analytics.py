@@ -1,5 +1,6 @@
 """роуты простой аналитики managed-service mvp."""
 
+from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -10,6 +11,36 @@ from ..rate_limit import client_ip
 
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+# Предохранитель от случайного огромного диапазона (не про производительность на текущих
+# объёмах — про то, чтобы опечатка в годе ("2020" вместо "2026") не сканировала годы файлов
+# молча). 2026-08-30, кастомный период на дашборде.
+MAX_CUSTOM_RANGE_DAYS = 730
+
+
+def _resolve_date_range(
+    days: int, start_date: Optional[date], end_date: Optional[date]
+) -> tuple[Optional[datetime], Optional[datetime], str]:
+    """Общая логика для /dashboard и /leads — либо пресет `days`, либо явный кастомный
+    диапазон start_date/end_date (2026-08-30, оба обязательны вместе — один без другого не
+    имеет однозначного смысла). Возвращает (start, end, human_label); start/end оба None в
+    пресет-режиме — так методы AnalyticsService принимают `days` как и раньше."""
+
+    if start_date is None and end_date is None:
+        label = "всё время" if days >= 3650 else f"{days} дн."
+        return None, None, label
+
+    if start_date is None or end_date is None:
+        raise HTTPException(status_code=422, detail="start_date и end_date нужны оба вместе")
+    if end_date < start_date:
+        raise HTTPException(status_code=422, detail="end_date раньше start_date")
+    if (end_date - start_date).days > MAX_CUSTOM_RANGE_DAYS:
+        raise HTTPException(status_code=422, detail=f"диапазон длиннее {MAX_CUSTOM_RANGE_DAYS} дней")
+
+    start_dt = datetime.combine(start_date, time.min)
+    end_dt = datetime.combine(end_date, time.max)
+    label = f"{start_date.strftime('%d.%m.%Y')}–{end_date.strftime('%d.%m.%Y')}"
+    return start_dt, end_dt, label
 
 
 class TrackEventRequest(BaseModel):
@@ -135,23 +166,46 @@ async def analytics_dashboard(
     request: Request,
     company_id: Optional[str] = Query(default=None),
     days: int = Query(default=30, ge=1, le=3650),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict:
     """Всё, что нужно веб-странице аналитики, одним запросом — сводка, операторы, лиды по
     месяцам, топ услуг (с человекочитаемым именем, если company_id известен). `days` — общий
     date-range фильтр дашборда (2026-08-27); leads_by_month намеренно не подчиняется ему —
-    это уже своя многомесячная развёртка, отдельный диапазон её только запутает."""
+    это уже своя многомесячная развёртка, отдельный диапазон её только запутает.
+
+    start_date/end_date (2026-08-30) — кастомный период, оба вместе, побеждают `days`, если
+    заданы (см. _resolve_date_range)."""
 
     verify_operator_token(request, x_operator_token)
     analytics_service = request.app.state.analytics_service
     sessions = await request.app.state.session_store.list_all()
+
+    start, end, range_label = _resolve_date_range(days, start_date, end_date)
+    custom_range = start is not None and end is not None
 
     # Воронка джойнит widget_impression/chat_opened/message_answered по session_id — это
     # принципиально теряется, как только событие уходит под ретеншн в rollup (там уже
     # только счётчики, id стёрт), поэтому воронку клампим отдельно, короче ретеншна.
     # activity_by_hour/weekday после сегодняшнего фикса это ограничение больше не касается —
     # они сами дочитывают rollup_file (дата+час, без id) на то, что уже вышло за сырое окно.
+    # Для кастомного периода — та же идея, но клэмпим НАЧАЛО (конец остаётся тем, что выбрал
+    # пользователь), а не просто "days" — иначе воронка молча съезжает на другие даты.
     funnel_days = min(days, 55)
+    trend_days = min(days, 30)
+    if custom_range:
+        # Живой баг (код-ревью, 2026-08-30): раньше клэмп считался как `end - timedelta(...)`
+        # НАПРЯМУЮ от end — а end это datetime.combine(end_date, time.max), т.е. 23:59:59.999999.
+        # Клэмпнутый start наследовал это же время суток, оказываясь у самого конца
+        # граничного дня — весь этот день выпадал из _within_range почти целиком. Считаем
+        # клэмп через ЧИСТУЮ арифметику дат, потом собираем datetime с time.min явно.
+        funnel_clamp_date = max(start.date(), end.date() - timedelta(days=54))
+        funnel_start, funnel_end = datetime.combine(funnel_clamp_date, time.min), end
+        trend_clamp_date = max(start.date(), end.date() - timedelta(days=29))
+        trend_start, trend_end = datetime.combine(trend_clamp_date, time.min), end
+    else:
+        funnel_start = funnel_end = trend_start = trend_end = None
 
     top_services = [
         {
@@ -159,25 +213,83 @@ async def analytics_dashboard(
             "service_name": _resolve_service_name(request, company_id, entry["service_id"]),
             "count": entry["count"],
         }
-        for entry in analytics_service.top_services(company_id=company_id, days=days)
+        for entry in analytics_service.top_services(company_id=company_id, days=days, start=start, end=end)
     ]
 
     return {
         "company_id": company_id,
-        "days": days,
+        "days": days if not custom_range else None,
+        "range_label": range_label,
         "summary": analytics_service.summary(sessions=sessions, company_id=company_id, limit=10),
-        "operators": analytics_service.operator_summary(company_id=company_id, days=days)["operators"],
+        "operators": analytics_service.operator_summary(
+            company_id=company_id, days=days, start=start, end=end
+        )["operators"],
         "leads_by_month": analytics_service.leads_by_month(company_id=company_id),
-        "leads_by_reason": analytics_service.leads_by_reason(company_id=company_id, days=days),
+        "leads_by_reason": analytics_service.leads_by_reason(
+            company_id=company_id, days=days, start=start, end=end
+        ),
         "top_services": top_services,
-        "funnel": analytics_service.conversion_funnel(company_id=company_id, days=funnel_days),
-        "unanswered_trend": analytics_service.unanswered_trend(company_id=company_id, days=min(days, 30)),
-        "intent_breakdown": analytics_service.intent_breakdown(company_id=company_id, days=days),
-        "objection_breakdown": analytics_service.objection_breakdown(company_id=company_id, days=days),
-        "top_unanswered_questions": analytics_service.top_unanswered_questions(company_id=company_id, days=days),
-        "top_answered_questions": analytics_service.top_answered_questions(company_id=company_id, days=days),
-        "activity_by_hour": analytics_service.activity_by_hour(company_id=company_id, days=days),
-        "activity_by_weekday": analytics_service.activity_by_weekday(company_id=company_id, days=days),
-        "queue_wait": analytics_service.queue_wait_stats(company_id=company_id, days=days),
-        "period_comparison": analytics_service.period_comparison(company_id=company_id, days=days),
+        "funnel": analytics_service.conversion_funnel(
+            company_id=company_id, days=funnel_days, start=funnel_start, end=funnel_end
+        ),
+        "unanswered_trend": analytics_service.unanswered_trend(
+            company_id=company_id, days=trend_days, start=trend_start, end=trend_end
+        ),
+        "intent_breakdown": analytics_service.intent_breakdown(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        "objection_breakdown": analytics_service.objection_breakdown(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        "top_unanswered_questions": analytics_service.top_unanswered_questions(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        "top_answered_questions": analytics_service.top_answered_questions(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        "activity_by_hour": analytics_service.activity_by_hour(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        "activity_by_weekday": analytics_service.activity_by_weekday(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        "queue_wait": analytics_service.queue_wait_stats(
+            company_id=company_id, days=days, start=start, end=end
+        ),
+        # period_comparison сравнивает "N дней vs предыдущие N дней ОТ СЕГОДНЯ" — для
+        # кастомного периода (не обязательно кончающегося сегодня) это дало бы честно
+        # выглядящее, но неверное число. Лучше не показать бейдж дельты вообще, чем соврать.
+        "period_comparison": (
+            analytics_service.period_comparison(company_id=company_id, days=days) if not custom_range else None
+        ),
     }
+
+
+@router.get("/leads")
+async def analytics_leads(
+    request: Request,
+    company_id: Optional[str] = Query(default=None),
+    days: int = Query(default=30, ge=1, le=3650),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    reason: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict:
+    """Таблица лидов, "уровень 0" (2026-08-30) — построчный список БЕЗ персональных данных
+    (см. AnalyticsService.leads_feed: name/phone/summary/recent_messages физически не читаются
+    и не отдаются, это не сокрытие на фронте). service_id резолвится в человекочитаемое имя
+    так же, как в /dashboard's top_services."""
+
+    verify_operator_token(request, x_operator_token)
+    analytics_service = request.app.state.analytics_service
+    start, end, range_label = _resolve_date_range(days, start_date, end_date)
+
+    leads = analytics_service.leads_feed(
+        company_id=company_id, days=days, start=start, end=end, reason=reason, limit=limit
+    )
+    for lead in leads:
+        service_id = lead.get("service_id")
+        lead["service_name"] = _resolve_service_name(request, company_id, service_id) if service_id else None
+
+    return {"company_id": company_id, "range_label": range_label, "leads": leads}

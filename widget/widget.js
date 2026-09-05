@@ -23,6 +23,23 @@
   const WS_RECONNECT_MAX_ATTEMPTS = 4;
   const WS_RECONNECT_BASE_DELAY_MS = 1000;
 
+  // Пузырь-приглашение (2026-08-31, запрос клиента — "заметнее, чтобы хотелось тапнуть"):
+  // ротация фраз, не повторяем ту же у одного посетителя два раза подряд (см.
+  // teaserPhraseKey/pickTeaserText). day/evening — время суток берётся у браузера
+  // посетителя, не сервера; "greeting" без time — фразы без обращения по времени дня.
+  const TEASER_PHRASES = [
+    { day: "Добрый день! Подскажу по ценам и записи", evening: "Добрый вечер! Подскажу по ценам и записи" },
+    { text: "Здравствуйте! Чем помочь?" },
+    { text: "Есть вопрос? Помогу разобраться" },
+  ];
+  // Повторный показ, если первый проигнорировали (не открыли чат, не закрыли крестиком) —
+  // отдельная, более короткая фраза, чтобы не выглядело багом/дублем. Один повтор, не больше —
+  // иначе превращается в навязчивый попап, не сочетается со сдержанным тоном клиники.
+  const TEASER_REPROMPT_TEXT = "Если что — я здесь";
+  const TEASER_INITIAL_DELAY_MS = 15000;
+  const TEASER_AUTO_HIDE_MS = 25000;
+  const TEASER_REPROMPT_DELAY_MS = 45000;
+
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
 
@@ -196,7 +213,7 @@
         position: absolute;
         right: 0;
         bottom: 70px;
-        max-width: 240px;
+        max-width: 320px;
         opacity: 0;
         transform: translateY(8px) scale(.96);
         visibility: hidden;
@@ -227,7 +244,17 @@
         line-height: 1.4;
         color: var(--text);
       }
-      .teaser-bubble svg { width: 14px; height: 14px; flex-shrink: 0; }
+      /* "На связи" (2026-08-31 → упрощено в тот же день) — вместо отдельной зелёной точки
+         (лишний третий сигнал рядом с пульсом лаунчера) перекрасили саму звёздочку в зелёный
+         и дали ей мигать/подмигивать — по смыслу иконки ("сверкает") даже уместнее точки. */
+      .teaser-bubble svg {
+        width: 14px; height: 14px; flex-shrink: 0; color: #22c55e;
+        animation: teaser-star-twinkle 2s ease-in-out infinite;
+      }
+      @keyframes teaser-star-twinkle {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: .5; transform: scale(1.2); }
+      }
       .teaser-dismiss {
         position: absolute;
         top: 6px;
@@ -1042,9 +1069,9 @@
       </button>
 
       <div class="teaser">
-        <div class="teaser-bubble" role="button" tabindex="0" aria-label="Открыть чат: Здравствуйте! Чем помочь?">
+        <div class="teaser-bubble" role="button" tabindex="0" aria-label="Открыть чат">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
-          <span>Здравствуйте! Чем помочь?</span>
+          <span class="teaser-text"></span>
           <button class="teaser-dismiss" type="button" aria-label="Скрыть">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
           </button>
@@ -1208,6 +1235,7 @@
         resetModalConfirm: this.$(".reset-modal-confirm"),
         teaser: this.$(".teaser"),
         teaserBubble: this.$(".teaser-bubble"),
+        teaserText: this.$(".teaser-text"),
         teaserDismiss: this.$(".teaser-dismiss"),
       };
     }
@@ -1275,16 +1303,62 @@
       this.el.teaserDismiss.addEventListener("click", (e) => { e.stopPropagation(); this.dismissTeaser(); });
     }
 
+    teaserPhraseKey() {
+      return "ai-widget-teaser-last:" + this.state.companyId;
+    }
+
+    pickTeaserText() {
+      const hour = new Date().getHours();
+      const isEvening = hour >= 18 || hour < 6;
+      const resolved = TEASER_PHRASES.map((phrase) => phrase.text || (isEvening ? phrase.evening : phrase.day));
+      let lastIndex = -1;
+      try {
+        lastIndex = Number(window.localStorage.getItem(this.teaserPhraseKey()));
+      } catch (_) { /* приватный режим/квота — просто не запоминаем, ничего не ломаем */ }
+      const pool = resolved.map((_, i) => i).filter((i) => i !== lastIndex);
+      const choices = pool.length ? pool : resolved.map((_, i) => i);
+      const chosen = choices[Math.floor(Math.random() * choices.length)];
+      try {
+        window.localStorage.setItem(this.teaserPhraseKey(), String(chosen));
+      } catch (_) {}
+      return resolved[chosen];
+    }
+
+    showTeaser(text) {
+      this.el.teaserText.textContent = text;
+      this.el.teaserBubble.setAttribute("aria-label", "Открыть чат: " + text);
+      this.el.teaser.classList.add("visible");
+      this.el.launcher.classList.add("pulse");
+    }
+
     scheduleTeaser() {
+      // 15с (запрос клиента, 2026-08-31): "строгий и скромный" виджет, нужно заметнее — было
+      // 2.2с. Пульс лаунчера по-прежнему включается вместе с пузырём, не раньше — вслух
+      // просили именно "аккуратно", постоянный пульс с самой загрузки страницы выглядел бы
+      // навязчиво.
+      //
+      // Повторный показ (2026-08-31): если первый показ провисел AUTO_HIDE и его не тронули —
+      // прячем, ждём ещё REPROMPT_DELAY, показываем один раз ещё с другой фразой. Дальше —
+      // тишина, не спамим. Любой clearTimeout ниже — через dismissTeaser (открыли чат ИЛИ
+      // закрыли крестиком), она уже вызывается из toggle() на каждый клик по лаунчеру.
       this._teaserTimer = window.setTimeout(() => {
         if (this.state.open) return;
-        this.el.teaser.classList.add("visible");
-        this.el.launcher.classList.add("pulse");
-      }, 2200);
+        this.showTeaser(this.pickTeaserText());
+        this._teaserHideTimer = window.setTimeout(() => {
+          this.el.teaser.classList.remove("visible");
+          this.el.launcher.classList.remove("pulse");
+          this._teaserRepromptTimer = window.setTimeout(() => {
+            if (this.state.open) return;
+            this.showTeaser(TEASER_REPROMPT_TEXT);
+          }, TEASER_REPROMPT_DELAY_MS);
+        }, TEASER_AUTO_HIDE_MS);
+      }, TEASER_INITIAL_DELAY_MS);
     }
 
     dismissTeaser() {
       window.clearTimeout(this._teaserTimer);
+      window.clearTimeout(this._teaserHideTimer);
+      window.clearTimeout(this._teaserRepromptTimer);
       this.el.teaser.classList.remove("visible");
       this.el.launcher.classList.remove("pulse");
     }

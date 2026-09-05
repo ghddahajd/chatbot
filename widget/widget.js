@@ -39,6 +39,15 @@
   const TEASER_INITIAL_DELAY_MS = 15000;
   const TEASER_AUTO_HIDE_MS = 25000;
   const TEASER_REPROMPT_DELAY_MS = 45000;
+  // "Дыхание" капсулы (2026-09-05): пузырь с текстом честно показывается один раз + один
+  // повтор — дальше молчит, иначе спам. Но кружок-то остаётся кружком навсегда, и человек,
+  // который просто не смотрел в угол экрана в те 2 минуты, больше подсказки не увидит вообще.
+  // Отдельный тихий цикл без текста и без кольца-пульса (тот сигнал зарезервирован под пузырь
+  // с реальным сообщением) — капсула сама на пару секунд разворачивается в "Задать вопрос" и
+  // снова схлопывается. Ничего нового визуально не вводим, просто переигрываем уже
+  // существующий переход на паузе между интервалами.
+  const TEASER_CYCLE_INTERVAL_MS = 90000;
+  const TEASER_CYCLE_EXPAND_MS = 4000;
 
   const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(resolve));
@@ -1345,6 +1354,13 @@
       this.el.launcher.classList.add("pulse");
       // Капсула схлопывается ровно тут: дальше объясняет пузырь, две подписи разом не нужны.
       this.el.launcher.classList.add("collapsed");
+      // Короткое окно "сейчас сам пузырь анимируется, не встревай" для дыхания капсулы ниже —
+      // НЕ то же самое, что "пузырь на экране". Повторный пузырь ("Если что — я здесь") не
+      // прячется сам и может остаться висеть надолго — это не повод молчать дыханию до конца
+      // сеанса, важно только не столкнуть два появления в один момент.
+      this._teaserJustShown = true;
+      window.clearTimeout(this._teaserAnimCooldown);
+      this._teaserAnimCooldown = window.setTimeout(() => { this._teaserJustShown = false; }, 500);
     }
 
     scheduleTeaser() {
@@ -1369,12 +1385,31 @@
           }, TEASER_REPROMPT_DELAY_MS);
         }, TEASER_AUTO_HIDE_MS);
       }, TEASER_INITIAL_DELAY_MS);
+      this.scheduleLauncherBreathing();
+    }
+
+    // Тихое периодическое "дыхание" капсулы — см. комментарий у TEASER_CYCLE_INTERVAL_MS.
+    // Независимый таймер: сам решает, уместно ли сейчас разворачиваться (не мешает пузырю,
+    // ничего не делает если чат уже открыли).
+    scheduleLauncherBreathing() {
+      this._teaserCycleInterval = window.setInterval(() => {
+        if (this.state.open) return;
+        if (this._teaserJustShown) return; // пузырь сам сейчас появляется/исчезает — не наслаиваемся
+        if (!this.el.launcher.classList.contains("collapsed")) return; // ещё не схлопнулась в первый раз
+        this.el.launcher.classList.remove("collapsed");
+        window.setTimeout(() => {
+          if (this.state.open) return;
+          this.el.launcher.classList.add("collapsed");
+        }, TEASER_CYCLE_EXPAND_MS);
+      }, TEASER_CYCLE_INTERVAL_MS);
     }
 
     dismissTeaser() {
       window.clearTimeout(this._teaserTimer);
       window.clearTimeout(this._teaserHideTimer);
       window.clearTimeout(this._teaserRepromptTimer);
+      window.clearTimeout(this._teaserAnimCooldown);
+      window.clearInterval(this._teaserCycleInterval);
       this.el.teaser.classList.remove("visible");
       this.el.launcher.classList.remove("pulse");
     }

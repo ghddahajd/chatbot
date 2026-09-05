@@ -130,29 +130,51 @@
       }
 
       /* ── Launcher ── */
+      /* Кнопка-капсула с подписью (2026-09-05, запрос "его совсем сложно заметить"): голая
+         иконка-кружок не читается — посетитель не понимает, что это чат, а не "наверх"/"куки".
+         Поэтому по умолчанию кнопка развёрнута в капсулу с текстом, а схлопывается в кружок
+         в момент показа пузыря-приглашения (пузырь дальше сам объясняет) и после первого
+         открытия чата. Ширину не анимируем напрямую (auto → px не анимируется) — анимируем
+         max-width подписи, ширина кнопки следует за содержимым сама. */
       .launcher {
         position: absolute;
         right: 0;
         bottom: 0;
-        width: 58px;
+        min-width: 58px;
         height: 58px;
         border: 0;
-        border-radius: 50%;
+        border-radius: 999px;
         background: var(--accent);
         color: var(--bg);
         font-family: inherit;
         cursor: pointer;
         box-shadow: var(--shadow);
-        display: grid;
-        place-items: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 0 20px 0 16px;
         opacity: 1;
         transform: scale(1);
         visibility: visible;
         pointer-events: auto;
-        transition: opacity .22s cubic-bezier(.16,1,.3,1), transform .22s cubic-bezier(.16,1,.3,1), box-shadow .18s ease;
+        transition: opacity .22s cubic-bezier(.16,1,.3,1), transform .22s cubic-bezier(.16,1,.3,1),
+                    box-shadow .18s ease, padding .28s cubic-bezier(.16,1,.3,1), gap .28s cubic-bezier(.16,1,.3,1);
       }
       .shell.pos-left .launcher { right: auto; left: 0; }
-      .launcher svg { width: 26px; height: 26px; }
+      .launcher svg { width: 26px; height: 26px; flex-shrink: 0; }
+      .launcher-label {
+        font-size: 14.5px;
+        font-weight: 600;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        max-width: 180px;
+        opacity: 1;
+        transition: max-width .28s cubic-bezier(.16,1,.3,1), opacity .2s ease;
+      }
+      .launcher.collapsed { padding: 0; gap: 0; }
+      .launcher.collapsed .launcher-label { max-width: 0; opacity: 0; }
       .launcher:hover { transform: translateY(-2px); box-shadow: 0 20px 48px rgba(8,14,13,.16); }
       .launcher.hidden {
         opacity: 0;
@@ -161,34 +183,11 @@
         pointer-events: none;
         transition: opacity .22s cubic-bezier(.16,1,.3,1), transform .22s cubic-bezier(.16,1,.3,1), visibility 0s linear .22s;
       }
+      /* Внимание к кружку (2026-08-31, переосмыслено целиком после пары наслоившихся правок) —
+         один сигнал движения: кольцо-пульс, пока показан тизер-приглашение. "Непрочитанное"
+         теперь честно живёт в .unread ниже (реальное приветственное сообщение, не декоративный
+         дубль) — отдельного бейджа тут больше нет. */
       .launcher.pulse { animation: launcher-pulse 2.2s ease-in-out infinite; }
-      /* Contour draw (запрос "как контур сам себя рисует", 2026-08-24): иконка "дорисовывается"
-         — от пустого контура до готового, с паузой на пике, затем спокойно уходит и рисуется
-         заново. 9с на круг, ограничено 2.5 повторами (не мозолит глаза бесконечно) — дробное
-         число специально: 2.5 круга останавливает анимацию ровно в середине зоны "пауза на
-         пике" (34-66%), так что финальное состояние — контур ПОЛНОСТЬЮ нарисован, не пропал.
-         fill-mode: forwards держит это состояние после того, как повторы закончились.
-         Живой баг (ручная проверка, 2026-08-24): "stroke-dasharray: 95" — ОДНО число значит и
-         штрих, и ПРОБЕЛ по 95 юнитов (паттерн повторяется через 190). Реальная длина этого
-         контура заметно короче 95 — где-то в середине анимации смещение "уезжало" в зону
-         пробела раньше времени, и линия резко пропадала (дёргано, неплавно). Второе число —
-         пробел, специально с огромным запасом, чтобы паттерн ни разу не повторился в пределах
-         используемого диапазона смещений (-95…95) — тогда "пропадание" происходит только там,
-         где и задумано (полностью пустой/полностью нарисованный контур), без случайных провалов
-         посередине.
-      */
-      .launcher.pulse .launcher-icon-path {
-        stroke-dasharray: 95 999;
-        stroke-dashoffset: 95;
-        animation: launcher-draw 9s cubic-bezier(.65,0,.35,1) 2.5;
-        animation-fill-mode: forwards;
-      }
-      @keyframes launcher-draw {
-        0%   { stroke-dashoffset: 95; }
-        34%  { stroke-dashoffset: 0; }
-        66%  { stroke-dashoffset: 0; }
-        100% { stroke-dashoffset: -95; }
-      }
       @keyframes launcher-pulse {
         0%, 100% { box-shadow: var(--shadow), 0 0 0 0 rgba(8,14,13,.18); }
         50% { box-shadow: var(--shadow), 0 0 0 9px rgba(8,14,13,0); }
@@ -207,6 +206,10 @@
         display: none;
       }
       .unread.visible { display: block; }
+      /* Пока кнопка развёрнута в капсулу — точку прячем: на широкой кнопке она болталась бы у
+         дальнего края, оторванно от иконки, и дублировала бы подпись, которая и так объясняет.
+         Схлопнулись в кружок — точка появляется и дальше висит как постоянный маркер. */
+      .launcher:not(.collapsed) .unread.visible { display: none; }
 
       /* ── Attention teaser ── */
       .teaser {
@@ -221,12 +224,20 @@
         transition: opacity .24s cubic-bezier(.16,1,.3,1), transform .24s cubic-bezier(.16,1,.3,1), visibility 0s linear .24s;
       }
       .shell.pos-left .teaser { right: auto; left: 0; }
+      /* Появление с лёгким перелётом (2026-08-31, переосмыслено) — само движение при
+         появлении и есть основной сигнал внимания, не нужно ничего анимировать ДОПОЛНИТЕЛЬНО
+         поверх. cubic-bezier с Y>1 в середине пути — стандартный "back-out" спрингующий
+         easing, пузырь чуть выскакивает за размер и мягко устаканивается, не плоское появление. */
       .teaser.visible {
         opacity: 1;
         transform: translateY(0) scale(1);
         visibility: visible;
         pointer-events: auto;
-        transition: opacity .24s cubic-bezier(.16,1,.3,1), transform .24s cubic-bezier(.16,1,.3,1);
+        animation: teaser-pop .36s cubic-bezier(.34, 1.56, .64, 1) both;
+      }
+      @keyframes teaser-pop {
+        0% { opacity: 0; transform: translateY(8px) scale(.9); }
+        100% { opacity: 1; transform: translateY(0) scale(1); }
       }
       .teaser-bubble {
         position: relative;
@@ -1065,6 +1076,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path class="launcher-icon-path" d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path>
         </svg>
+        <span class="launcher-label">Задать вопрос</span>
         <span class="unread" aria-hidden="true"></span>
       </button>
 
@@ -1267,6 +1279,8 @@
     connectedCallback() {
       this.bindEvents();
       if (DEMO_EXPAND_ENABLED) this.el.panel.classList.add("demo-big");
+      // .unread за честное "непрочитанное" приветствие включается внутри pushGreeting()
+      // самого — там же, где решается, реально ли это первый визит без сохранённой истории.
       this.pushGreeting();
       this.bootstrap();
       this.scheduleTeaser();
@@ -1329,6 +1343,8 @@
       this.el.teaserBubble.setAttribute("aria-label", "Открыть чат: " + text);
       this.el.teaser.classList.add("visible");
       this.el.launcher.classList.add("pulse");
+      // Капсула схлопывается ровно тут: дальше объясняет пузырь, две подписи разом не нужны.
+      this.el.launcher.classList.add("collapsed");
     }
 
     scheduleTeaser() {
@@ -1365,6 +1381,12 @@
 
     pushGreeting() {
       if (this.el.messages.querySelector(".msg")) return;
+      // 2026-08-31: приветствие ниже — это реальное непрочитанное сообщение, честно помечаем
+      // .unread. Именно тут, не в connectedCallback — сюда попадают ТОЛЬКО те, у кого ещё нет
+      // реальной переписки (проверка строкой выше); у вернувшегося посетителя с сохранённой
+      // историей pushGreeting() отсюда выходит раньше, .unread останется как есть — не врём
+      // "новым сообщением" тому, кто уже всё видел.
+      this.el.unread.classList.add("visible");
       const greetingLine = this.state.greetingText
         || "Добрый день! Подскажу по услугам, ценам и записи — выберите тему или напишите вопрос своими словами.";
 
@@ -1749,6 +1771,9 @@
 
     toggle() {
       this.dismissTeaser();
+      // После первого открытия кнопка навсегда остаётся кружком — своё "объяснить, что это
+      // такое" подпись уже отработала, дальше человек и так знает, куда жать.
+      this.el.launcher.classList.add("collapsed");
       this.state.open = !this.state.open;
       this.el.panel.classList.toggle("open", this.state.open);
       this.el.launcher.classList.toggle("hidden", this.state.open);

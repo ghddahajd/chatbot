@@ -1336,7 +1336,11 @@
       const resolved = TEASER_PHRASES.map((phrase) => phrase.text || (isEvening ? phrase.evening : phrase.day));
       let lastIndex = -1;
       try {
-        lastIndex = Number(window.localStorage.getItem(this.teaserPhraseKey()));
+        // getItem на отсутствующем ключе даёт null, а Number(null) === 0 — совпадает с реальным
+        // индексом 0 и молча вырезает первую фразу из пула у КАЖДОГО нового посетителя. Раньше
+        // отличать "ключа нет" от "сохранён 0" было нечем — отсюда явная проверка на null.
+        const raw = window.localStorage.getItem(this.teaserPhraseKey());
+        lastIndex = raw === null ? -1 : Number(raw);
       } catch (_) { /* приватный режим/квота — просто не запоминаем, ничего не ломаем */ }
       const pool = resolved.map((_, i) => i).filter((i) => i !== lastIndex);
       const choices = pool.length ? pool : resolved.map((_, i) => i);
@@ -1394,6 +1398,11 @@
     scheduleLauncherBreathing() {
       this._teaserCycleInterval = window.setInterval(() => {
         if (this.state.open) return;
+        // Настоящий сигнал важнее декоративного: разворот снимает .collapsed, а
+        // ".launcher:not(.collapsed) .unread.visible { display: none; }" тут же гасит честную
+        // точку непрочитанного (см. pushGreeting/addMessage) — не устраиваем ей мигание, пока
+        // реально висит непрочитанное сообщение.
+        if (this.el.unread.classList.contains("visible")) return;
         if (this._teaserJustShown) return; // пузырь сам сейчас появляется/исчезает — не наслаиваемся
         if (!this.el.launcher.classList.contains("collapsed")) return; // ещё не схлопнулась в первый раз
         this.el.launcher.classList.remove("collapsed");

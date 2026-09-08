@@ -530,6 +530,13 @@ def extract_phone(message: str) -> Optional[str]:
     phone = re.sub(r"[^\d+]", "", match.group(0))
     if phone.startswith("8"):
         phone = "+7" + phone[1:]
+    elif phone.startswith("7") and not phone.startswith("+7"):
+        # голая "7" без плюса ("79035175776") — тот же номер, просто без "+"
+        phone = "+" + phone
+    elif not phone.startswith("+"):
+        # без префикса вообще ("9035175776") — PHONE_PATTERN гарантирует тут ровно 10 цифр,
+        # начинающихся с 9 (мобильный код), так что "+7" впереди всегда корректен
+        phone = "+7" + phone
     return phone
 
 

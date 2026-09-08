@@ -49,6 +49,7 @@ CODEX.md
 .codex/
 .cursor/
 .cursorrules
+skills-lock.json
 docs/
 tasks/
 

@@ -27,6 +27,8 @@ from .constants import (
     BOOKING_KEYWORDS,
     PROMPT_INJECTION_KEYWORDS,
     COMPLAINT_ESCALATION_KEYWORDS,
+    FRUSTRATION_LEAVING_KEYWORDS,
+    REPRODUCTIVE_HEALTH_KEYWORDS,
     AMBULANCE_ACTION_KEYWORDS,
     AMBULANCE_SUBJECT_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
@@ -2436,6 +2438,30 @@ def _analyze_message_core(
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
 
+    # Живой баг (переписка 2026-09-10): злое прощание после мягкого предложения оператора
+    # попадало в ветку "оператор отклонён" ниже и получало "Хорошо, слушаю — что вас
+    # интересует?" — та ветка задумана под кнопку "Сначала спрошу тут", а не под "ушел искать
+    # в других клиниках". Ставим ПЕРЕД ней и вне зависимости от pending_action (недовольство
+    # бывает и без предложения оператора). Настоящий вопрос в том же сообщении
+    # ("ничего не знаешь, сколько стоит ботокс?") сюда не попадает — has_competing_substantive_signal.
+    if (
+        contains_keyword(normalized_message, FRUSTRATION_LEAVING_KEYWORDS)
+        and not operator_requested
+        and not phone
+        and not has_competing_substantive_signal
+    ):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.OK,
+            confidence=0.85,
+            safe_context={
+                "force_direct_answer": True,
+                "frustration_recovery": True,
+                "message_to_user": _phrase(knowledge_base, "frustration_recovery"),
+            },
+            quick_actions=["Оставить телефон", "Позвать менеджера"],
+        )
+
     # Живой баг (ручное тестирование пользователем, 2026-08-26): после мягкого предложения
     # оператора (operator_soft_offer — "опишите, что вас интересует, или соединю с
     # менеджером") ответ вроде "сначала спрошу тут" не отменяет вопрос ("нет" тут не
@@ -3441,6 +3467,25 @@ def _analyze_message_core(
     similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.7)
     if similar_result is not None:
         return similar_result
+
+    # Последний рубеж перед пустой заглушкой "услуга, цена или запись?": вопрос про цикл/зачатие
+    # без ответа в базе — направляем к врачу с кнопкой консультации, а не делаем вид, что
+    # вопроса не было. Именно здесь, а не раньше: любая более ранняя ветка (услуга найдена,
+    # медицинская, FAQ-статья) уже ответила, сюда доходит только то, что осталось без ответа.
+    if any(stem in normalized_message for stem in REPRODUCTIVE_HEALTH_KEYWORDS):
+        return PolicyResult(
+            action=PolicyAction.CLARIFY,
+            reason=PolicyReason.REGULATED_ADVICE,
+            confidence=classifier_confidence or 0.8,
+            safe_context={
+                "force_direct_answer": True,
+                "health_question_referral": True,
+                "message_to_user": _phrase(knowledge_base, "health_question_referral"),
+            },
+            quick_actions=_medical_referral_quick_actions(
+                _consultation_service_for_referral(normalized_message, knowledge_base)
+            ),
+        )
 
     return PolicyResult(
         action=PolicyAction.CLARIFY,

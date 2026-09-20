@@ -1612,6 +1612,120 @@ def test_real_question_after_operator_offer_still_answers_normally(
     assert result.safe_context.get("operator_offer_declined") is not True
 
 
+def test_angry_farewell_after_operator_offer_gets_recovery_not_decline(
+    policy_session, knowledge_base
+) -> None:
+    """Живая переписка (2026-09-10): "Зачем этот чат, если ничего не знаешь? Пока, ушел
+    искать в других клиниках" после мягкого предложения оператора попадало в ветку "оператор
+    отклонён" и получало "Хорошо, слушаю — что вас интересует?" — мимо клиента, который уходит."""
+
+    policy_session.pending_action = PendingAction.OFFERED_OPERATOR.value
+
+    result = _analyze(
+        "Зачем этот чат, если ничего не знаешь? Пока, ушел искать в других клиниках",
+        policy_session,
+        knowledge_base,
+    )
+
+    assert result.action == PolicyAction.CLARIFY
+    assert result.safe_context["frustration_recovery"] is True
+    assert result.safe_context.get("operator_offer_declined") is not True
+    assert "телефон" in result.safe_context["message_to_user"]
+    assert "Оставить телефон" in result.quick_actions
+
+
+def test_frustration_recovery_works_without_prior_operator_offer(policy_session, knowledge_base) -> None:
+    result = _analyze("вы ничего не знаете, зачем этот чат", policy_session, knowledge_base)
+
+    assert result.safe_context.get("frustration_recovery") is True
+
+
+def test_frustration_phrase_with_real_question_still_answers_the_question(
+    policy_session, knowledge_base
+) -> None:
+    """"ничего не знаешь, сколько стоит чистка лица" — недовольство рядом с настоящим вопросом
+    не должно заменять ответ на вопрос заготовкой про телефон."""
+
+    result = _analyze("ничего не знаешь, сколько стоит чистка лица", policy_session, knowledge_base)
+
+    assert result.safe_context.get("frustration_recovery") is not True
+
+
+def test_neutral_other_clinics_question_is_not_frustration(policy_session, knowledge_base) -> None:
+    result = _analyze("а в других клиниках дешевле?", policy_session, knowledge_base)
+
+    assert result.safe_context.get("frustration_recovery") is not True
+
+
+def test_cycle_question_without_answer_gets_doctor_referral_not_empty_clarify(
+    policy_session, knowledge_base
+) -> None:
+    """Живые переписки (2026-09): "при месячных можно забеременеть?" и "можно ли забеременеть до
+    критических" получали пустое "услуга, цена или запись?" — будто вопроса не было."""
+
+    for message in ("Скажите пожалуйста а при месячных можно забеременеть?", "Можно ли забеременеть до критических"):
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.safe_context.get("health_question_referral") is True, message
+        assert result.action == PolicyAction.CLARIFY
+        assert "врач" in result.safe_context["message_to_user"]
+        assert "услуга, цена или запись" not in result.safe_context["message_to_user"]
+        assert "Оставить телефон" in result.quick_actions
+
+
+def test_procedure_question_mentioning_cycle_is_not_hijacked_by_health_referral(
+    policy_session, knowledge_base
+) -> None:
+    """Ключи цикла — только последний рубеж перед пустой заглушкой: вопрос про процедуру
+    ("эпиляция при месячных") уже обрабатывается раньше, до него дело не доходит."""
+
+    result = _analyze("можно ли делать чистку лица при месячных", policy_session, knowledge_base)
+
+    assert result.safe_context.get("health_question_referral") is not True
+
+
+def test_ordinary_unclear_message_still_gets_generic_clarify(policy_session, knowledge_base) -> None:
+    result = _analyze("расскажите что-нибудь", policy_session, knowledge_base)
+
+    assert result.safe_context.get("health_question_referral") is not True
+
+
+def test_soft_complaint_phrasings_escalate_to_operator(policy_session, knowledge_base) -> None:
+    """"хочу пожаловаться на врача" уходило в "нет подтверждения по этой услуге", а "я недоволен
+    обслуживанием"/"претензия к качеству"/"верните деньги" — в пустую заглушку."""
+
+    for message in (
+        "хочу пожаловаться на врача",
+        "я недоволен обслуживанием",
+        "недовольна результатом процедуры",
+        "у меня претензия к качеству",
+        "верните деньги",
+        "как пожаловаться на администратора",
+    ):
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.action == PolicyAction.TRANSFER_OPERATOR, message
+        assert result.reason == PolicyReason.COMPLAINT, message
+
+
+def test_neutral_phrases_near_complaint_words_do_not_escalate(policy_session, knowledge_base) -> None:
+    """Соседние по словам, но не жалобы: отсутствие претензий, довольный клиент, вопрос про
+    политику возврата — не должны уходить оператору."""
+
+    for message in (
+        "у меня нет претензий к клинике",
+        "спасибо, претензий нет",
+        "я довольна обслуживанием",
+        "довольна результатом",
+        "а можно вернуть деньги если не понравится",
+        "а вы вернете деньги если не понравится",
+        "у меня жалобы на кожу",
+    ):
+        result = _analyze(message, policy_session, knowledge_base)
+
+        assert result.reason != PolicyReason.COMPLAINT, message
+
+
 def test_geography_not_moscow(policy_session, knowledge_base) -> None:
     result = _analyze("я не из Москвы, можно к вам?", policy_session, knowledge_base)
 

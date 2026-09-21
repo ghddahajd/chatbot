@@ -13,6 +13,7 @@ venv/
 
 # Build / runtime
 backend/logs/*.jsonl
+backend/logs/preflight/
 
 # Live session state (real chat content, contact drafts) — must never be tracked
 backend/data/session_snapshot.json

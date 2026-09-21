@@ -18,6 +18,7 @@ from ..policy import classify_and_extract, undisclosed_equipment_terms
 from ..policy.constants import DURATION_KEYWORDS, PRICE_KEYWORDS
 from ..policy.extractors import contains_keyword
 from ..policy.restricted import is_restricted_question
+from ..preflight import run_preflight
 from ..services.rag_search import default_rag_chunks_path, retrieve_article_context, search_rag_chunks
 from ..validator import validate_article_guidance_response
 from .chat_utils import (
@@ -452,6 +453,21 @@ async def debug_domain_check(
         else:
             domains.append({"domain": domain, "status": "ok", "company_id": company_ids[0]})
     return {"domains": domains}
+
+
+@router.get("/api/debug/preflight")
+async def debug_preflight(
+    request: Request,
+    network: bool = True,
+    x_operator_token: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Одна read-only проверка «всё ли на месте»: здоровье, клиенты и их данные, домены, сбор
+    лидов, аналитика, диск, сессии, логирование и Telegram (getMe/getChatMember — оба
+    read-only). Ничего не пишет и не шлёт клиентам, секреты не показывает. network=0 —
+    без обращения к Telegram. Удобный запуск: backend/scripts/preflight.py."""
+
+    verify_operator_token(request, x_operator_token)
+    return await run_preflight(request.app, include_network=network)
 
 
 @router.post("/api/debug/rag-search")

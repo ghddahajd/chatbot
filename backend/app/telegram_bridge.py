@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -168,6 +169,11 @@ class TelegramBridgeService:
         self.proxy_url = proxy_url or None
         self._api_base = f"https://api.telegram.org/bot{bot_token}"
         self._offset = 0
+        # учёт цикла getUpdates: без него «опрос сломан уже час» видно только в логах (см. preflight)
+        self.last_poll_ok_at: float | None = None
+        self.last_poll_error_at: float | None = None
+        self.last_poll_error: str | None = None
+        self.consecutive_poll_failures = 0
 
     def _record_failure(self, *, kind: str, session_id: str | None, data: dict[str, Any]) -> None:
         """Раньше неудачная отправка (кроме 429, тот ретраится в _call) оставляла только одну
@@ -690,6 +696,33 @@ class TelegramBridgeService:
         # при вызове из эвикции сессии в сторе уже нет, только этим путём тема реально закроется.
         await self.close_topic(session_id, topic_id=thread_id)
 
+    def _note_poll_failure(self, description: str) -> None:
+        self.last_poll_error_at = time.time()
+        self.last_poll_error = description[:200]
+        self.consecutive_poll_failures += 1
+
+    async def group_capabilities(self) -> dict[str, Any]:
+        """что бот реально может в группе операторов — только read-only методы Bot API
+        (getChat, getMe, getChatMember): группа в режиме тем и есть ли право управлять темами.
+        Нужно preflight: getChatMember в health_check говорит лишь «бот в группе»."""
+
+        result: dict[str, Any] = {"is_forum": None, "member_status": None, "can_manage_topics": None}
+        chat = await self._call("getChat", chat_id=self.group_chat_id)
+        if chat.get("ok"):
+            result["is_forum"] = bool((chat.get("result") or {}).get("is_forum"))
+        else:
+            result["error"] = str(chat.get("description") or "getChat failed")
+        me = await self._call("getMe")
+        bot_id = (me.get("result") or {}).get("id") if me.get("ok") else None
+        if bot_id is not None:
+            member = await self._call("getChatMember", chat_id=self.group_chat_id, user_id=bot_id)
+            if member.get("ok"):
+                info = member.get("result") or {}
+                result["member_status"] = str(info.get("status") or "")
+                if "can_manage_topics" in info:
+                    result["can_manage_topics"] = bool(info.get("can_manage_topics"))
+        return result
+
     async def _process_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:
             await self._handle_callback_query(update["callback_query"])
@@ -709,11 +742,17 @@ class TelegramBridgeService:
                     offset=self._offset,
                     timeout=GET_UPDATES_TIMEOUT_SECONDS,
                 )
+                if result.get("ok"):
+                    self.last_poll_ok_at = time.time()
+                    self.consecutive_poll_failures = 0
+                else:
+                    self._note_poll_failure(str(result.get("description") or "unknown"))
                 for update in result.get("result", []):
                     self._offset = int(update["update_id"]) + 1
                     await self._process_update(update)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                self._note_poll_failure(type(error).__name__)
                 logger.warning("telegram_bridge polling error=%s", type(error).__name__)
                 await asyncio.sleep(5)

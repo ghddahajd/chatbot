@@ -243,6 +243,20 @@ async def lifespan(app: FastAPI):
             )
         )
 
+    # реестр фоновых задач: раньше они жили только локальными переменными, и упавшую задачу
+    # никто не замечал; preflight (/api/debug/preflight) смотрит сюда.
+    app.state.background_tasks = {
+        name: task
+        for name, task in (
+            ("delivery_retry", retry_task),
+            ("session_eviction", eviction_task),
+            ("telegram_polling", telegram_bridge_task),
+            ("leads_archive", leads_archive_task),
+            ("analytics_prune", analytics_prune_task),
+        )
+        if task is not None
+    }
+
     try:
         yield
     finally:

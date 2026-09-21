@@ -11,11 +11,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import shutil
 import time
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -23,8 +25,12 @@ from typing import Any, Callable
 from fastapi import FastAPI
 
 from .health_checks import collect_health_checks
+from .hours import is_currently_open
+from .knowledge import hostname_from_origin
+from .llm.mock import MockLLMClient
 from .models import SessionStatus
 from .policy.extractors import extract_phone
+from .runtime_stats import STATS
 from .utils.jsonl import read_jsonl
 
 logger = logging.getLogger(__name__)
@@ -41,6 +47,19 @@ SNAPSHOT_STALE_SECONDS = 3 * 3600
 FAILURES_WINDOW_SECONDS = 24 * 3600
 LOW_DISK_DEGRADED_PCT = 15.0
 LOW_DISK_ERROR_PCT = 5.0
+POLL_STALE_DEGRADED_SECONDS = 120
+POLL_STALE_ERROR_SECONDS = 600
+POLL_FAILURES_DEGRADED = 3
+MEMORY_DEGRADED_PCT = 85.0
+MEMORY_ERROR_PCT = 95.0
+# (имя фоновой задачи в реестре app.state.background_tasks, настройка, которая её включает)
+BACKGROUND_TASKS = (
+    ("delivery_retry", "delivery_retry_enabled"),
+    ("session_eviction", "session_eviction_enabled"),
+    ("telegram_polling", "telegram_bridge_enabled"),
+    ("leads_archive", "leads_archive_enabled"),
+    ("analytics_prune", "analytics_prune_enabled"),
+)
 
 # образцы для проверки распознавания телефона (та же функция, что в реальном сборе лидов)
 PHONE_SAMPLES = (
@@ -125,6 +144,30 @@ def _writable(path: Path) -> bool:
     return os.access(target, os.W_OK)
 
 
+def _fingerprint(root: Path, pattern: str) -> str:
+    """короткий отпечаток содержимого файлов: относительный путь + байты, в отсортированном порядке.
+
+    Один и тот же алгоритм у кода (*.py) и у данных клиента; скрипт preflight.py на хосте считает
+    отпечаток кода так же и сверяет с запущенным (ловит «git pull сделан, а пересборки не было»)."""
+
+    digest = hashlib.sha1()
+    if root.exists():
+        for path in sorted(root.rglob(pattern)):
+            if not path.is_file() or "__pycache__" in path.parts or ".git" in path.parts:
+                continue
+            digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+            try:
+                digest.update(path.read_bytes())
+            except OSError:
+                digest.update(b"<unreadable>")
+    return digest.hexdigest()[:12]
+
+
+@lru_cache(maxsize=1)
+def code_fingerprint() -> str:
+    return _fingerprint(Path(__file__).resolve().parent, "*.py")
+
+
 def check_app(settings: Any) -> dict[str, Any]:
     uptime = int(time.time() - PROCESS_STARTED_AT)
     minutes, seconds = divmod(uptime, 60)
@@ -137,6 +180,7 @@ def check_app(settings: Any) -> dict[str, Any]:
         dev_mode=bool(settings.dev_mode),
         uptime_seconds=uptime,
         started_at=_iso(datetime.fromtimestamp(PROCESS_STARTED_AT, tz=timezone.utc)),
+        code_fingerprint=code_fingerprint(),
     )
 
 
@@ -175,6 +219,12 @@ def _client_summary(resolver: Any, company_id: str) -> dict[str, Any]:
     if not str(company.phone or "").strip():
         status = _worst([status, "degraded"])
         problems.append("нет телефона")
+    open_now: bool | None = None
+    try:
+        open_now = is_currently_open(company.working_hours_schedule, company.timezone)
+    except Exception as error:  # кривая таймзона или расписание ломают ответы «вне рабочего времени»
+        status = _worst([status, "degraded"])
+        problems.append(f"расчёт часов работы падает: {type(error).__name__}")
     return {
         "company_id": company_id,
         "status": status,
@@ -186,6 +236,9 @@ def _client_summary(resolver: Any, company_id: str) -> dict[str, Any]:
         "phrasebook_keys": len(kb.phrasebook),
         "sensitive_topics": len(topics) if isinstance(topics, list) else 0,
         "domains": list(company.allowed_domains),
+        "open_now": open_now,
+        "has_schedule": bool(company.working_hours_schedule),
+        "data_fingerprint": _fingerprint(resolver.clients_data_dir / company_id, "*"),
         "has_phone": bool(str(company.phone or "").strip()),
         "has_website": bool(company.website_url),
         "has_telegram_url": bool(company.telegram_url),
@@ -359,6 +412,148 @@ async def check_sessions(app: FastAPI) -> dict[str, Any]:
     return _item(status, detail, total=len(sessions), by_status=by_status, snapshot=snapshot)
 
 
+def check_background_tasks(app: FastAPI) -> dict[str, Any]:
+    """живы ли фоновые циклы (повтор доставки, чистки, опрос Telegram): упавшая задача молчит."""
+
+    settings = app.state.settings
+    registry = getattr(app.state, "background_tasks", {}) or {}
+    bridge = getattr(app.state, "telegram_bridge_service", None)
+    tasks: list[dict[str, Any]] = []
+    for name, flag in BACKGROUND_TASKS:
+        if not getattr(settings, flag, False):
+            tasks.append({"name": name, "status": "skip", "detail": "отключено настройкой"})
+            continue
+        task = registry.get(name)
+        if task is None:
+            tasks.append({"name": name, "status": "error", "detail": "задача не запущена"})
+        elif not task.done():
+            tasks.append({"name": name, "status": "ok", "detail": "работает"})
+        elif task.cancelled():
+            tasks.append({"name": name, "status": "error", "detail": "задача отменена"})
+        elif task.exception() is not None:
+            tasks.append({"name": name, "status": "error", "detail": f"задача упала: {type(task.exception()).__name__}"})
+        elif name == "telegram_polling" and (bridge is None or not bridge.enabled):
+            tasks.append({"name": name, "status": "skip", "detail": "Telegram отключён: нет токена или группы"})
+        else:
+            tasks.append({"name": name, "status": "error", "detail": "задача завершилась неожиданно"})
+    status = _worst([task["status"] for task in tasks])
+    running = sum(1 for task in tasks if task["status"] == "ok")
+    return _item(status, f"работают {running} из {len(tasks)}", tasks=tasks)
+
+
+def check_llm_runtime(app: FastAPI) -> dict[str, Any]:
+    """откаты LLM на шаблоны за последний час: /health видит только тип клиента, а не сбои вызовов."""
+
+    if isinstance(getattr(app.state, "llm_client", None), MockLLMClient):
+        return _item("skip", "mock-режим: настоящий LLM не подключён")
+    summary = STATS.summary("llm.")
+    ok = sum(item["ok"] for item in summary.values())
+    errors = sum(item["errors"] for item in summary.values())
+    last_error_type = None
+    last_error_at = None
+    for item in summary.values():
+        if item["last_error_at"] and (last_error_at is None or item["last_error_at"] > last_error_at):
+            last_error_at, last_error_type = item["last_error_at"], item["last_error_type"]
+    extra = {
+        "window_minutes": 60,
+        "calls_ok": ok,
+        "calls_failed": errors,
+        "last_error_type": last_error_type,
+        "by_call": {name: {"ok": item["ok"], "errors": item["errors"]} for name, item in summary.items()},
+    }
+    if errors == 0:
+        detail = f"за час вызовов: {ok}, сбоев нет" if ok else "за последний час вызовов LLM не было"
+        return _item("ok", detail, **extra)
+    if ok == 0:
+        return _item("error", f"все вызовы LLM за час падают ({errors}), бот отвечает шаблонами: {last_error_type}", **extra)
+    return _item("degraded", f"часть вызовов LLM падает: {errors} из {ok + errors}; последняя ошибка {last_error_type}", **extra)
+
+
+def check_cors(app: FastAPI) -> dict[str, Any]:
+    """домены клиентов должны быть в ALLOWED_ORIGINS, иначе виджет молча не работает в браузере."""
+
+    settings = app.state.settings
+    origins = settings.cors_origins()
+    if "*" in origins:
+        return _item("ok", "CORS: разрешены любые источники (*)", origins=len(origins))
+    origin_hosts = {hostname_from_origin(origin) for origin in origins}
+    uncovered: list[str] = []
+    for domain, company_ids in sorted(app.state.knowledge_base_resolver.build_domain_index().items()):
+        if domain == "localhost":
+            continue
+        if hostname_from_origin(domain) not in origin_hosts:
+            uncovered.append(f"{domain} ({', '.join(company_ids)})")
+    if uncovered:
+        return _item(
+            "degraded",
+            "домены клиентов не указаны в ALLOWED_ORIGINS, виджет на них не заработает: " + "; ".join(uncovered),
+            origins=len(origins),
+            uncovered=uncovered,
+        )
+    return _item("ok", "все домены клиентов есть в ALLOWED_ORIGINS", origins=len(origins))
+
+
+def _read_int(path: str) -> int | None:
+    try:
+        raw = Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return int(raw) if raw.isdigit() else None
+
+
+def _container_memory() -> tuple[int, int | None] | None:
+    """(использовано, лимит) в байтах из cgroup контейнера (v2, затем v1); лимит None — без ограничения."""
+
+    used = _read_int("/sys/fs/cgroup/memory.current")
+    if used is not None:
+        return used, _read_int("/sys/fs/cgroup/memory.max")
+    used = _read_int("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+    if used is not None:
+        limit = _read_int("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        return used, limit if limit is not None and limit < 1 << 60 else None
+    return None
+
+
+def _process_rss_mb() -> float | None:
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def check_resources(settings: Any) -> dict[str, Any]:
+    problems: list[str] = []
+    status = "ok"
+    overrides_ok = _writable(Path(settings.overrides_dir))
+    if not overrides_ok:
+        status = "degraded"
+        problems.append("папка настроек (вкладка «Настройки») недоступна на запись")
+    memory = _container_memory()
+    memory_info: dict[str, Any] = {}
+    if memory is not None:
+        used, limit = memory
+        memory_info["container_used_mb"] = round(used / 1024 / 1024, 1)
+        if limit:
+            pct = round(used / limit * 100, 1)
+            memory_info.update(container_limit_mb=round(limit / 1024 / 1024, 1), container_used_pct=pct)
+            if pct >= MEMORY_ERROR_PCT:
+                status = "error"
+                problems.append(f"память контейнера {pct}% лимита: риск убийства процесса")
+            elif pct >= MEMORY_DEGRADED_PCT:
+                status = _worst([status, "degraded"])
+                problems.append(f"память контейнера {pct}% лимита")
+    rss = _process_rss_mb()
+    if rss is not None:
+        memory_info["process_rss_mb"] = rss
+    detail = "; ".join(problems) if problems else "папка настроек доступна"
+    if memory_info.get("container_used_pct") is not None:
+        detail += f"; память {memory_info['container_used_pct']}% лимита"
+    return _item(status, detail, overrides_writable=overrides_ok, **memory_info)
+
+
 def check_logging() -> dict[str, Any]:
     """видны ли INFO-логи приложения (без logging.basicConfig они молча теряются)."""
 
@@ -391,6 +586,50 @@ def _recent_telegram_failures(settings: Any) -> dict[str, Any]:
     return {"last_24h": recent, "last_at": _iso(last_at) if last_at else None}
 
 
+def _poll_status(bridge: Any) -> dict[str, Any] | None:
+    """состояние цикла getUpdates (по нему приходят ответы операторов клиентам)."""
+
+    if not hasattr(bridge, "last_poll_ok_at"):
+        return None
+    now = time.time()
+    last_ok = bridge.last_poll_ok_at
+    failures = int(getattr(bridge, "consecutive_poll_failures", 0) or 0)
+    last_error = getattr(bridge, "last_poll_error", None)
+    info = {
+        "last_ok_at": _iso(datetime.fromtimestamp(last_ok, tz=timezone.utc)) if last_ok else None,
+        "consecutive_failures": failures,
+        "last_error": last_error,
+    }
+    status, detail = "ok", "опрос Telegram работает"
+    if last_ok is None:
+        if now - PROCESS_STARTED_AT >= POLL_STALE_DEGRADED_SECONDS:
+            status = "degraded"
+            detail = "опрос Telegram ещё ни разу не завершился успешно" + (f" ({last_error})" if last_error else "")
+    else:
+        age = now - last_ok
+        if age > POLL_STALE_ERROR_SECONDS:
+            status = "error"
+            detail = f"опрос Telegram не отвечает {int(age // 60)} мин: ответы операторов клиентам не доходят"
+        elif age > POLL_STALE_DEGRADED_SECONDS:
+            status = "degraded"
+            detail = f"последний успешный опрос Telegram {int(age)} с назад"
+    if status == "ok" and failures >= POLL_FAILURES_DEGRADED:
+        status = "degraded"
+        detail = f"неудачных опросов Telegram подряд: {failures}" + (f" ({last_error})" if last_error else "")
+    return {"status": status, "detail": detail, "info": info}
+
+
+def _capabilities_verdict(capabilities: dict[str, Any]) -> tuple[str, str]:
+    if capabilities.get("is_forum") is False:
+        return "error", "группа не в режиме тем: темы операторов не создаются"
+    member_status = capabilities.get("member_status")
+    if member_status and member_status not in {"administrator", "creator"}:
+        return "error", f"бот не администратор группы (status={member_status}): темы не создаются"
+    if member_status == "administrator" and capabilities.get("can_manage_topics") is False:
+        return "error", "у бота нет права управлять темами"
+    return "ok", "режим тем включён, права на темы есть" if capabilities.get("is_forum") else "права бота проверены"
+
+
 async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, Any]:
     settings = app.state.settings
     bridge = getattr(app.state, "telegram_bridge_service", None)
@@ -403,7 +642,7 @@ async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, An
         "proxy_set": bool(settings.telegram_proxy_url),
     }
     failures = _recent_telegram_failures(settings)
-    extra = {"config": config, "failures": failures}
+    extra: dict[str, Any] = {"config": config, "failures": failures}
 
     if bridge is None or not bridge.enabled:
         status = "skip" if settings.dev_mode else "degraded"
@@ -417,6 +656,12 @@ async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, An
     if failures["last_24h"]:
         status = _worst([status, "degraded"])
         problems.append(f"ошибок отправки за сутки: {failures['last_24h']}")
+    poll = _poll_status(bridge)
+    if poll is not None:
+        extra["polling"] = {"status": poll["status"], **poll["info"]}
+        if poll["status"] != "ok":
+            status = _worst([status, poll["status"]])
+            problems.append(poll["detail"])
 
     if not include_network:
         return _item(status, "; ".join(problems) or "настроен (сеть не проверялась)", network_checked=False, **extra)
@@ -432,6 +677,25 @@ async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, An
     group = live.get("operators_group") or {}
     status = _worst([status, str(bot_token.get("status", "ok")), str(group.get("status", "ok"))])
     detail_parts = [f"бот: {bot_token.get('detail')}", f"группа: {group.get('detail')}", *problems]
+
+    capabilities_fn = getattr(bridge, "group_capabilities", None)
+    if capabilities_fn is not None and status != "error":
+        try:
+            capabilities = await asyncio.wait_for(capabilities_fn(), timeout=TELEGRAM_CHECK_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            capabilities = None
+            status = _worst([status, "degraded"])
+            detail_parts.append("права бота не проверены: Telegram не ответил")
+        except Exception as error:
+            capabilities = None
+            status = _worst([status, "degraded"])
+            detail_parts.append(f"права бота не проверены: {type(error).__name__}")
+        if capabilities is not None:
+            verdict, verdict_detail = _capabilities_verdict(capabilities)
+            extra["group_capabilities"] = capabilities
+            status = _worst([status, verdict])
+            detail_parts.append(verdict_detail)
+
     return _item(status, "; ".join(detail_parts), network_checked=True, bot_token=bot_token, operators_group=group, **extra)
 
 
@@ -474,6 +738,10 @@ def _collect_sync(app: FastAPI) -> dict[str, dict[str, Any]]:
     checks["leads"] = _safe("leads", lambda: check_leads(settings))
     checks["analytics"] = _safe("analytics", lambda: check_analytics(settings))
     checks["storage"] = _safe("storage", lambda: check_storage(settings))
+    checks["resources"] = _safe("resources", lambda: check_resources(settings))
+    checks["cors"] = _safe("cors", lambda: check_cors(app))
+    checks["background_tasks"] = _safe("background_tasks", lambda: check_background_tasks(app))
+    checks["llm_runtime"] = _safe("llm_runtime", lambda: check_llm_runtime(app))
     checks["logging"] = _safe("logging", check_logging)
     return checks
 
@@ -482,8 +750,9 @@ def _flatten_statuses(checks: dict[str, dict[str, Any]]) -> list[str]:
     statuses: list[str] = []
     for item in checks.values():
         statuses.append(str(item.get("status", "ok")))
-        for client in item.get("clients", []) or []:
-            statuses.append(str(client.get("status", "ok")))
+        for key in ("clients", "tasks", "domains"):
+            for nested in item.get(key, []) or []:
+                statuses.append(str(nested.get("status", "ok")))
     return statuses
 
 

@@ -59,6 +59,7 @@ from ..policy.variants import (
     is_variant_list_question,
     should_stay_in_service_context,
 )
+from ..runtime_stats import STATS
 
 
 fallback_llm_client = MockLLMClient()
@@ -761,14 +762,18 @@ async def resolve_classification(
                 known_services,
                 selected_knowledge_base.domain_profile,
             )
+            STATS.record_ok("llm.classify")
         except Exception as error:
+            STATS.record_error("llm.classify", error)
             logger.info("structured_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             return local_result
 
     if structured_result is None:
         try:
             model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
+            STATS.record_ok("llm.classify")
         except Exception as error:
+            STATS.record_error("llm.classify", error)
             logger.info("classifier_source=local reason=helper_error error=%s", type(error).__name__)
             return local_result
     else:
@@ -797,8 +802,11 @@ async def resolve_classification(
 
 async def safe_small_talk(request: Request, company_name: str, message: str) -> str:
     try:
-        return await request.app.state.llm_client.small_talk(company_name, message)
+        answer = await request.app.state.llm_client.small_talk(company_name, message)
+        STATS.record_ok("llm.small_talk")
+        return answer
     except Exception as error:
+        STATS.record_error("llm.small_talk", error)
         logger.info("small_talk_source=fallback reason=helper_error error=%s", type(error).__name__)
         return await fallback_llm_client.small_talk(company_name, message)
 
@@ -869,7 +877,9 @@ async def classify_consultation_risk(
     else:
         try:
             result = await request.app.state.llm_client.classify_restricted_risk(message)
+            STATS.record_ok("llm.restricted_risk")
         except Exception as error:
+            STATS.record_error("llm.restricted_risk", error)
             logger.info("restricted_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             result = local_result
 
@@ -904,12 +914,15 @@ async def safe_complete(
 ) -> str:
     if should_use_consultation_llm(context):
         try:
-            return await request.app.state.llm_client.service_consultation(
+            answer = await request.app.state.llm_client.service_consultation(
                 context,
                 message,
                 history,
             )
+            STATS.record_ok("llm.consultation")
+            return answer
         except Exception as error:
+            STATS.record_error("llm.consultation", error)
             logger.info("service_consultation_source=fallback reason=helper_error error=%s", type(error).__name__)
             return await fallback_llm_client.service_consultation(
                 context,
@@ -918,13 +931,16 @@ async def safe_complete(
             )
 
     try:
-        return await request.app.state.llm_client.complete(
+        answer = await request.app.state.llm_client.complete(
             request.app.state.system_prompt,
             context,
             message,
             history,
         )
+        STATS.record_ok("llm.complete")
+        return answer
     except Exception as error:
+        STATS.record_error("llm.complete", error)
         logger.info("complete_source=fallback reason=helper_error error=%s", type(error).__name__)
         return await fallback_llm_client.complete(
             request.app.state.system_prompt,

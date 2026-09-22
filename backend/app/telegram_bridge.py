@@ -29,6 +29,7 @@ from .delivery import _escape_markdown, _iso, _utcnow
 from .logging_setup import log_event
 from .models import MessageRole, SessionStatus
 from .sessions import SessionStore
+from .telegram_routing import LEGACY, TelegramRouting, TelegramTarget
 from .utils.jsonl import append_jsonl, read_jsonl
 
 
@@ -129,6 +130,13 @@ def _format_transcript(session: Any) -> str:
     return "\n".join(lines)
 
 
+def _chat_id_of(message: dict[str, Any] | None) -> str | None:
+    chat = (message or {}).get("chat") if isinstance(message, dict) else None
+    if isinstance(chat, dict) and chat.get("id") is not None:
+        return str(chat.get("id"))
+    return None
+
+
 def _topic_deep_link(group_chat_id: str, topic_id: int) -> str:
     raw_id = group_chat_id.lstrip("-")
     if raw_id.startswith("100"):
@@ -150,12 +158,16 @@ class TelegramBridgeService:
         failures_file: Path | None = None,
         proxy_url: str = "",
         analytics_service: Any = None,
+        routing: TelegramRouting | None = None,
     ) -> None:
         self.bot_token = bot_token
+        # group_chat_id — старая общая группа (TELEGRAM_OPERATORS_GROUP_ID). С картой групп на клиента
+        # (routing, 2026-09-23) карточки идут в группу клиента; без карты — сюда, как раньше.
         self.group_chat_id = group_chat_id
         self.session_store = session_store
         self.ws_manager = ws_manager
         self.clients_topic_id = clients_topic_id
+        self.routing = routing or TelegramRouting(legacy_group_id=group_chat_id, legacy_clients_topic_id=clients_topic_id)
         self.failures_file = failures_file
         # Опционально (None в части тестов) — используется для operator_claimed/operator_closed
         # событий, см. _track_operator_event. Аналитика "по манагерам" (в разработке,
@@ -264,11 +276,32 @@ class TelegramBridgeService:
                 session.session_id,
                 topic_id,
                 closing_text="⏱ Диалог автоматически закрыт по неактивности (48 часов).",
+                group_id=self._topic_group(session),
             )
 
     @property
     def enabled(self) -> bool:
-        return bool(self.bot_token and self.group_chat_id)
+        return bool(self.bot_token and self.routing.configured)
+
+    def _new_card_target(self, session: Any, *, kind: str) -> TelegramTarget | None:
+        """куда слать НОВУЮ карточку/тему клиента. None — никуда: клиент не из карты групп или карта с
+        ошибкой. Чужая группа исключена; факт пишется в журнал сбоев (его видит preflight)."""
+
+        company_id = getattr(session, "company_id", None)
+        target = self.routing.target_for(company_id)
+        if target is None and self.routing.mode != LEGACY:
+            log_event(logger, logging.WARNING, "telegram_no_group", kind=kind, company_id=company_id, mode=self.routing.mode)
+            self._record_failure(
+                kind=kind,
+                session_id=getattr(session, "session_id", None),
+                data={"description": f"нет группы для клиента {company_id} (режим {self.routing.mode})"},
+            )
+        return target
+
+    def _topic_group(self, session: Any) -> str | None:
+        """группа, где уже живёт тема сессии: записанная при создании, иначе старая общая."""
+
+        return getattr(session, "telegram_group_id", None) or self.routing.legacy_group_id or None
 
     async def _call(self, method: str, **params: Any) -> dict[str, Any]:
         """Telegram лимитирует примерно 1 сообщение/сек в один и тот же чат — все карточки
@@ -370,27 +403,44 @@ class TelegramBridgeService:
             }
 
         bot_info = me.get("result") or {}
-        member = await self._call("getChatMember", chat_id=self.group_chat_id, user_id=bot_info.get("id"))
-        if not member.get("ok"):
-            operators_group = {
-                "status": "error",
-                "detail": str(member.get("description") or "getChatMember failed"),
-            }
-        else:
-            member_status = str((member.get("result") or {}).get("status") or "")
-            if member_status in {"left", "kicked"}:
-                operators_group = {
-                    "status": "error",
-                    "detail": f"бот больше не в группе (status={member_status})",
-                }
-            else:
-                operators_group = {"status": "ok", "detail": f"доступ есть, status={member_status}"}
+        bot_token = {"status": "ok", "detail": f"bot username: @{bot_info.get('username')}"}
 
+        if self.routing.mode == LEGACY:
+            # без карты групп — ответ ровно прежний (одна общая группа)
+            return {
+                "enabled": True,
+                "bot_token": bot_token,
+                "operators_group": await self._group_membership(self.routing.legacy_group_id, bot_info.get("id")),
+            }
+
+        # карта групп на клиента: проверяем каждую группу; operators_group — общий итог (как раньше —
+        # по нему смотрит preflight), подробности по группам — в groups
+        groups = []
+        for group_id, companies in self.routing.groups().items():
+            groups.append({"group": group_id, "companies": companies, **await self._group_membership(group_id, bot_info.get("id"))})
+        if self.routing.error:
+            summary = {"status": "error", "detail": self.routing.error}
+        elif any(group["status"] != "ok" for group in groups):
+            broken = [f"{group['group']} ({', '.join(group['companies'])}): {group['detail']}" for group in groups if group["status"] != "ok"]
+            summary = {"status": "error", "detail": "; ".join(broken)}
+        else:
+            summary = {"status": "ok", "detail": f"групп: {len(groups)}, доступ есть во всех"}
         return {
             "enabled": True,
-            "bot_token": {"status": "ok", "detail": f"bot username: @{bot_info.get('username')}"},
-            "operators_group": operators_group,
+            "mode": self.routing.mode,
+            "bot_token": bot_token,
+            "operators_group": summary,
+            "groups": groups,
         }
+
+    async def _group_membership(self, group_id: str, bot_id: Any) -> dict[str, Any]:
+        member = await self._call("getChatMember", chat_id=group_id, user_id=bot_id)
+        if not member.get("ok"):
+            return {"status": "error", "detail": str(member.get("description") or "getChatMember failed")}
+        member_status = str((member.get("result") or {}).get("status") or "")
+        if member_status in {"left", "kicked"}:
+            return {"status": "error", "detail": f"бот больше не в группе (status={member_status})"}
+        return {"status": "ok", "detail": f"доступ есть, status={member_status}"}
 
     async def post_operator_queue_card(
         self,
@@ -405,6 +455,10 @@ class TelegramBridgeService:
 
         if not self.enabled:
             return
+        session = await self.session_store.get(session_id)
+        target = self._new_card_target(session, kind="operator_queue_card")
+        if target is None:
+            return
         card_text = (
             f"{reason} — *{_escape_markdown(client_label)}*\n\n"
             f"💬 \"{_escape_markdown(last_message)}\"\n\n"
@@ -417,7 +471,7 @@ class TelegramBridgeService:
         }
         data = await self._call(
             "sendMessage",
-            chat_id=self.group_chat_id,
+            chat_id=target.group_id,
             text=card_text,
             parse_mode="Markdown",
             reply_markup=keyboard,
@@ -429,12 +483,16 @@ class TelegramBridgeService:
         """Карточка в тему "Клиенты" — лид/запись без прямой необходимости в операторе.
         Без кнопки, без своей темы — просто лог."""
 
-        if not self.enabled or not self.clients_topic_id:
+        if not self.enabled:
+            return
+        session = await self.session_store.get(session_id) if session_id else None
+        target = self._new_card_target(session, kind="client_lead_card")
+        if target is None or not target.clients_topic_id:
             return
         data = await self._call(
             "sendMessage",
-            chat_id=self.group_chat_id,
-            message_thread_id=int(self.clients_topic_id),
+            chat_id=target.group_id,
+            message_thread_id=int(target.clients_topic_id),
             text=card_text,
             parse_mode="Markdown",
         )
@@ -451,12 +509,12 @@ class TelegramBridgeService:
             return
         await self._call(
             "sendMessage",
-            chat_id=self.group_chat_id,
+            chat_id=self._topic_group(session),
             message_thread_id=session.telegram_topic_id,
             text=f"👤 {text}",
         )
 
-    async def close_topic(self, session_id: str, topic_id: Optional[int] = None) -> None:
+    async def close_topic(self, session_id: str, topic_id: Optional[int] = None, group_id: Optional[str] = None) -> None:
         # topic_id опционален — 2026-08-29, для эвикции по TTL: к моменту вызова сессия уже
         # удалена из store (evict_stale отработал раньше), обычный self.session_store.get()
         # вернул бы None и молча ничего не закрыл бы. Явно переданный topic_id обходит это.
@@ -465,11 +523,12 @@ class TelegramBridgeService:
             if session is None or session.telegram_topic_id is None:
                 return
             topic_id = session.telegram_topic_id
+            group_id = group_id or self._topic_group(session)
         if not self.enabled:
             return
         await self._call(
             "closeForumTopic",
-            chat_id=self.group_chat_id,
+            chat_id=group_id or self.routing.legacy_group_id,
             message_thread_id=topic_id,
         )
 
@@ -484,13 +543,13 @@ class TelegramBridgeService:
             return
         await self._call(
             "sendMessage",
-            chat_id=self.group_chat_id,
+            chat_id=self._topic_group(session),
             message_thread_id=session.telegram_topic_id,
             text="⚠️ Клиент покинул чат и начал новый диалог.",
         )
         await self.close_topic(session_id)
 
-    def _next_daily_topic_index(self, today: datetime) -> int:
+    def _next_daily_topic_index(self, today: datetime, company_id: str | None = None) -> int:
         """Порядковый номер темы за сегодня — не отдельный счётчик в памяти (пропал бы при
         рестарте сервера, задваивая номера уже в первый же день), а количество
         operator_claimed-событий за сегодня в analytics.jsonl: тот же файл, что уже
@@ -507,6 +566,9 @@ class TelegramBridgeService:
             count = 0
             for event in read_jsonl(analytics_file):
                 if event.get("event_type") != "operator_claimed":
+                    continue
+                # у каждого клиента своя нумерация тем (2026-09-23): его группа, его #ДДММГГ001
+                if company_id is not None and event.get("company_id") != company_id:
                     continue
                 timestamp = str(event.get("timestamp") or "")
                 try:
@@ -525,23 +587,24 @@ class TelegramBridgeService:
             logger.warning("topic index computation failed error=%s", type(error).__name__)
             return 1
 
-    def _topic_display_index(self) -> str:
+    def _topic_display_index(self, company_id: str | None = None) -> str:
         now = datetime.now(_TOPIC_DISPLAY_TIMEZONE)
-        index = self._next_daily_topic_index(now)
+        # в legacy одна общая группа — и нумерация общая, как раньше
+        index = self._next_daily_topic_index(now, company_id if self.routing.mode != LEGACY else None)
         return f"#{now:%d%m%y}{index:03d}"
 
-    async def _create_session_topic(self, session: Any, *, claimed_by: str) -> int | None:
+    async def _create_session_topic(self, session: Any, *, claimed_by: str, group_id: str) -> int | None:
         """Создаёт тему сессии в момент клейма — заголовок сразу содержит читаемый номер,
         эмодзи-тип обращения и оператора, не нужно отдельно переименовывать после."""
 
         emoji = TOPIC_TYPE_EMOJI.get(getattr(session, "last_intent", None), TOPIC_TYPE_EMOJI_DEFAULT)
-        topic_name = f"{self._topic_display_index()} {emoji} · {claimed_by}"[:128]
-        result = await self._call("createForumTopic", chat_id=self.group_chat_id, name=topic_name)
+        topic_name = f"{self._topic_display_index(getattr(session, 'company_id', None))} {emoji} · {claimed_by}"[:128]
+        result = await self._call("createForumTopic", chat_id=group_id, name=topic_name)
         if not result.get("ok"):
             return None
 
         topic_id = result["result"]["message_thread_id"]
-        await self.session_store.set_telegram_bridge(session.session_id, topic_id=topic_id)
+        await self.session_store.set_telegram_bridge(session.session_id, topic_id=topic_id, group_id=group_id)
 
         transcript = _format_transcript(session)
         if transcript:
@@ -549,7 +612,7 @@ class TelegramBridgeService:
             # экранировать его ради Markdown-разметки не имеет смысла (может сломать парсинг).
             await self._call(
                 "sendMessage",
-                chat_id=self.group_chat_id,
+                chat_id=group_id,
                 message_thread_id=topic_id,
                 text=transcript[:4000],
             )
@@ -558,7 +621,7 @@ class TelegramBridgeService:
         # кнопку доступной даже в длинной переписке без прокрутки к самому началу темы.
         pin_result = await self._call(
             "sendMessage",
-            chat_id=self.group_chat_id,
+            chat_id=group_id,
             message_thread_id=topic_id,
             text=f"🟢 Взято в работу — {claimed_by}",
             reply_markup={
@@ -571,7 +634,7 @@ class TelegramBridgeService:
         if pin_message_id is not None:
             await self._call(
                 "pinChatMessage",
-                chat_id=self.group_chat_id,
+                chat_id=group_id,
                 message_id=pin_message_id,
                 disable_notification=True,
             )
@@ -580,17 +643,23 @@ class TelegramBridgeService:
     async def _handle_callback_query(self, callback: dict[str, Any]) -> None:
         data = str(callback.get("data") or "")
         callback_id = str(callback.get("id") or "")
+        # из какой группы нажата кнопка: в реальных обновлениях Telegram chat есть всегда; без него
+        # (старые тесты) — считаем, что это старая общая группа
+        chat_id = _chat_id_of(callback.get("message")) or self.routing.legacy_group_id or None
 
         if data.startswith(CLOSE_CALLBACK_PREFIX):
             session_id = data[len(CLOSE_CALLBACK_PREFIX) :]
             session = await self.session_store.get(session_id)
-            if session is None or session.telegram_topic_id is None:
+            # кнопка должна быть нажата в той группе, где живёт тема этой сессии
+            if session is None or session.telegram_topic_id is None or self._topic_group(session) != chat_id:
+                if session is not None and session.telegram_topic_id is not None:
+                    log_event(logger, logging.WARNING, "telegram_foreign_group", kind="close", company_id=session.company_id)
                 if callback_id:
                     await self._call(
                         "answerCallbackQuery", callback_query_id=callback_id, text="Сессия не найдена"
                     )
                 return
-            await self._close_session_from_topic(session_id, session.telegram_topic_id)
+            await self._close_session_from_topic(session_id, session.telegram_topic_id, group_id=chat_id)
             if callback_id:
                 await self._call("answerCallbackQuery", callback_query_id=callback_id, text="Диалог завершён")
             return
@@ -603,7 +672,12 @@ class TelegramBridgeService:
         username = operator_label(from_user)
 
         session = await self.session_store.get(session_id)
-        if session is None:
+        # «Взять в работу» — только в группе этого клиента: оператор другого клиента не может
+        # забрать чужой диалог, даже если к нему как-то попала кнопка
+        target = self.routing.target_for(session.company_id) if session is not None else None
+        if session is None or target is None or target.group_id != chat_id:
+            if session is not None:
+                log_event(logger, logging.WARNING, "telegram_foreign_group", kind="claim", company_id=session.company_id)
             if callback_id:
                 await self._call("answerCallbackQuery", callback_query_id=callback_id, text="Сессия не найдена")
             return
@@ -646,18 +720,18 @@ class TelegramBridgeService:
 
         topic_id = session.telegram_topic_id
         if topic_id is None:
-            topic_id = await self._create_session_topic(session, claimed_by=username)
+            topic_id = await self._create_session_topic(session, claimed_by=username, group_id=target.group_id)
 
         message = callback.get("message") or {}
         if message.get("message_id"):
             keyboard = [[{"text": f"Взято: {username}", "callback_data": "claimed_noop"}]]
             if topic_id is not None:
                 keyboard.append(
-                    [{"text": "Перейти к переписке →", "url": _topic_deep_link(self.group_chat_id, topic_id)}]
+                    [{"text": "Перейти к переписке →", "url": _topic_deep_link(target.group_id, topic_id)}]
                 )
             await self._call(
                 "editMessageReplyMarkup",
-                chat_id=self.group_chat_id,
+                chat_id=target.group_id,
                 message_id=message["message_id"],
                 reply_markup={"inline_keyboard": keyboard},
             )
@@ -669,13 +743,20 @@ class TelegramBridgeService:
         text = str(message.get("text") or "").strip()
         if not thread_id or not text:
             return
+        # номер темы уникален только внутри группы: ищем по паре (группа, тема), а сообщения из
+        # незнакомых групп игнорируем — иначе оператор клиента Б мог бы писать посетителю клиента А
+        chat_id = _chat_id_of(message) or self.routing.legacy_group_id or None
+        if not self.routing.is_known_group(chat_id):
+            return
 
-        session = await self.session_store.find_by_telegram_topic(int(thread_id))
+        session = await self.session_store.find_by_telegram_topic(
+            int(thread_id), group_id=chat_id, legacy_group_id=self.routing.legacy_group_id or None
+        )
         if session is None:
             return
 
         if text.lower() in CLOSE_SESSION_COMMANDS:
-            await self._close_session_from_topic(session.session_id, int(thread_id))
+            await self._close_session_from_topic(session.session_id, int(thread_id), group_id=chat_id)
             return
 
         await self.session_store.append_message(session.session_id, MessageRole.OPERATOR, text)
@@ -688,7 +769,12 @@ class TelegramBridgeService:
         await self.ws_manager.send_to_client(session.session_id, payload)
 
     async def _close_session_from_topic(
-        self, session_id: str, thread_id: int, *, closing_text: str = "✅ Диалог завершён."
+        self,
+        session_id: str,
+        thread_id: int,
+        *,
+        closing_text: str = "✅ Диалог завершён.",
+        group_id: str | None = None,
     ) -> None:
         """Завершает диалог по команде оператора из темы (/done и т.д.) — переиспользует
         тот же путь закрытия, что и веб-панель оператора (disconnect_operator), плюс
@@ -701,30 +787,32 @@ class TelegramBridgeService:
             await self._track_operator_event(
                 event_type="operator_closed", session=session, claimed_by=session.telegram_claimed_by
             )
+        group_id = group_id or (self._topic_group(session) if session is not None else None) or self.routing.legacy_group_id
         await self.ws_manager.disconnect_operator(session_id, close_session=True)
         # Сообщение — до закрытия темы: Telegram не даёт постить в уже закрытую тему.
         await self._call(
             "sendMessage",
-            chat_id=self.group_chat_id,
+            chat_id=group_id,
             message_thread_id=thread_id,
             text=closing_text,
         )
-        # topic_id передаём явно (не полагаемся на self.session_store.get внутри close_topic) —
+        # topic_id и группу передаём явно (не полагаемся на self.session_store.get внутри close_topic) —
         # при вызове из эвикции сессии в сторе уже нет, только этим путём тема реально закроется.
-        await self.close_topic(session_id, topic_id=thread_id)
+        await self.close_topic(session_id, topic_id=thread_id, group_id=group_id)
 
     def _note_poll_failure(self, description: str) -> None:
         self.last_poll_error_at = time.time()
         self.last_poll_error = description[:200]
         self.consecutive_poll_failures += 1
 
-    async def group_capabilities(self) -> dict[str, Any]:
+    async def group_capabilities(self, group_id: str | None = None) -> dict[str, Any]:
         """что бот реально может в группе операторов — только read-only методы Bot API
         (getChat, getMe, getChatMember): группа в режиме тем и есть ли право управлять темами.
         Нужно preflight: getChatMember в health_check говорит лишь «бот в группе»."""
 
+        group_id = group_id or self.routing.legacy_group_id or next(iter(self.routing.groups()), "")
         result: dict[str, Any] = {"is_forum": None, "member_status": None, "can_manage_topics": None}
-        chat = await self._call("getChat", chat_id=self.group_chat_id)
+        chat = await self._call("getChat", chat_id=group_id)
         if chat.get("ok"):
             result["is_forum"] = bool((chat.get("result") or {}).get("is_forum"))
         else:
@@ -732,7 +820,7 @@ class TelegramBridgeService:
         me = await self._call("getMe")
         bot_id = (me.get("result") or {}).get("id") if me.get("ok") else None
         if bot_id is not None:
-            member = await self._call("getChatMember", chat_id=self.group_chat_id, user_id=bot_id)
+            member = await self._call("getChatMember", chat_id=group_id, user_id=bot_id)
             if member.get("ok"):
                 info = member.get("result") or {}
                 result["member_status"] = str(info.get("status") or "")

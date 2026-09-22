@@ -661,7 +661,28 @@ async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, An
 
     problems: list[str] = []
     status = "ok"
-    if not config["clients_topic_set"]:
+    routing = getattr(bridge, "routing", None)
+    mode = getattr(routing, "mode", "legacy")
+    if routing is not None:
+        extra["routing"] = routing.describe()
+    if mode == "invalid":
+        status = "error"
+        problems.append(f"карта групп с ошибкой, новые карточки не уходят никому: {routing.error}")
+    elif mode == "map":
+        # переход на группы клиентов: каждый клиент должен быть в карте (включая rosh_test), иначе
+        # его карточки молча не уходят — ровно то, что тут надо увидеть до жалобы
+        resolver = app.state.knowledge_base_resolver
+        client_ids = sorted(item.name for item in resolver.clients_data_dir.iterdir() if item.is_dir()) if resolver.clients_data_dir.exists() else []
+        missing = [company_id for company_id in client_ids if routing.target_for(company_id) is None]
+        without_topic = [company_id for company_id in client_ids if routing.target_for(company_id) is not None and not routing.target_for(company_id).clients_topic_id]
+        extra["routing"]["clients_without_group"] = missing
+        if missing:
+            status = _worst([status, "degraded"])
+            problems.append(f"у клиентов нет группы, их карточки не уходят: {', '.join(missing)}")
+        if without_topic:
+            status = _worst([status, "degraded"])
+            problems.append(f"не задана тема для карточек лидов у: {', '.join(without_topic)}")
+    elif not config["clients_topic_set"]:
         status = "degraded"
         problems.append("не задана тема для карточек лидов (карточки лидов не отправляются)")
     if failures["last_24h"]:
@@ -689,8 +710,28 @@ async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, An
     status = _worst([status, str(bot_token.get("status", "ok")), str(group.get("status", "ok"))])
     detail_parts = [f"бот: {bot_token.get('detail')}", f"группа: {group.get('detail')}", *problems]
 
+    if live.get("groups"):
+        extra["groups"] = live["groups"]
     capabilities_fn = getattr(bridge, "group_capabilities", None)
-    if capabilities_fn is not None and status != "error":
+    if capabilities_fn is not None and status != "error" and mode == "map":
+        # права бота в каждой группе клиента: режим тем и право управлять темами
+        per_group: dict[str, Any] = {}
+        for group_id in routing.groups():
+            try:
+                capabilities = await asyncio.wait_for(capabilities_fn(group_id), timeout=TELEGRAM_CHECK_TIMEOUT_SECONDS)
+            except Exception as error:  # noqa: BLE001
+                status = _worst([status, "degraded"])
+                detail_parts.append(f"права бота в {group_id} не проверены: {type(error).__name__}")
+                continue
+            verdict, verdict_detail = _capabilities_verdict(capabilities)
+            per_group[group_id] = capabilities
+            status = _worst([status, verdict])
+            if verdict != "ok":
+                detail_parts.append(f"{group_id}: {verdict_detail}")
+        extra["group_capabilities"] = per_group
+        if per_group and all(_capabilities_verdict(caps)[0] == "ok" for caps in per_group.values()):
+            detail_parts.append(f"режим тем и права на темы есть во всех группах ({len(per_group)})")
+    elif capabilities_fn is not None and status != "error":
         try:
             capabilities = await asyncio.wait_for(capabilities_fn(), timeout=TELEGRAM_CHECK_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:

@@ -30,6 +30,7 @@ from .routes import analytics, chat, debug, delivery, leads, operator, widget, w
 from .routes import settings as settings_routes
 from .sessions import SessionStore, archive_session
 from .telegram_bridge import TelegramBridgeService
+from .telegram_routing import TelegramRouting
 from .ws_manager import ConnectionManager
 
 
@@ -205,7 +206,16 @@ async def lifespan(app: FastAPI):
         failures_file=settings.telegram_bridge_failures_file,
         proxy_url=settings.telegram_proxy_url,
         analytics_service=app.state.analytics_service,
+        routing=TelegramRouting(
+            legacy_group_id=settings.telegram_operators_group_id,
+            legacy_clients_topic_id=settings.telegram_clients_topic_id,
+            client_groups_raw=settings.telegram_client_groups,
+        ),
     )
+    telegram_routing = app.state.telegram_bridge_service.routing
+    if telegram_routing.error:
+        # бот продолжает работать, но новые карточки не уходят никому — это надо видеть сразу
+        logger.error("telegram_client_groups invalid: %s", telegram_routing.error)
 
     retry_task = None
     if settings.delivery_retry_enabled:
@@ -291,6 +301,8 @@ async def lifespan(app: FastAPI):
             default_company=settings.default_company_id,
             rag_chunks=app.state.rag_corpus_status.get("chunk_count", 0),
             telegram_enabled=bridge.enabled,
+            telegram_mode=bridge.routing.mode,
+            telegram_groups=len(bridge.routing.groups()),
             telegram_clients_topic=bool(settings.telegram_clients_topic_id),
             telegram_proxy=bool(settings.telegram_proxy_url),
             operator_token_default=settings.operator_token == DEFAULT_OPERATOR_TOKEN,

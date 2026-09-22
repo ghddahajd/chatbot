@@ -277,6 +277,7 @@ class SessionStore:
         *,
         topic_id: Optional[int] = None,
         claimed_by: Optional[str] = None,
+        group_id: Optional[str] = None,
     ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
@@ -284,15 +285,32 @@ class SessionStore:
                 return None
             if topic_id is not None:
                 session.telegram_topic_id = topic_id
+            if group_id is not None:
+                session.telegram_group_id = group_id
             if claimed_by is not None:
                 session.telegram_claimed_by = claimed_by
             session.updated_at = datetime.utcnow()
             return session
 
-    async def find_by_telegram_topic(self, topic_id: int) -> Optional[Session]:
+    async def find_by_telegram_topic(
+        self,
+        topic_id: int,
+        *,
+        group_id: Optional[str] = None,
+        legacy_group_id: Optional[str] = None,
+    ) -> Optional[Session]:
+        """номер темы уникален только внутри группы: с несколькими группами ищем по паре
+        (группа, тема). Сессия без записанной группы — тема из старой общей группы. Без group_id —
+        прежнее поведение (только по номеру темы)."""
+
         async with self._lock:
             for session in self._sessions.values():
-                if session.telegram_topic_id == topic_id:
+                if session.telegram_topic_id != topic_id:
+                    continue
+                if group_id is None:
+                    return session
+                session_group = session.telegram_group_id or legacy_group_id
+                if session_group == group_id:
                     return session
             return None
 

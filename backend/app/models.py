@@ -107,6 +107,9 @@ class Session(BaseModel):
     active_frame: Optional[ContextFrame] = None
     contact_draft: dict[str, Any] = Field(default_factory=dict)
     telegram_topic_id: Optional[int] = None
+    # в какой группе создана тема (2026-09-23, группа на клиента). None — тема из времени до карты
+    # групп, то есть в старой общей группе; старые снапшоты сессий загружаются без этого поля.
+    telegram_group_id: Optional[str] = None
     telegram_claimed_by: Optional[str] = None
     # Живой баг (ручное тестирование пользователем, 2026-08-26): если оператор не подключился
     # долго, клиент раньше просто застревал на "администратор подключается" без выхода. Оффер

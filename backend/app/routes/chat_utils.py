@@ -13,7 +13,7 @@ from ..hours import is_currently_open
 from ..knowledge import KnowledgeBase
 from ..llm import MockLLMClient
 from ..knowledge import normalize_text
-from ..models import Message, MessageRole, PolicyAction, PolicyReason, PolicyResult, QuickAction, Session
+from ..models import Message, MessageRole, PendingAction, PolicyAction, PolicyReason, PolicyResult, QuickAction, Session
 from ..policy import classify_and_extract
 from ..policy.adapter import merge_policy_classifications, structured_to_policy_classification
 from ..policy.constants import (
@@ -216,6 +216,10 @@ def contextual_affirmative_response(
     # ничего не предлагалось. Если последний ответ бота был objection_handled — не перехватываем
     # здесь, пропускаем дальше в analyze_message, где это уже обрабатывается прицельно.
     if session.last_intent == PolicyReason.OBJECTION_HANDLED.value:
+        return None
+    # 2026-09-23, живой баг: бот только что предложил менеджера — «да» здесь согласие на него, а не
+    # вопрос про услугу. Пропускаем в analyze_message, там согласие превращается в запрос оператора.
+    if session.pending_action == PendingAction.OFFERED_OPERATOR.value:
         return None
 
     for history_message in reversed(session.messages[:-1]):

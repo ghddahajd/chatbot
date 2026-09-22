@@ -293,6 +293,14 @@ DEFAULT_PHRASEBOOK = {
     "booking_success_no_consultation": (
         "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали."
     ),
+    # 2026-09-23: ответ на «какой у вас телефон» / «как с вами связаться» — всё нужное, чтобы позвонить
+    # или приехать. Клиент может переопределить формулировку в своём phrasebook.
+    "clinic_contacts": (
+        "{company_name}: телефон {phone}. Часы работы: {working_hours}. Адрес: {address}."
+    ),
+    "clinic_contacts_deferred": (
+        "{company_name}: телефон {phone}. Часы работы: {working_hours}."
+    ),
     "clinic_location": (
         "{company_name}: {city}. Адрес: {address}. Часы работы: {working_hours}. "
         "Если нужно, менеджер подскажет как добраться."

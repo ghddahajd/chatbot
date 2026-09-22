@@ -28,10 +28,17 @@ from .constants import (
     PROMPT_INJECTION_KEYWORDS,
     COMPLAINT_ESCALATION_KEYWORDS,
     FRUSTRATION_LEAVING_KEYWORDS,
+    OPERATOR_CONSENT_EXTRA_TOKENS,
+    OPERATOR_CONSENT_WORDS,
+    OWN_CONTACT_STEMS,
     REPRODUCTIVE_HEALTH_KEYWORDS,
     AMBULANCE_ACTION_KEYWORDS,
     AMBULANCE_SUBJECT_KEYWORDS,
+    CLINIC_HOURS_EXTRA_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
+    CLINIC_PHONE_EXACT_MESSAGES,
+    CLINIC_PHONE_KEYWORDS,
+    CONTACT_FILLER_TOKENS,
     COMPANY_OVERVIEW_KEYWORDS,
     DEFAULT_SENSITIVE_TOPIC_KEYWORDS,
     DMS_FACT_KEYWORDS,
@@ -1345,6 +1352,46 @@ def _has_urgent_symptom(normalized_message: str) -> bool:
     return contains_keyword(normalized_message, URGENT_SYMPTOM_KEYWORDS)
 
 
+def _without_contact_fillers(normalized_message: str) -> str:
+    """текст без слов-связок — только для сверки с контактными фразами («до скольки вы работаете»)."""
+
+    return " ".join(token for token in normalized_message.split() if token not in CONTACT_FILLER_TOKENS)
+
+
+def _matches_contact_phrases(normalized_message: str, keywords: set[str]) -> bool:
+    # обычная сверка ИЛИ сверка без связок: только добавляет совпадения, ничего не отнимает
+    return contains_keyword(normalized_message, keywords) or contains_keyword(
+        _without_contact_fillers(normalized_message), keywords
+    )
+
+
+def _is_clinic_phone_question(message: str, normalized_message: str) -> bool:
+    """вопрос про телефон/связь с клиникой — но не когда клиент сам даёт номер или просит перезвонить."""
+
+    if extract_phone(message):
+        return False
+    if any(token.startswith(OWN_CONTACT_STEMS) for token in normalized_message.split()):
+        return False
+    stripped = _without_contact_fillers(normalized_message)
+    return (
+        stripped in CLINIC_PHONE_EXACT_MESSAGES
+        or normalized_message in CLINIC_PHONE_EXACT_MESSAGES
+        or _matches_contact_phrases(normalized_message, CLINIC_PHONE_KEYWORDS)
+    )
+
+
+def _is_operator_consent(normalized_message: str) -> bool:
+    """«да», «давайте», «да, соедините с менеджером» — согласие на только что предложенного менеджера."""
+
+    tokens = normalized_message.split()
+    if not tokens:
+        return False
+    if tokens[0] == "да":
+        tokens = tokens[1:] or ["да"]
+    allowed = OPERATOR_CONSENT_WORDS | OPERATOR_CONSENT_EXTRA_TOKENS
+    return all(token in allowed for token in tokens) and any(token in OPERATOR_CONSENT_WORDS for token in tokens)
+
+
 def _clinic_info_result(
     message: str,
     normalized_message: str,
@@ -1361,7 +1408,40 @@ def _clinic_info_result(
     facts = _clinic_facts(knowledge_base)
     base_quick_actions = ["Оставить телефон", "Позвать менеджера"]
 
-    if contains_keyword(normalized_message, CLINIC_LOCATION_KEYWORDS):
+    # 2026-09-23, живой баг: на «какой у вас телефон» бот не давал номер вовсе. Телефон, часы и
+    # адрес берутся из данных клиента (company.yaml) — для второго клиента подставятся его.
+    # вопрос и про врачей, и про часы/телефон — новые правила не перехватывают его, остаётся прежний
+    # ответ (список врачей); иначе «какие врачи есть и работаете ли по выходным?» терял бы врачей
+    asks_about_doctors = doctor_name_matched or contains_keyword(normalized_message, GENERIC_DOCTOR_LIST_KEYWORDS)
+    phone = str(company.phone or "").strip()
+    if phone and not asks_about_doctors and _is_clinic_phone_question(message, normalized_message):
+        address = str(company.address or "").strip()
+        has_address = bool(address) and not _looks_like_placeholder_address(address)
+        message_to_user = _format_phrase(
+            knowledge_base,
+            "clinic_contacts" if has_address else "clinic_contacts_deferred",
+            company_name=company.company_name,
+            phone=phone,
+            working_hours=company.working_hours,
+            address=address,
+        )
+        return PolicyResult(
+            action=PolicyAction.ANSWER,
+            reason=PolicyReason.OK,
+            confidence=0.9,
+            safe_context={
+                "force_direct_answer": True,
+                "message_to_user": message_to_user,
+                "clinic_info_topic": "contacts",
+            },
+            quick_actions=["Позвать менеджера", "Написать в Telegram"],
+        )
+
+    location_requested = contains_keyword(normalized_message, CLINIC_LOCATION_KEYWORDS) or (
+        not asks_about_doctors
+        and _matches_contact_phrases(normalized_message, CLINIC_LOCATION_KEYWORDS | CLINIC_HOURS_EXTRA_KEYWORDS)
+    )
+    if location_requested:
         address = str(company.address or "").strip()
         if _looks_like_placeholder_address(address):
             message_to_user = _format_phrase(
@@ -2246,6 +2326,16 @@ def _analyze_message_core(
     operator_requested = contains_keyword(
         normalized_message, set(knowledge_base.company.operator_triggers)
     ) or contains_keyword(normalized_message, OPERATOR_REQUEST_KEYWORDS) or intent == "operator_request"
+    # 2026-09-23, живой баг: после «…Или сразу соединю с менеджером» ответ «да»/«соедините» не
+    # соединял (а «соедините» даже попадал в ветку «отказался от оператора»). Согласие при висящем
+    # предложении — то же самое, что кнопка «Позвать менеджера»: днём передача, ночью просьба контакта.
+    operator_consent_given = (
+        not operator_requested
+        and session.pending_action == PendingAction.OFFERED_OPERATOR.value
+        and _is_operator_consent(normalized_message)
+    )
+    if operator_consent_given:
+        operator_requested = True
     duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
     explanation_requested = contains_keyword(normalized_message, EXPLANATION_KEYWORDS)
     # Живой баг (2026-08-10): objection_price спрашивает "расскажу подробнее, что входит?",
@@ -2816,7 +2906,9 @@ def _analyze_message_core(
     # выше) даже когда сырая классификация сообщения — "clarify" (у "давай" самого по себе
     # нет содержания вне контекста). Без этой оговорки generic-clarify перехватывал бы раньше,
     # чем код вообще доходил до explanation_requested-ветки ниже.
-    if intent == "clarify" and not explanation_requested:
+    # То же для согласия на менеджера: голое «да»/«ок» классифицируется как clarify, и без этой
+    # оговорки generic-clarify срабатывал раньше ветки запроса оператора (2026-09-23).
+    if intent == "clarify" and not explanation_requested and not operator_consent_given:
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.OK,

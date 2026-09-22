@@ -1,21 +1,27 @@
 """роуты простой аналитики managed-service mvp."""
 
+import logging
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from ..auth import verify_operator_token
+from ..logging_setup import log_event
 from ..rate_limit import client_ip
 
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+logger = logging.getLogger(__name__)
 
 # Предохранитель от случайного огромного диапазона (не про производительность на текущих
 # объёмах — про то, чтобы опечатка в годе ("2020" вместо "2026") не сканировала годы файлов
 # молча). 2026-08-30, кастомный период на дашборде.
 MAX_CUSTOM_RANGE_DAYS = 730
+# сколько диалогов максимум за одну выгрузку из вкладки "Чаты"
+CHAT_EXPORT_MAX = 500
 
 
 def _resolve_date_range(
@@ -145,6 +151,57 @@ async def analytics_chats(
         limit=limit,
     )
     return {"conversations": conversations}
+
+
+class ChatExportRequest(BaseModel):
+    company_id: Optional[str] = None
+    scope: str = "all"
+    # отмеченные в списке диалоги; пусто — все по фильтру scope (в теле, а не в адресе:
+    # 200 id в query-строке упираются в лимит nginx на длину строки запроса)
+    session_ids: list[str] = Field(default_factory=list, max_length=CHAT_EXPORT_MAX)
+    limit: int = Field(default=CHAT_EXPORT_MAX, ge=1, le=CHAT_EXPORT_MAX)
+
+
+@router.post("/chats/export")
+async def analytics_chats_export(
+    payload: ChatExportRequest,
+    request: Request,
+    x_operator_token: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    """Полные диалоги одним JSON-файлом (2026-09-22) — для разбора и для корпуса проверок.
+    Телефоны замаскированы, лишних полей нет (см. AnalyticsService.export_conversations)."""
+
+    verify_operator_token(request, x_operator_token)
+    live_sessions = await request.app.state.session_store.list_all()
+    conversations = request.app.state.analytics_service.export_conversations(
+        live_sessions,
+        company_id=payload.company_id or None,
+        scope=payload.scope,
+        session_ids=payload.session_ids or None,
+        limit=payload.limit,
+    )
+    exported_at = datetime.utcnow()
+    log_event(
+        logger,
+        logging.INFO,
+        "chats_exported",
+        company_id=payload.company_id,
+        scope=payload.scope,
+        selected=len(payload.session_ids),
+        count=len(conversations),
+    )
+    filename = f"chats_{exported_at:%Y-%m-%d_%H%M}.json"
+    return JSONResponse(
+        content={
+            "exported_at": exported_at.isoformat(timespec="seconds") + "Z",
+            "company_id": payload.company_id or None,
+            "scope": payload.scope,
+            "count": len(conversations),
+            "phones_masked": True,
+            "conversations": conversations,
+        },
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/chats/{session_id}")

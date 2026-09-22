@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+from .logging_setup import redact_phones
 from .models import PolicyAction, PolicyReason, PolicyResult, Session
 from .utils.jsonl import read_jsonl
 
@@ -703,6 +704,56 @@ class AnalyticsService:
                 return record
         return None
 
+    def export_conversations(
+        self,
+        live_sessions: list[Session],
+        *,
+        company_id: Optional[str] = None,
+        scope: str = "all",
+        session_ids: Optional[list[str]] = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Выгрузка полных диалогов пачкой (2026-09-22, кнопки во вкладке "Чаты" /backstage):
+        либо отмеченные session_ids, либо все по фильтру scope — в том же порядке, что список.
+
+        Только белый список полей (без telegram_claimed_by, черновиков контакта и т.п.), телефоны
+        в тексте сообщений всегда замаскированы: выгрузка уходит на ноутбук и дальше в корпус
+        проверок, номера там не нужны. Архив читается один раз, а не на каждый id."""
+
+        live_by_id = {session.session_id: session for session in live_sessions}
+        archived_by_id: dict[str, dict[str, Any]] = {}
+        for record in self._archived_conversations():
+            session_id = str(record.get("session_id") or "")
+            if not session_id:
+                continue
+            previous = archived_by_id.get(session_id)
+            # один диалог мог попасть в архив дважды — берём более полный вариант
+            if previous is None or len(record.get("messages") or []) >= len(previous.get("messages") or []):
+                archived_by_id[session_id] = record
+
+        if session_ids:
+            ordered_ids = list(dict.fromkeys(session_id for session_id in session_ids if session_id))
+        else:
+            ordered_ids = [
+                item["session_id"]
+                for item in self.list_conversations(live_sessions, company_id=company_id, scope=scope, limit=limit)
+            ]
+
+        exported: list[dict[str, Any]] = []
+        for session_id in ordered_ids:
+            if len(exported) >= limit:
+                break
+            if session_id in live_by_id:
+                item = _export_live_session(live_by_id[session_id])
+            elif session_id in archived_by_id:
+                item = _export_archived_record(archived_by_id[session_id])
+            else:
+                continue
+            if company_id is not None and item["company_id"] != company_id:
+                continue
+            exported.append(item)
+        return exported
+
     def unanswered_trend(
         self,
         company_id: Optional[str] = None,
@@ -1185,3 +1236,47 @@ def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retent
 
 def _dump_jsonl_line(entry: dict[str, Any]) -> str:
     return json.dumps(entry, ensure_ascii=False) + "\n"
+
+
+def _export_message(role: Any, text: Any, kind: Any, created_at: Any) -> dict[str, Any]:
+    return {
+        "role": role,
+        "text": redact_phones(str(text or "")),
+        "kind": kind,
+        "created_at": created_at,
+    }
+
+
+def _export_live_session(session: Session) -> dict[str, Any]:
+    return {
+        "session_id": session.session_id,
+        "company_id": session.company_id,
+        "status": session.status.value,
+        "operator_requested": session.operator_requested,
+        "lead_requested": session.lead_requested,
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat(),
+        "source": "live",
+        "messages": [
+            _export_message(message.role.value, message.text, message.kind, message.created_at.isoformat())
+            for message in session.messages
+        ],
+    }
+
+
+def _export_archived_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "session_id": record.get("session_id"),
+        "company_id": record.get("company_id"),
+        "status": record.get("status"),
+        "operator_requested": bool(record.get("operator_requested")),
+        "lead_requested": bool(record.get("lead_requested")),
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("closed_at"),
+        "source": "archive",
+        "messages": [
+            _export_message(message.get("role"), message.get("text"), message.get("kind"), message.get("created_at"))
+            for message in record.get("messages") or []
+            if isinstance(message, dict)
+        ],
+    }

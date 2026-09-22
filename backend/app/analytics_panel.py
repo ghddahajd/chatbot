@@ -314,6 +314,17 @@ def render_analytics_panel(
     }
     .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .filter-btn:hover:not(.active) { background: var(--border-soft); }
+    /* выгрузка диалогов (только /backstage) — свой класс, не .filter-btn: на .filter-btn висит
+       переключение scope, иначе кнопка выгрузки перезагружала бы список */
+    .chat-export { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+    .export-btn {
+      font: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); cursor: pointer;
+    }
+    .export-btn:hover:not(:disabled) { background: var(--border-soft); }
+    .export-btn:disabled { opacity: 0.5; cursor: default; }
+    .export-status { font-size: 12px; color: var(--text-muted); }
+    .chat-check { margin: 0; cursor: pointer; accent-color: var(--accent); }
 
     /* ── вкладка "Настройки" ──
        Единая система полей ниже (один padding/radius/border/focus на все input/select,
@@ -471,6 +482,7 @@ def render_analytics_panel(
         <button type="button" class="filter-btn" data-scope="bot_only">Только бот</button>
         <button type="button" class="filter-btn" data-scope="operator">С оператором</button>
         <button type="button" class="filter-btn" data-scope="lead">Успешные лиды</button>
+        __CHAT_EXPORT_HTML__
       </div>
       <div class="chats-layout">
         <div class="card chats-list-pane" id="chatsList">
@@ -1180,11 +1192,56 @@ def render_analytics_panel(
     let chatRowsById = {};
     let activeChatSessionId = null;
 
+    // Выгрузка диалогов в JSON (2026-09-22) — только на /backstage. Отмеченные живут, пока
+    // список не перезагрузили (смена фильтра/компании), телефоны маскирует сервер.
+    const CHAT_EXPORT_ENABLED = __CHAT_EXPORT_ENABLED__;
+    const exportSelection = new Set();
+
+    function updateExportControls() {
+      const button = document.getElementById("exportSelectedBtn");
+      if (!button) return;
+      button.disabled = exportSelection.size === 0;
+      button.textContent = exportSelection.size ? `Скачать выбранные (${exportSelection.size})` : "Скачать выбранные";
+    }
+
+    async function exportChats(onlySelected) {
+      const status = document.getElementById("exportStatus");
+      const body = {
+        company_id: document.getElementById("companySelect").value || null,
+        scope: currentChatScope,
+        session_ids: onlySelected ? Array.from(exportSelection) : [],
+      };
+      status.textContent = "Готовлю файл…";
+      try {
+        const res = await fetch("/api/analytics/chats/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const stamp = (data.exported_at || "").slice(0, 16).replace("T", "_").replace(":", "");
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `chats_${body.scope}_${stamp || "export"}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        status.textContent = `Скачано диалогов: ${data.count}, телефоны скрыты`;
+      } catch (error) {
+        status.textContent = `Не удалось выгрузить: ${error.message}`;
+      }
+    }
+
     function renderChatRow(item) {
       const time = (item.updated_at || "").replace("T", " ").slice(0, 16);
       return `
         <div class="chat-row" data-session-id="${escapeHtml(item.session_id)}">
           <div class="chat-row-top">
+            ${CHAT_EXPORT_ENABLED ? `<input type="checkbox" class="chat-check" aria-label="Отметить для выгрузки" data-session-id="${escapeHtml(item.session_id)}"${exportSelection.has(item.session_id) ? " checked" : ""}>` : ""}
             <span class="chat-id">${escapeHtml(item.session_id.slice(0, 8))}</span>
             ${chatBadges(item)}
             <span class="chat-time">${escapeHtml(time)}</span>
@@ -1232,6 +1289,8 @@ def render_analytics_panel(
       const companyId = document.getElementById("companySelect").value;
       list.innerHTML = '<div class="loading">Загрузка…</div>';
       activeChatSessionId = null;
+      exportSelection.clear();
+      updateExportControls();
       document.getElementById("chatDetail").innerHTML = '<div class="empty-state">Выберите диалог слева</div>';
       try {
         const data = await fetchChats(companyId, currentChatScope);
@@ -1561,13 +1620,41 @@ def render_analytics_panel(
       });
     });
     document.getElementById("chatsList").addEventListener("click", (event) => {
+      // клик по галочке только отмечает чат для выгрузки, а не открывает его
+      if (event.target.closest(".chat-check")) return;
       const row = event.target.closest(".chat-row");
       if (row) selectChat(row.dataset.sessionId);
     });
+    document.getElementById("chatsList").addEventListener("change", (event) => {
+      const box = event.target.closest(".chat-check");
+      if (!box) return;
+      if (box.checked) exportSelection.add(box.dataset.sessionId);
+      else exportSelection.delete(box.dataset.sessionId);
+      updateExportControls();
+    });
+    if (CHAT_EXPORT_ENABLED) {
+      document.getElementById("exportSelectedBtn").addEventListener("click", () => exportChats(true));
+      document.getElementById("exportAllBtn").addEventListener("click", () => exportChats(false));
+    }
 
     load();
   </script>
 </body>
 </html>
 """
-    return html.replace("__COMPANY_SELECT_HTML__", company_select_html)
+    # выгрузка диалогов — только внутренняя страница (/backstage, с переключателем компаний);
+    # на клиентской /analytics ни кнопок, ни галочек
+    chat_export_html = (
+        '<div class="chat-export">'
+        '<button type="button" class="export-btn" id="exportSelectedBtn" disabled>Скачать выбранные</button>'
+        '<button type="button" class="export-btn" id="exportAllBtn">Скачать все по фильтру (до 500)</button>'
+        '<span class="export-status" id="exportStatus" aria-live="polite"></span>'
+        "</div>"
+        if show_company_selector
+        else ""
+    )
+    return (
+        html.replace("__COMPANY_SELECT_HTML__", company_select_html)
+        .replace("__CHAT_EXPORT_HTML__", chat_export_html)
+        .replace("__CHAT_EXPORT_ENABLED__", "true" if show_company_selector else "false")
+    )

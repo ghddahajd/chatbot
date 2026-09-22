@@ -210,3 +210,40 @@ def test_state_matters_for_short_follow_up(managed_env, tmp_path: Path) -> None:
         return row["action"], row["reason"], row["message_to_user"], json.dumps(row["quick_actions"], ensure_ascii=False)
 
     assert answer(by_context["fresh"]) != answer(by_context["offered_operator"])
+
+
+# ---------------------------------------------------------------- отпечаток контекста
+
+
+def test_context_hash_ignores_unread_phrasebook_keys_but_not_price_disclaimer() -> None:
+    """23.09: две новые фразы в словаре дали 15 тыс. ложных различий — словарь целиком модель не видит."""
+
+    base = {"service": {"name": "Чистки"}, "phrasebook": {"price_disclaimer": "Цена предварительная", "greeting": "Привет"}}
+    new_phrase = {**base, "phrasebook": {**base["phrasebook"], "clinic_contacts": "Телефон {phone}"}}
+    new_disclaimer = {**base, "phrasebook": {**base["phrasebook"], "price_disclaimer": "Другая оговорка"}}
+    new_field = {**base, "service": {"name": "Пилинги"}}
+
+    assert snap._context_hash(base) == snap._context_hash(new_phrase)
+    assert snap._context_hash(base) != snap._context_hash(new_disclaimer)
+    assert snap._context_hash(base) != snap._context_hash(new_field)
+
+
+def test_llm_input_hash_uses_the_versions_own_context_builder() -> None:
+    class FakeClient:
+        def __init__(self, api_key: str) -> None:
+            self.api_key = api_key
+
+        def _context_for_model(self, context: dict) -> str:
+            return f"Услуга: {context['service']['name']}"
+
+    class BrokenClient:
+        def __init__(self, api_key: str) -> None:
+            raise TypeError("old signature")
+
+    first = snap._llm_input_hash(FakeClient, {"service": {"name": "Чистки"}, "phrasebook": {"x": 1}})
+    same_model_input = snap._llm_input_hash(FakeClient, {"service": {"name": "Чистки"}, "phrasebook": {"y": 2}})
+    other = snap._llm_input_hash(FakeClient, {"service": {"name": "Пилинги"}})
+
+    assert first == same_model_input and first != other
+    assert snap._llm_input_hash(BrokenClient, {}) == "error:TypeError"
+    assert snap._llm_input_hash(None, {}) is None

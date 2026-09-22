@@ -81,6 +81,7 @@ COMPARED_FIELDS = (
     "question_type",
     "message_to_user",
     "context_hash",
+    "llm_input_hash",
 )
 CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 KEYWORD_CARRIER = "подскажите пожалуйста, {}"
@@ -306,9 +307,35 @@ def _jsonable(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, default=str, sort_keys=True))
 
 
-def _context_hash(context: dict[str, Any]) -> str:
-    raw = json.dumps(context, ensure_ascii=False, default=str, sort_keys=True)
+def _hash(value: Any) -> str:
+    raw = json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+# Из словаря фраз, который лежит в safe_context целиком, модель и проверка ответов читают только эти
+# ключи (grep phrasebook.get в llm/ и validator.py, 2026-09-23). Весь словарь в отпечаток не берём:
+# новая фраза, которую никто не читает, иначе давала тысячи ложных различий (так было 23.09).
+PHRASEBOOK_KEYS_READ_BY_LLM = ("price_disclaimer",)
+
+
+def _context_hash(context: dict[str, Any]) -> str:
+    """всё, что правила передают дальше (проверке, LLM, chat_service), кроме словаря фраз целиком."""
+
+    phrasebook = context.get("phrasebook") if isinstance(context.get("phrasebook"), dict) else {}
+    relevant = {key: value for key, value in context.items() if key != "phrasebook"}
+    relevant["phrasebook_read_keys"] = {key: phrasebook.get(key) for key in PHRASEBOOK_KEYS_READ_BY_LLM}
+    return _hash(relevant)
+
+
+def _llm_input_hash(llm_client_cls: Any, context: dict[str, Any]) -> str | None:
+    """выжимка контекста, которую эта версия кода реально отправила бы в Yandex (_context_for_model)."""
+
+    if llm_client_cls is None:
+        return None
+    try:
+        return _hash(llm_client_cls(api_key="snapshot")._context_for_model(context))
+    except Exception as error:  # noqa: BLE001 — другая версия кода может не уметь; это не повод падать
+        return f"error:{type(error).__name__}"
 
 
 def run_version(
@@ -325,6 +352,11 @@ def run_version(
     from app.config import Settings
     from app.knowledge import KnowledgeBaseResolver
     from app.llm.mock import MockLLMClient
+
+    try:
+        from app.llm.openai_compatible import OpenAIClient as llm_client_cls
+    except ImportError:
+        llm_client_cls = None
     from app.models import Message, MessageRole, Session
     from app.policy import analyze_message
     from app.routes.chat_utils import resolve_classification
@@ -404,6 +436,7 @@ def run_version(
                             question_type=context.get("question_type"),
                             message_to_user=context.get("message_to_user"),
                             context_hash=_context_hash(context),
+                            llm_input_hash=_llm_input_hash(llm_client_cls, context),
                             error=None,
                         )
                     except Exception as error:  # noqa: BLE001 — падение на одном сообщении — тоже результат

@@ -176,7 +176,7 @@ def check_app(settings: Any) -> dict[str, Any]:
     human = f"{hours} ч {minutes} мин" if hours else f"{minutes} мин {seconds} с"
     return _item(
         "ok",
-        f"работает {human}",
+        f"работает {human}; app_env={settings.app_env}, dev_mode={int(bool(settings.dev_mode))}, код {code_fingerprint()}",
         app_env=settings.app_env,
         dev_mode=bool(settings.dev_mode),
         uptime_seconds=uptime,

@@ -260,31 +260,37 @@ async def lifespan(app: FastAPI):
     }
 
     # одна строка «с чем поднялись»: по ней после деплоя видно режим, клиентов, Telegram и версию кода
-    # (только флаги и счётчики — ни токенов, ни ссылок, ни номеров групп).
-    client_ids = sorted(
-        item.name for item in settings.clients_data_dir.iterdir() if item.is_dir()
-    ) if settings.clients_data_dir.exists() else []
-    bridge = app.state.telegram_bridge_service
-    log_event(
-        logger,
-        logging.INFO,
-        "startup_summary",
-        app_env=settings.app_env,
-        dev_mode=settings.dev_mode,
-        log_level=settings.log_level,
-        llm_provider=settings.llm_provider,
-        llm_client=type(app.state.llm_client).__name__,
-        clients=len(client_ids),
-        client_ids=",".join(client_ids),
-        default_company=settings.default_company_id,
-        rag_chunks=app.state.rag_corpus_status.get("chunk_count", 0),
-        telegram_enabled=bridge.enabled,
-        telegram_clients_topic=bool(settings.telegram_clients_topic_id),
-        telegram_proxy=bool(settings.telegram_proxy_url),
-        operator_token_default=settings.operator_token == DEFAULT_OPERATOR_TOKEN,
-        tasks=",".join(sorted(app.state.background_tasks)),
-        code=code_fingerprint(),
-    )
+    # (только флаги и счётчики — ни токенов, ни ссылок, ни номеров групп). Наблюдаемость не должна
+    # мешать запуску: любой сбой здесь — предупреждение, а не падение приложения.
+    try:
+        client_ids = (
+            sorted(item.name for item in settings.clients_data_dir.iterdir() if item.is_dir())
+            if settings.clients_data_dir.exists()
+            else []
+        )
+        bridge = app.state.telegram_bridge_service
+        log_event(
+            logger,
+            logging.INFO,
+            "startup_summary",
+            app_env=settings.app_env,
+            dev_mode=settings.dev_mode,
+            log_level=settings.log_level,
+            llm_provider=settings.llm_provider,
+            llm_client=type(app.state.llm_client).__name__,
+            clients=len(client_ids),
+            client_ids=",".join(client_ids),
+            default_company=settings.default_company_id,
+            rag_chunks=app.state.rag_corpus_status.get("chunk_count", 0),
+            telegram_enabled=bridge.enabled,
+            telegram_clients_topic=bool(settings.telegram_clients_topic_id),
+            telegram_proxy=bool(settings.telegram_proxy_url),
+            operator_token_default=settings.operator_token == DEFAULT_OPERATOR_TOKEN,
+            tasks=",".join(sorted(app.state.background_tasks)),
+            code=code_fingerprint(),
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("startup_summary failed error=%s", type(error).__name__)
 
     try:
         yield

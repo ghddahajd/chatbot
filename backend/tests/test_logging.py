@@ -324,3 +324,31 @@ def test_operator_event_is_logged_without_operator_name(caplog: pytest.LogCaptur
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("operator_event"))
     assert "event_type=operator_claimed" in line and "session=feedface" in line
     assert "ivan" not in line
+
+
+# ---------------------------------------------------------------- наблюдаемость не роняет сервис
+
+
+def test_log_event_never_raises_even_for_broken_values() -> None:
+    class Broken:
+        def __str__(self) -> str:
+            raise RuntimeError("не печатается")
+
+    log_event(logging.getLogger("app.test_never_raises"), logging.WARNING, "event", value=Broken())  # не должно упасть
+
+
+def test_startup_survives_a_failing_startup_summary(managed_env, monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    from fastapi.testclient import TestClient
+
+    from app import main as main_module
+
+    def broken_fingerprint() -> str:
+        raise RuntimeError("нет доступа к файлам кода")
+
+    monkeypatch.setattr(main_module, "code_fingerprint", broken_fingerprint)
+    with caplog.at_level(logging.INFO, logger="app"):
+        with TestClient(main_module.app) as client:
+            response = client.get("/health")
+
+    assert response.status_code in (200, 207)  # приложение поднялось и отвечает
+    assert any("startup_summary failed error=RuntimeError" in r.getMessage() for r in caplog.records)

@@ -69,9 +69,12 @@ def _clean(value: Any) -> str:
 def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
     """пишет одну строку `event key=value ...`; поля с персональными данными подменяются на <blocked>."""
 
-    if not logger.isEnabledFor(level):
-        return
-    parts = [event]
-    for key, value in fields.items():
-        parts.append(f"{key}=<blocked>" if key in BLOCKED_FIELDS else f"{key}={_clean(value)}")
-    logger.log(level, " ".join(parts))
+    try:
+        if not logger.isEnabledFor(level):
+            return
+        parts = [event]
+        for key, value in fields.items():
+            parts.append(f"{key}=<blocked>" if key in BLOCKED_FIELDS else f"{key}={_clean(value)}")
+        logger.log(level, " ".join(parts))
+    except Exception:  # noqa: BLE001 — запись события не имеет права ронять запрос, доставку или старт
+        pass

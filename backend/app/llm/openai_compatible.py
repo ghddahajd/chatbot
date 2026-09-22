@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 import httpx
 
+from ..logging_setup import redact_phones
 from ..models import Lead, Message, Session
 from ..validator import fallback_after_invalid_response, validate_consultation_response, validate_response
 from .base import BaseLLMClient
@@ -572,7 +573,7 @@ class OpenAIClient(BaseLLMClient):
             .strip()
         )
         if not validate_consultation_response(answer, context):
-            logger.warning("service_consultation_source=fallback reason=validator answer=%r", answer[:240])
+            logger.warning("service_consultation_source=fallback reason=validator answer=%r", redact_phones(answer[:240]))
             return service_consultation_template(context, user_message, history)
         logger.info("service_consultation_source=provider model=%s", self.model)
         return answer

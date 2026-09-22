@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .delivery import _escape_markdown, _iso, _utcnow
+from .logging_setup import log_event
 from .models import MessageRole, SessionStatus
 from .sessions import SessionStore
 from .utils.jsonl import append_jsonl, read_jsonl
@@ -183,6 +184,14 @@ class TelegramBridgeService:
         клиент<->оператор бэкграунд-ретрай через минуту не всегда даже имеет смысл, тема
         отдельная, покрупнее) — просто честный durable-след для вопроса "а мы вообще узнаем?"."""
 
+        log_event(
+            logger,
+            logging.WARNING,
+            "telegram_send_failed",
+            kind=kind,
+            session=(session_id or "-")[:8],
+            error_code=data.get("error_code"),
+        )
         if self.failures_file is None:
             return
         try:
@@ -215,6 +224,14 @@ class TelegramBridgeService:
                 session_id=session.session_id,
                 event_type=event_type,
                 metadata={"claimed_by": claimed_by},
+            )
+            log_event(
+                logger,
+                logging.INFO,
+                "operator_event",
+                event_type=event_type,
+                company_id=session.company_id,
+                session=session.session_id[:8],
             )
         except Exception as error:
             logger.warning(

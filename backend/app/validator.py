@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from .logging_setup import redact_phones
 from .knowledge import normalize_text
 from .policy.constants import SERVICE_LIST_FAST_MESSAGES, SERVICE_LIST_KEYWORDS
 from .policy.extractors import contains_keyword
@@ -441,5 +442,5 @@ def fallback_after_invalid_response(answer: str, context: dict[str, Any]) -> str
 
     global _intercept_count
     _intercept_count += 1
-    logger.warning("response validator intercepted raw context leak count=%s answer=%r", _intercept_count, answer[:300])
+    logger.warning("response validator intercepted raw context leak count=%s answer=%r", _intercept_count, redact_phones(answer[:300]))
     return clean_template_answer(context)

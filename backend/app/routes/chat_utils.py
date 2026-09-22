@@ -59,11 +59,23 @@ from ..policy.variants import (
     is_variant_list_question,
     should_stay_in_service_context,
 )
+from ..logging_setup import log_event
 from ..runtime_stats import STATS
 
 
 fallback_llm_client = MockLLMClient()
 logger = logging.getLogger(__name__)
+LLM_SLOW_MS = 10_000
+
+
+def _record_llm_ok(name: str, started: float) -> None:
+    """успешный вызов LLM: в счётчики (preflight) и, если он был очень долгим, в лог."""
+
+    duration_ms = (time.perf_counter() - started) * 1000
+    STATS.record_ok(name, duration_ms=duration_ms)
+    if duration_ms >= LLM_SLOW_MS:
+        log_event(logger, logging.WARNING, "llm_slow", call=name, ms=int(duration_ms))
+
 MAX_SESSION_MESSAGES = 30
 MAX_MESSAGE_LENGTH = 1000
 HAS_LETTER_OR_DIGIT = re.compile(r"[0-9A-Za-zА-Яа-яЁё]")
@@ -757,24 +769,26 @@ async def resolve_classification(
     structured_result = None
     if settings.llm_use_structured_classifier:
         try:
+            started = time.perf_counter()
             structured_result = await request.app.state.llm_client.classify_structured(
                 message,
                 known_services,
                 selected_knowledge_base.domain_profile,
             )
-            STATS.record_ok("llm.classify")
+            _record_llm_ok("llm.classify", started)
         except Exception as error:
             STATS.record_error("llm.classify", error)
-            logger.info("structured_classifier_source=local reason=helper_error error=%s", type(error).__name__)
+            logger.warning("structured_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             return local_result
 
     if structured_result is None:
         try:
+            started = time.perf_counter()
             model_result = await request.app.state.llm_client.classify_and_extract(message, known_services)
-            STATS.record_ok("llm.classify")
+            _record_llm_ok("llm.classify", started)
         except Exception as error:
             STATS.record_error("llm.classify", error)
-            logger.info("classifier_source=local reason=helper_error error=%s", type(error).__name__)
+            logger.warning("classifier_source=local reason=helper_error error=%s", type(error).__name__)
             return local_result
     else:
         model_result = structured_to_policy_classification(structured_result)
@@ -802,12 +816,13 @@ async def resolve_classification(
 
 async def safe_small_talk(request: Request, company_name: str, message: str) -> str:
     try:
+        started = time.perf_counter()
         answer = await request.app.state.llm_client.small_talk(company_name, message)
-        STATS.record_ok("llm.small_talk")
+        _record_llm_ok("llm.small_talk", started)
         return answer
     except Exception as error:
         STATS.record_error("llm.small_talk", error)
-        logger.info("small_talk_source=fallback reason=helper_error error=%s", type(error).__name__)
+        logger.warning("small_talk_source=fallback reason=helper_error error=%s", type(error).__name__)
         return await fallback_llm_client.small_talk(company_name, message)
 
 
@@ -876,11 +891,12 @@ async def classify_consultation_risk(
         result = local_result
     else:
         try:
+            started = time.perf_counter()
             result = await request.app.state.llm_client.classify_restricted_risk(message)
-            STATS.record_ok("llm.restricted_risk")
+            _record_llm_ok("llm.restricted_risk", started)
         except Exception as error:
             STATS.record_error("llm.restricted_risk", error)
-            logger.info("restricted_classifier_source=local reason=helper_error error=%s", type(error).__name__)
+            logger.warning("restricted_classifier_source=local reason=helper_error error=%s", type(error).__name__)
             result = local_result
 
     normalized_result = str(result or "").strip().upper()
@@ -914,16 +930,17 @@ async def safe_complete(
 ) -> str:
     if should_use_consultation_llm(context):
         try:
+            started = time.perf_counter()
             answer = await request.app.state.llm_client.service_consultation(
                 context,
                 message,
                 history,
             )
-            STATS.record_ok("llm.consultation")
+            _record_llm_ok("llm.consultation", started)
             return answer
         except Exception as error:
             STATS.record_error("llm.consultation", error)
-            logger.info("service_consultation_source=fallback reason=helper_error error=%s", type(error).__name__)
+            logger.warning("service_consultation_source=fallback reason=helper_error error=%s", type(error).__name__)
             return await fallback_llm_client.service_consultation(
                 context,
                 message,
@@ -931,17 +948,18 @@ async def safe_complete(
             )
 
     try:
+        started = time.perf_counter()
         answer = await request.app.state.llm_client.complete(
             request.app.state.system_prompt,
             context,
             message,
             history,
         )
-        STATS.record_ok("llm.complete")
+        _record_llm_ok("llm.complete", started)
         return answer
     except Exception as error:
         STATS.record_error("llm.complete", error)
-        logger.info("complete_source=fallback reason=helper_error error=%s", type(error).__name__)
+        logger.warning("complete_source=fallback reason=helper_error error=%s", type(error).__name__)
         return await fallback_llm_client.complete(
             request.app.state.system_prompt,
             context,

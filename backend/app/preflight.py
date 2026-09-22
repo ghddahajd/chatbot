@@ -51,6 +51,7 @@ POLL_STALE_DEGRADED_SECONDS = 120
 POLL_STALE_ERROR_SECONDS = 600
 POLL_FAILURES_DEGRADED = 3
 MEMORY_DEGRADED_PCT = 85.0
+LLM_SLOW_AVG_MS = 8000
 MEMORY_ERROR_PCT = 95.0
 # (имя фоновой задачи в реестре app.state.background_tasks, настройка, которая её включает)
 BACKGROUND_TASKS = (
@@ -459,11 +460,21 @@ def check_llm_runtime(app: FastAPI) -> dict[str, Any]:
         "calls_ok": ok,
         "calls_failed": errors,
         "last_error_type": last_error_type,
-        "by_call": {name: {"ok": item["ok"], "errors": item["errors"]} for name, item in summary.items()},
+        "by_call": {
+            name: {"ok": item["ok"], "errors": item["errors"], "avg_ms": item["avg_ms"], "max_ms": item["max_ms"]}
+            for name, item in summary.items()
+        },
     }
+    averages = [item["avg_ms"] for item in summary.values() if item["avg_ms"] is not None]
+    slowest_avg = max(averages) if averages else None
+    extra["slowest_avg_ms"] = slowest_avg
     if errors == 0:
-        detail = f"за час вызовов: {ok}, сбоев нет" if ok else "за последний час вызовов LLM не было"
-        return _item("ok", detail, **extra)
+        if not ok:
+            return _item("ok", "за последний час вызовов LLM не было", **extra)
+        if slowest_avg is not None and slowest_avg > LLM_SLOW_AVG_MS:
+            return _item("degraded", f"LLM отвечает медленно: среднее до {slowest_avg} мс", **extra)
+        speed = f", среднее до {slowest_avg} мс" if slowest_avg is not None else ""
+        return _item("ok", f"за час вызовов: {ok}, сбоев нет{speed}", **extra)
     if ok == 0:
         return _item("error", f"все вызовы LLM за час падают ({errors}), бот отвечает шаблонами: {last_error_type}", **extra)
     return _item("degraded", f"часть вызовов LLM падает: {errors} из {ok + errors}; последняя ошибка {last_error_type}", **extra)

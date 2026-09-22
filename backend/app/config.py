@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     dev_mode: bool = True
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    log_level: str = "INFO"
 
     llm_provider: str = "mock"
     llm_api_key: str = ""

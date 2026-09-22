@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime
 
 from fastapi import Request
@@ -10,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from ..delivery import _escape_markdown, _lead_short_id
 from ..hours import is_currently_open
+from ..logging_setup import log_event
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
 from ..telegram_bridge import client_label_for_session
 from ..knowledge import is_consultation_only_service, normalize_text, phrasebook_value_to_text
@@ -1158,6 +1160,7 @@ class ChatService:
         сообщения per-session локом (см. SessionStore.lock_for) — сам pipeline не тронут,
         просто выполняется целиком под локом в _handle_message_locked."""
 
+        started = time.perf_counter()
         session_store = self.request.app.state.session_store
         session = await session_store.get_or_create(session_id, company_id)
         async with session_store.lock_for(session.session_id):
@@ -1166,7 +1169,13 @@ class ChatService:
                 session_id=session.session_id,
                 message=message,
             )
-        await self._track_answer_safe(company_id, session.session_id, message, response)
+        await self._track_answer_safe(
+            company_id,
+            session.session_id,
+            message,
+            response,
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
         return response
 
     async def _track_answer_safe(
@@ -1175,6 +1184,7 @@ class ChatService:
         session_id: str,
         message: str,
         response: ChatMessageResponse | JSONResponse,
+        duration_ms: float | None = None,
     ) -> None:
         if not isinstance(response, ChatMessageResponse):
             return
@@ -1194,6 +1204,18 @@ class ChatService:
             logger.warning(
                 "analytics track_answer failed session_id=%s error=%s", session_id, type(error).__name__
             )
+        # одна строка на ход диалога: без текстов — только клиент, действие политики, причина, размер и время
+        log_event(
+            logger,
+            logging.INFO,
+            "chat_turn",
+            company_id=company_id,
+            session=session_id[:8],
+            action=response.action.value,
+            reason=session.last_intent if session else None,
+            answer_chars=len(response.answer or ""),
+            ms=None if duration_ms is None else int(duration_ms),
+        )
 
     async def _handle_message_locked(
         self,

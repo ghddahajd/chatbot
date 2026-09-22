@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from .logging_setup import log_event
 from .models import Lead, Session
 from .utils.jsonl import append_jsonl, read_jsonl
 
@@ -98,6 +99,18 @@ class LeadService:
 
     async def save(self, lead: Lead, event_type: str = "lead_created") -> None:
         append_jsonl(self.leads_file, lead_to_payload(lead))
+        log_event(
+            logger,
+            logging.INFO,
+            "lead_saved",
+            company_id=lead.company_id,
+            session=lead.session_id[:8],
+            event_type=event_type,
+            has_phone=bool(lead.phone),
+            service_id=lead.service_id,
+            needs_operator=lead.needs_operator,
+            trigger=lead.lead_trigger,
+        )
 
         if self.delivery_service is not None:
             try:

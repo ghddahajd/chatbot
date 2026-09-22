@@ -21,7 +21,9 @@ from .health_checks import collect_health_checks, overall_status
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService, archive_old_leads
 from .llm import build_llm_client, get_system_prompt
+from .logging_setup import configure_logging, log_event
 from .policy import analyze_message
+from .preflight import DEFAULT_OPERATOR_TOKEN, code_fingerprint
 from .rate_limit import RateLimiter
 from .services.rag_search import rag_corpus_status
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
@@ -257,6 +259,33 @@ async def lifespan(app: FastAPI):
         if task is not None
     }
 
+    # одна строка «с чем поднялись»: по ней после деплоя видно режим, клиентов, Telegram и версию кода
+    # (только флаги и счётчики — ни токенов, ни ссылок, ни номеров групп).
+    client_ids = sorted(
+        item.name for item in settings.clients_data_dir.iterdir() if item.is_dir()
+    ) if settings.clients_data_dir.exists() else []
+    bridge = app.state.telegram_bridge_service
+    log_event(
+        logger,
+        logging.INFO,
+        "startup_summary",
+        app_env=settings.app_env,
+        dev_mode=settings.dev_mode,
+        log_level=settings.log_level,
+        llm_provider=settings.llm_provider,
+        llm_client=type(app.state.llm_client).__name__,
+        clients=len(client_ids),
+        client_ids=",".join(client_ids),
+        default_company=settings.default_company_id,
+        rag_chunks=app.state.rag_corpus_status.get("chunk_count", 0),
+        telegram_enabled=bridge.enabled,
+        telegram_clients_topic=bool(settings.telegram_clients_topic_id),
+        telegram_proxy=bool(settings.telegram_proxy_url),
+        operator_token_default=settings.operator_token == DEFAULT_OPERATOR_TOKEN,
+        tasks=",".join(sorted(app.state.background_tasks)),
+        code=code_fingerprint(),
+    )
+
     try:
         yield
     finally:
@@ -303,6 +332,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)
 settings = get_settings()
+configure_logging(settings.log_level)
 
 app.add_middleware(
     CORSMiddleware,

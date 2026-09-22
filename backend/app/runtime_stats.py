@@ -21,20 +21,20 @@ class RuntimeStats:
         self._window_seconds = window_seconds
         self._max_events = max_events
         self._lock = threading.Lock()
-        self._events: dict[str, deque[tuple[float, bool]]] = {}
+        self._events: dict[str, deque[tuple[float, bool, float | None]]] = {}
         self._last: dict[str, dict[str, Any]] = {}
 
-    def record_ok(self, name: str) -> None:
-        self._record(name, ok=True, error_type=None)
+    def record_ok(self, name: str, duration_ms: float | None = None) -> None:
+        self._record(name, ok=True, error_type=None, duration_ms=duration_ms)
 
     def record_error(self, name: str, error: BaseException | str | None = None) -> None:
         error_type = error if isinstance(error, str) else type(error).__name__ if error is not None else None
-        self._record(name, ok=False, error_type=error_type)
+        self._record(name, ok=False, error_type=error_type, duration_ms=None)
 
-    def _record(self, name: str, *, ok: bool, error_type: str | None) -> None:
+    def _record(self, name: str, *, ok: bool, error_type: str | None, duration_ms: float | None) -> None:
         now = time.time()
         with self._lock:
-            self._events.setdefault(name, deque(maxlen=self._max_events)).append((now, ok))
+            self._events.setdefault(name, deque(maxlen=self._max_events)).append((now, ok, duration_ms))
             last = self._last.setdefault(name, {"last_ok_at": None, "last_error_at": None, "last_error_type": None})
             if ok:
                 last["last_ok_at"] = now
@@ -51,10 +51,13 @@ class RuntimeStats:
             for name, events in self._events.items():
                 if not name.startswith(prefix):
                     continue
-                recent = [ok for moment, ok in events if moment >= cutoff]
+                recent = [(ok, ms) for moment, ok, ms in events if moment >= cutoff]
+                durations = [ms for ok, ms in recent if ok and ms is not None]
                 result[name] = {
-                    "ok": sum(1 for ok in recent if ok),
-                    "errors": sum(1 for ok in recent if not ok),
+                    "ok": sum(1 for ok, _ms in recent if ok),
+                    "errors": sum(1 for ok, _ms in recent if not ok),
+                    "avg_ms": round(sum(durations) / len(durations)) if durations else None,
+                    "max_ms": round(max(durations)) if durations else None,
                     **self._last[name],
                 }
         return result

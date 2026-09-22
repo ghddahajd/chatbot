@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import httpx
 
+from .logging_setup import log_event
 from .knowledge import KnowledgeBaseResolver
 from .leads import REASON_LABELS, lead_to_payload
 from .models import Lead
@@ -443,6 +444,19 @@ class DeliveryService:
             "response_status": response_status,
         }
         await self._append_record(updated)
+        log_event(
+            logger,
+            logging.INFO if status == "sent" else logging.WARNING,
+            "delivery_result",
+            delivery_id=record.get("delivery_id"),
+            event_type=record.get("event_type"),
+            company_id=record.get("company_id"),
+            destination=record.get("destination_type"),
+            status=status,
+            attempts=attempts,
+            http=response_status,
+            error=last_error,
+        )
         return updated
 
     async def _send(self, record: dict[str, Any]) -> int:

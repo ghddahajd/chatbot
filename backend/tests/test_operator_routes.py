@@ -249,6 +249,24 @@ def test_backstage_dropdown_has_no_duplicate_options(test_client) -> None:
     assert response.text.count('<option value="rosh_import_demo"') == 1
 
 
+def test_analytics_and_backstage_default_companies_come_from_settings(test_client, monkeypatch) -> None:
+    """2026-09-22: id для /analytics и /backstage раньше были вписаны прямо в main.py —
+    второй клиент не мог их сменить без правки кода. Теперь это settings."""
+
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module.settings, "analytics_default_company_id", "demo_alt")
+    monkeypatch.setattr(main_module.settings, "backstage_default_company_id", "test_client")
+
+    analytics = test_client.get("/analytics?token=demo-operator-token")
+    backstage = test_client.get("/backstage?token=demo-operator-token")
+
+    assert 'value="demo_alt" selected' in analytics.text
+    assert "test_client" not in analytics.text  # клиент не должен видеть второй company_id
+    assert backstage.text.count('<option value="test_client"') == 1
+    assert backstage.text.count('<option value="demo_alt"') == 1
+
+
 def test_login_page_renders(test_client) -> None:
     response = test_client.get("/login")
     assert response.status_code == 200

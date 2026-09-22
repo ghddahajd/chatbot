@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     operator_token: str = "demo-operator-token"
     allowed_origins: str = "http://localhost:8000"
     default_company_id: str = "rosh_demo"
+    # /analytics (клиентская страница) и /backstage (внутренняя, с переключателем) — раньше эти
+    # id были буквально вписаны в main.py/analytics_panel.py, второй клиент не мог их сменить
+    # без правки кода. Значения по умолчанию совпадают с прежними — поведение РОШ не меняется.
+    analytics_default_company_id: str = "rosh_import_demo"
+    backstage_default_company_id: str = "rosh_test"
 
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
     clients_data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "clients")

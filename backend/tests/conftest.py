@@ -15,6 +15,10 @@ REPO_ROOT = BACKEND_DIR.parent
 REQUIRED_KB_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
 
 sys.path.insert(0, str(BACKEND_DIR))
+# top-level scripts/ (article_mapping_curation.py и т.д.) лежит рядом с backend/, не внутри —
+# без этого collection падает при запуске "pytest" напрямую (python -m pytest сам кладёт cwd
+# в sys.path, обычный pytest — нет).
+sys.path.insert(0, str(REPO_ROOT))
 
 
 def _replace_company_id(path: Path, company_id: str) -> None:

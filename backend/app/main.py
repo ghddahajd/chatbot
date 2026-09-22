@@ -130,6 +130,14 @@ async def _run_analytics_prune_loop(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    # раньше это было только предупреждением в preflight — приложение спокойно поднималось
+    # с открытым токеном на боевом хосте, если кто-то забыл переопределить OPERATOR_TOKEN.
+    # Теперь вне dev_mode с дефолтным токеном приложение вообще не стартует.
+    if not settings.dev_mode and settings.operator_token == DEFAULT_OPERATOR_TOKEN:
+        raise RuntimeError(
+            "OPERATOR_TOKEN не задан (используется значение по умолчанию), а DEV_MODE выключен. "
+            "Задайте свой OPERATOR_TOKEN в .env перед запуском вне режима разработки."
+        )
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
 
     app.state.settings = settings
@@ -391,7 +399,12 @@ async def analytics_page(request: Request):
         verify_operator_token(request, None)
     except Exception:
         return RedirectResponse(url=f"/login?next={request.url.path}")
-    return HTMLResponse(render_analytics_panel(default_company_id="rosh_import_demo", show_company_selector=False))
+    return HTMLResponse(
+        render_analytics_panel(
+            default_company_id=settings.analytics_default_company_id,
+            show_company_selector=False,
+        )
+    )
 
 
 @app.get("/backstage")
@@ -404,7 +417,16 @@ async def backstage_page(request: Request):
         verify_operator_token(request, None)
     except Exception:
         return RedirectResponse(url=f"/login?next={request.url.path}")
-    return HTMLResponse(render_analytics_panel(default_company_id="rosh_test", show_company_selector=True))
+    return HTMLResponse(
+        render_analytics_panel(
+            default_company_id=settings.backstage_default_company_id,
+            show_company_selector=True,
+            known_company_ids=[
+                settings.backstage_default_company_id,
+                settings.analytics_default_company_id,
+            ],
+        )
+    )
 
 
 @app.get("/login", response_class=HTMLResponse)

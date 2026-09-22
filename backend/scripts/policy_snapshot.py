@@ -876,6 +876,26 @@ def command_import_live(args: argparse.Namespace) -> int:
     _write_jsonl(target, rows)
     print(f"Добавлено сообщений: {added}, всего в файле: {len(rows)} → {target}")
     print(f"Проверить глазами на имена (check_name=true): {flagged}")
+
+    # переписки целиком (только реплики клиента) — для слоя Б, dialog_snapshot.py
+    dialogs_target = eval_dir / "live_dialogs.jsonl"
+    dialogs = _read_jsonl(dialogs_target) if dialogs_target.exists() else []
+    known = {tuple(row["turns"]) for row in dialogs}
+    added_dialogs = 0
+    for path in args.files:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        for chat in payload.get("conversations", []):
+            turns = [
+                normalize_message(str(message.get("text") or ""))
+                for message in chat.get("messages", [])
+                if message.get("role") == "user" and normalize_message(str(message.get("text") or ""))
+            ]
+            if turns and tuple(turns) not in known:
+                known.add(tuple(turns))
+                dialogs.append({"turns": turns, "source": f"live:{str(chat.get('session_id'))[:8]}"})
+                added_dialogs += 1
+    _write_jsonl(dialogs_target, dialogs)
+    print(f"Переписок добавлено: {added_dialogs}, всего: {len(dialogs)} → {dialogs_target}")
     return 0
 
 

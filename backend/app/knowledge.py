@@ -43,6 +43,8 @@ DEFAULT_WIDGET_CONFIG = {
     "booking_highlight_color": "",
 }
 HEX_COLOR_PATTERN = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
+# для этих полей пустая строка — осмысленное «выключить», а не «не задано»
+WIDGET_KEYS_EMPTY_MEANS_OFF = {"ai_badge", "booking_highlight_color"}
 DEFAULT_DOMAIN_PROFILE = {
     "type": "generic",
     "safety_level": "normal",
@@ -1087,11 +1089,13 @@ class KnowledgeBaseResolver:
             if isinstance(widget_override, dict):
                 for key in config:
                     value = widget_override.get(key)
-                    if isinstance(value, str) and value.strip():
+                    if isinstance(value, str) and (value.strip() or key in WIDGET_KEYS_EMPTY_MEANS_OFF):
                         config[key] = value.strip()
 
         if config["position"] not in {"bottom-right", "bottom-left"}:
             config["position"] = DEFAULT_WIDGET_CONFIG["position"]
+        if config["ai_badge"] != "show":
+            config["ai_badge"] = ""
         # цвет уходит прямо в стиль виджета на сайте клиента — пропускаем только hex
         if not HEX_COLOR_PATTERN.fullmatch(str(config["booking_highlight_color"])):
             config["booking_highlight_color"] = ""

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import config_overrides
 from ..auth import verify_operator_token
-from ..knowledge import DEFAULT_WIDGET_CONFIG
+from ..knowledge import DEFAULT_WIDGET_CONFIG, HEX_COLOR_PATTERN
 
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -51,6 +51,24 @@ class WidgetInput(BaseModel):
     header_subtitle: str = ""
     position: str = "bottom-right"
     avatar_emoji: str = "💬"
+    # None — поле не прислали (старая версия вкладки), тогда остаётся значение из данных клиента
+    assistant_label: Optional[str] = Field(default=None, min_length=1, max_length=30)
+    ai_badge: Optional[str] = None
+    booking_highlight_color: Optional[str] = None
+
+    @field_validator("ai_badge")
+    @classmethod
+    def _validate_ai_badge(cls, value: Optional[str]) -> Optional[str]:
+        if value not in (None, "", "show"):
+            raise ValueError(f"ai_badge: ожидалось пусто или show, получено {value!r}")
+        return value
+
+    @field_validator("booking_highlight_color")
+    @classmethod
+    def _validate_highlight_color(cls, value: Optional[str]) -> Optional[str]:
+        if value and not HEX_COLOR_PATTERN.fullmatch(value.strip()):
+            raise ValueError(f"цвет рамки: ожидался формат #RRGGBB, получено {value!r}")
+        return value.strip() if value else value
 
     @field_validator("position")
     @classmethod
@@ -179,7 +197,7 @@ async def save_company_settings(
                 for day, schedule in payload.working_hours_schedule.items()
             },
         },
-        "widget": payload.widget.model_dump(),
+        "widget": payload.widget.model_dump(exclude_none=True),
         "facts": payload.facts.model_dump(),
         "doctors": [doctor.model_dump() for doctor in payload.doctors],
     }

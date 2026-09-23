@@ -3,6 +3,9 @@
 config_overrides.py (test_config_overrides.py) — тут проверяем HTTP-слой: auth, валидацию,
 и что сохранение реально доезжает до следующего же GET без рестарта (сброс кэша resolver'а)."""
 
+import pytest
+
+
 OPERATOR_HEADERS = {"x-operator-token": "demo-operator-token"}
 
 _VALID_PAYLOAD = {
@@ -270,3 +273,76 @@ def test_post_settings_new_doctor_is_visible_in_a_real_chat_reply(test_client) -
         json={"company_id": "rosh_demo", "session_id": None, "message": "какие врачи у вас работают"},
     )
     assert "Доктор Уникальное Имя" in response.json()["answer"]
+
+
+# ---------------------------------------------------------------- 2026-09-23: поля виджета без «ИИ»
+
+
+def _save_widget(test_client, **fields):
+    payload = dict(_VALID_PAYLOAD)
+    payload["widget"] = {**_VALID_PAYLOAD["widget"], **fields}
+    return test_client.post("/api/settings/company?company_id=rosh_demo", json=payload, headers=OPERATOR_HEADERS)
+
+
+def _bootstrap_widget(test_client) -> dict:
+    response = test_client.get("/api/widget/bootstrap?company_id=rosh_demo", headers={"origin": "http://localhost:5500"})
+    return response.json()["widget_config"]
+
+
+def _set_client_widget(managed_env, **fields) -> None:
+    import yaml
+
+    config_path = managed_env["clients_dir"] / "rosh_demo" / "config.yaml"
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    payload["widget"] = {**(payload.get("widget") or {}), **fields}
+    config_path.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+
+
+def test_settings_save_new_widget_fields_and_widget_picks_them_up(test_client) -> None:
+    response = _save_widget(test_client, assistant_label="Помощник", ai_badge="show", booking_highlight_color="#2E9E6B")
+
+    assert response.status_code == 200
+    saved = test_client.get("/api/settings/company?company_id=rosh_demo", headers=OPERATOR_HEADERS).json()["widget"]
+    assert (saved["assistant_label"], saved["ai_badge"], saved["booking_highlight_color"]) == ("Помощник", "show", "#2E9E6B")
+    widget = _bootstrap_widget(test_client)
+    assert (widget["assistant_label"], widget["ai_badge"], widget["booking_highlight_color"]) == ("Помощник", "show", "#2E9E6B")
+
+
+def test_settings_can_switch_off_what_client_data_switched_on(test_client, managed_env) -> None:
+    """пустое значение из «Настроек» — это «выключить», а не «не задано»: иначе рамку и кнопку
+    «с ИИ», включённые в данных клиента, менеджер не смог бы убрать."""
+
+    _set_client_widget(managed_env, ai_badge="show", booking_highlight_color="#2E9E6B")
+    test_client.app.state.knowledge_base_resolver._cache.clear()
+    assert _bootstrap_widget(test_client)["booking_highlight_color"] == "#2E9E6B"
+
+    assert _save_widget(test_client, ai_badge="", booking_highlight_color="").status_code == 200
+
+    widget = _bootstrap_widget(test_client)
+    assert widget["ai_badge"] == ""
+    assert widget["booking_highlight_color"] == ""
+
+
+def test_old_settings_tab_without_new_fields_keeps_client_values(test_client, managed_env) -> None:
+    _set_client_widget(managed_env, booking_highlight_color="#2E9E6B", assistant_label="Консультант РОШ")
+    test_client.app.state.knowledge_base_resolver._cache.clear()
+
+    assert _save_widget(test_client).status_code == 200  # как раньше: без трёх новых полей
+
+    widget = _bootstrap_widget(test_client)
+    assert widget["booking_highlight_color"] == "#2E9E6B"
+    assert widget["assistant_label"] == "Консультант РОШ"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"booking_highlight_color": "green"},
+        {"booking_highlight_color": "#2E9E6B;background:red"},
+        {"ai_badge": "yes"},
+        {"assistant_label": ""},
+        {"assistant_label": "х" * 31},
+    ],
+)
+def test_settings_reject_bad_widget_values(fields, test_client) -> None:
+    assert _save_widget(test_client, **fields).status_code == 422

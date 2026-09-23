@@ -577,6 +577,15 @@ def render_analytics_panel(
           <label for="settingsAvatarEmoji">Эмодзи в чате</label>
           <input type="text" id="settingsAvatarEmoji" maxlength="4" />
         </div>
+        <div class="settings-field">
+          <label for="settingsAssistantLabel">Подпись над ответами бота</label>
+          <input type="text" id="settingsAssistantLabel" maxlength="30" placeholder="Ассистент" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsHighlightColor">Рамка у «Записаться на приём»</label>
+          <input type="text" id="settingsHighlightColor" placeholder="#2E9E6B, пусто — без рамки" />
+        </div>
+        <label class="settings-checkbox"><input type="checkbox" id="settingsAiBadge" /> Показывать в шапке кнопку «с ИИ»</label>
       </div>
       <div class="card">
         <div class="settings-card-header">
@@ -1439,6 +1448,9 @@ def render_analytics_panel(
         document.getElementById("settingsButtonColor").value = data.widget.button_color || "";
         document.getElementById("settingsPosition").value = data.widget.position || "bottom-right";
         document.getElementById("settingsAvatarEmoji").value = data.widget.avatar_emoji || "";
+        document.getElementById("settingsAssistantLabel").value = data.widget.assistant_label || "";
+        document.getElementById("settingsHighlightColor").value = data.widget.booking_highlight_color || "";
+        document.getElementById("settingsAiBadge").checked = data.widget.ai_badge === "show";
         document.getElementById("factOms").checked = Boolean(data.facts.oms);
         document.getElementById("factDms").checked = Boolean(data.facts.dms);
         document.getElementById("factAmbulance").checked = Boolean(data.facts.ambulance_brings);
@@ -1472,6 +1484,9 @@ def render_analytics_panel(
           header_subtitle: document.getElementById("settingsHeaderSubtitle").value,
           position: document.getElementById("settingsPosition").value,
           avatar_emoji: document.getElementById("settingsAvatarEmoji").value,
+          assistant_label: document.getElementById("settingsAssistantLabel").value.trim() || "Ассистент",
+          ai_badge: document.getElementById("settingsAiBadge").checked ? "show" : "",
+          booking_highlight_color: document.getElementById("settingsHighlightColor").value.trim(),
         },
         facts: {
           oms: document.getElementById("factOms").checked,

@@ -272,7 +272,7 @@ def test_booking_time_preference_is_captured_and_surfaced_in_lead(test_client, m
 
     assert third_response.status_code == 200
     assert third_payload["lead_created"] is True
-    assert "завтра" in lead["summary"].lower()
+    assert lead["preferred_time"] == "завтра"
 
 
 def test_article_guidance_uses_llm_when_approved_excerpt_passes_validator(test_client, managed_env) -> None:

@@ -83,6 +83,8 @@ def lead_to_payload(lead: Lead) -> dict[str, Any]:
         "unresolved_query": lead.unresolved_query,
         "recent_messages": lead.recent_messages,
         "operator_url": lead.operator_url,
+        "preferred_time": lead.preferred_time,
+        "page": lead.page,
     }
 
 

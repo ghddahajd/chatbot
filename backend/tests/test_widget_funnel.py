@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from app.routes.widget import normalize_page
+from app.utils.page_path import normalize_page
 
 EVENT_URL = "/api/widget/event"
 DASHBOARD_URL = "/api/analytics/dashboard?company_id=rosh_demo"
@@ -59,7 +59,7 @@ def test_pages_breakdown_shows_where_chat_is_opened(test_client) -> None:
     pages = {row["page"]: row for row in _funnel(test_client)["pages"]}
 
     assert list(pages) == ["/", "/uslugi/chistka"]  # сортировка по загрузкам
-    assert pages["/uslugi/chistka"] == {"page": "/uslugi/chistka", "loads": 2, "opens": 1, "open_rate": 50.0}
+    assert pages["/uslugi/chistka"] == {"page": "/uslugi/chistka", "loads": 2, "opens": 1, "dialogs": 0, "open_rate": 50.0}
     assert pages["/"]["opens"] == 0
 
 
@@ -138,3 +138,22 @@ def test_widget_sends_events_to_the_new_path_with_visitor_and_page() -> None:
     assert "\"/api/analytics/track/\" + kind" not in source
     assert "visitor_id: this.visitorId()" in source
     assert "page: window.location.pathname" in source
+
+
+
+def test_dialogs_are_counted_by_the_page_where_the_person_wrote_first(test_client) -> None:
+    def chat(message: str, page: str, session_id: str | None = None) -> str:
+        body = {"company_id": "rosh_demo", "session_id": session_id, "message": message, "page": page}
+        return test_client.post("/api/chat/message", json=body).json()["session_id"]
+
+    first = chat("сколько стоит чистка лица", "/uslugi/chistka?utm_source=yandex")
+    chat("а где вы находитесь", "/kontakty", first)  # страница дальше не перезаписывается
+    chat("привет", "/")
+
+    pages = {row["page"]: row for row in _funnel(test_client)["pages"]}
+
+    assert pages["/uslugi/chistka"]["dialogs"] == 1
+    assert pages["/"]["dialogs"] == 1
+    assert "/kontakty" not in pages
+    session = test_client.portal.call(test_client.app.state.session_store.get, first)
+    assert session.first_page == "/uslugi/chistka"

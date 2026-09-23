@@ -161,6 +161,7 @@ class AnalyticsService:
         answer: str,
         action: str,
         policy_reason: Optional[str] = None,
+        page: Optional[str] = None,
     ) -> None:
         """Пишет КАЖДЫЙ обмен репликами (не только исключения), чтобы разбор "бот ответил
         ерунду" был по логу, а не по памяти или повторному прогону через LLM (она
@@ -171,7 +172,7 @@ class AnalyticsService:
             session_id=session_id,
             event_type="message_answered",
             message=message,
-            metadata={"answer": answer, "action": action, "policy_reason": policy_reason},
+            metadata={"answer": answer, "action": action, "policy_reason": policy_reason, **({"page": page} if page else {})},
         )
 
     async def track_policy_result(
@@ -550,6 +551,8 @@ class AnalyticsService:
                 "reason": str(lead.get("reason") or "commercial_interest"),
                 "needs_operator": bool(lead.get("needs_operator")),
                 "lead_trigger": str(lead.get("lead_trigger") or "ask_contact"),
+                "preferred_time": str(lead.get("preferred_time") or ""),
+                "page": str(lead.get("page") or ""),
             }
             for lead in leads[:limit]
         ]
@@ -1158,7 +1161,11 @@ class AnalyticsService:
             "company_id": company_id,
             "days": effective_days,
             "stages": stages,
-            "pages": _widget_pages(impression_events, opened_events),
+            "pages": _widget_pages(
+                impression_events,
+                opened_events,
+                [event for event in events if event.get("event_type") == "message_answered"],
+            ),
         }
 
 
@@ -1176,19 +1183,33 @@ def _unique_visitors(events: list[dict[str, Any]]) -> int:
 
 
 def _widget_pages(
-    impression_events: list[dict[str, Any]], opened_events: list[dict[str, Any]], limit: int = 20
+    impression_events: list[dict[str, Any]],
+    opened_events: list[dict[str, Any]],
+    answered_events: list[dict[str, Any]] | None = None,
+    limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """где открывают чат: загрузки и открытия по страницам сайта клиента, топ по загрузкам."""
+    """где открывают чат и где начинают переписку: по страницам сайта клиента, топ по загрузкам.
+    «Диалогов» — разные сессии, у которых эта страница — первая, где человек написал."""
 
     rows: dict[str, dict[str, Any]] = {}
+
+    def row_for(page: str) -> dict[str, Any]:
+        return rows.setdefault(page, {"page": page, "loads": 0, "opens": 0, "dialogs": 0})
+
     for field, events in (("loads", impression_events), ("opens", opened_events)):
         for event in events:
             metadata = event.get("metadata")
             page = metadata.get("page") if isinstance(metadata, dict) else None
-            if not page:
-                continue
-            row = rows.setdefault(page, {"page": page, "loads": 0, "opens": 0})
-            row[field] += 1
+            if page:
+                row_for(page)[field] += 1
+    dialog_sessions: dict[str, set[str]] = {}
+    for event in answered_events or []:
+        metadata = event.get("metadata")
+        page = metadata.get("page") if isinstance(metadata, dict) else None
+        if page and event.get("session_id"):
+            dialog_sessions.setdefault(page, set()).add(str(event["session_id"]))
+    for page, sessions in dialog_sessions.items():
+        row_for(page)["dialogs"] = len(sessions)
     top = sorted(rows.values(), key=lambda row: (-row["loads"], -row["opens"], row["page"]))[:limit]
     for row in top:
         row["open_rate"] = round(row["opens"] / row["loads"] * 100, 1) if row["loads"] else None

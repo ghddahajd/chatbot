@@ -113,6 +113,8 @@ class Session(BaseModel):
     # "вернуться к боту" — РОВНО один раз за сессию (не чаще), чтобы не пинг-понговать
     # статус сессии туда-сюда и не плодить повторные карточки в очереди операторов.
     operator_return_offered: bool = False
+    # путь страницы, где человек написал первым (для аналитики «где начинают переписку»)
+    first_page: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -131,6 +133,8 @@ class Lead(BaseModel):
     unresolved_query: str = ""
     recent_messages: list[dict[str, str]] = Field(default_factory=list)
     operator_url: str = ""
+    preferred_time: str = ""
+    page: str = ""
 
 
 class PriceEntry(BaseModel):
@@ -230,6 +234,8 @@ class ChatMessageRequest(BaseModel):
     # без ограничения принимался текст любой длины — попадал в историю сессии, в промпт LLM
     # и в логи целиком. 4000 символов — с запасом под реальные вопросы, но не безлимит.
     message: str = Field(max_length=4000)
+    # путь страницы сайта, откуда пишут; сохраняется только первый за сессию
+    page: str = Field(default="", max_length=2000)
 
 
 class QuickFaqItem(BaseModel):

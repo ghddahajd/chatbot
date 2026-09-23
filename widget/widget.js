@@ -2043,6 +2043,7 @@
             session_id: this.state.sessionId || null,
             company_id: this.state.companyId,
             message: text,
+            page: window.location.pathname,
           }),
           signal: timeoutController.signal,
         });

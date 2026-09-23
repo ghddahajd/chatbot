@@ -235,6 +235,17 @@ class SessionStore:
             session.updated_at = datetime.utcnow()
             return session
 
+    async def set_first_page(self, session_id: str, page: str) -> Optional[Session]:
+        """запоминает только первую страницу — где человек начал переписку."""
+
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if not session.first_page and page:
+                session.first_page = page
+            return session
+
     async def set_lead_requested(self, session_id: str, value: bool = True) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)

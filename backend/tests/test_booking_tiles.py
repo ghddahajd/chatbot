@@ -96,7 +96,8 @@ def test_phone_only_creates_lead_with_chosen_time_and_success_text(test_client, 
     assert payload["lead_created"] is True
     lead = _last_lead(managed_env)
     assert lead.get("name") in (None, "", "Не указано")
-    assert "завтра" in lead["summary"].lower()
+    assert lead["preferred_time"] == "завтра"
+    assert "Когда удобно" not in lead["summary"]  # время — отдельным полем, без дубля в сводке
 
 
 @pytest.mark.parametrize(("message", "preferred"), [("хочу записаться на завтра", "завтра"), ("запишите меня на чистку лица в пятницу утром", "пятницу утром")])
@@ -106,7 +107,7 @@ def test_time_named_in_request_skips_tiles(message: str, preferred: str, test_cl
     assert "номер телефона" in first["answer"]
     assert first["quick_actions"] == []
     assert _chat(test_client, "89991234567", first["session_id"])["lead_created"] is True
-    assert preferred in _last_lead(managed_env)["summary"].lower()
+    assert _last_lead(managed_env)["preferred_time"] == preferred
 
 
 def test_typed_manager_request_still_works_without_the_button(test_client) -> None:
@@ -203,7 +204,7 @@ def test_today_chosen_after_hours_is_marked_for_the_admin(test_client, managed_e
     _chat(test_client, "Сегодня", first["session_id"])
 
     assert _chat(test_client, "89001112233", first["session_id"])["lead_created"] is True
-    assert "сегодня — запрос пришёл в нерабочее время" in _last_lead(managed_env)["summary"]
+    assert _last_lead(managed_env)["preferred_time"] == "сегодня — запрос пришёл в нерабочее время"
 
 
 def test_lead_card_shows_the_name_when_the_person_gave_it(test_client) -> None:
@@ -214,3 +215,22 @@ def test_lead_card_shows_the_name_when_the_person_gave_it(test_client) -> None:
 
     assert _chat(test_client, "Иван +7 900 000-00-03", first["session_id"])["lead_created"] is True
     assert "Имя: Иван" in bridge.client_cards[-1]
+
+
+
+def test_lead_card_has_time_field_and_no_page_line(test_client, managed_env) -> None:
+    """страница, где начали переписку, — только в аналитике, в карточку не пишется (решение 2026-09-23)."""
+
+    bridge = _CardBridge()
+    test_client.app.state.telegram_bridge_service = bridge
+    body = {"company_id": "rosh_demo", "session_id": None, "message": "хочу записаться", "page": "/uslugi/chistka"}
+    first = test_client.post("/api/chat/message", json=body).json()
+    _chat(test_client, "Завтра", first["session_id"])
+
+    assert _chat(test_client, "89001234567", first["session_id"])["lead_created"] is True
+
+    card = bridge.client_cards[-1]
+    assert "Когда удобно: завтра" in card
+    assert "Страница" not in card and "/uslugi" not in card
+    lead = _last_lead(managed_env)
+    assert (lead["preferred_time"], lead["page"]) == ("завтра", "/uslugi/chistka")

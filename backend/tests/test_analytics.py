@@ -1221,8 +1221,9 @@ def test_leads_feed_never_includes_pii_fields(tmp_path) -> None:
     assert len(result) == 1
     forbidden = {"name", "phone", "summary", "recent_messages", "unresolved_query", "operator_url"}
     assert forbidden.isdisjoint(result[0].keys())
+    # preferred_time («завтра») и page (путь страницы) — не личные данные, добавлены осознанно 2026-09-23
     assert set(result[0].keys()) == {
-        "timestamp", "session_id", "service_id", "reason", "needs_operator", "lead_trigger",
+        "timestamp", "session_id", "service_id", "reason", "needs_operator", "lead_trigger", "preferred_time", "page",
     }
 
 

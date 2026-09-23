@@ -34,6 +34,7 @@ from ..policy.constants import (
     PHONE_PATTERN,
 )
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
+from ..utils.page_path import normalize_page
 from ..routes.chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
     HAS_LETTER_OR_DIGIT,
@@ -548,9 +549,6 @@ class ChatService:
         # оператор сразу видит, что это проверенный факт, а не интерпретация LLM.
         summary_lower = lead_summary.lower()
         facts: list[str] = []
-        preferred_time = str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip()
-        if preferred_time and preferred_time not in summary_lower:
-            facts.append(f"Когда удобно: {preferred_time}")
         for flag in session.notable_flags:
             if flag.lower() not in summary_lower:
                 facts.append(flag)
@@ -560,6 +558,8 @@ class ChatService:
         return f"\n\n📌 Из переписки:\n{bullet_list}"
 
     async def _finalize_lead_summary(self, session, lead) -> None:
+        lead.preferred_time = str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip()
+        lead.page = session.first_page or ""
         if lead.lead_trigger == "unknown_service" and lead.unresolved_query:
             lead.summary = (
                 f"Пользователь спрашивал неподтверждённую услугу: «{lead.unresolved_query}». "
@@ -1216,6 +1216,7 @@ class ChatService:
                     + (f"Имя: {_escape_markdown(name)}\n" if name else "")
                     + f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n"
                     + (f"Услуга: {_escape_markdown(service.name)}\n" if service else "")
+                    + (f"Когда удобно: {_escape_markdown(lead.preferred_time)}\n" if lead.preferred_time else "")
                     + f"\n{_escape_markdown(lead.summary)}"
                 )
                 await bridge.post_client_lead_card(card_text, session_id=lead.session_id)
@@ -1247,6 +1248,7 @@ class ChatService:
         company_id: str,
         session_id: str | None,
         message: str,
+        page: str = "",
     ) -> ChatMessageResponse | JSONResponse:
         """Тонкая обёртка: резолвит/создаёт session_id и сериализует всю обработку одного
         сообщения per-session локом (см. SessionStore.lock_for) — сам pipeline не тронут,
@@ -1255,6 +1257,8 @@ class ChatService:
         started = time.perf_counter()
         session_store = self.request.app.state.session_store
         session = await session_store.get_or_create(session_id, company_id)
+        if page:
+            await session_store.set_first_page(session.session_id, normalize_page(page))
         async with session_store.lock_for(session.session_id):
             response = await self._handle_message_locked(
                 company_id=company_id,
@@ -1291,6 +1295,7 @@ class ChatService:
                 answer=response.answer,
                 action=response.action.value,
                 policy_reason=session.last_intent if session else None,
+                page=session.first_page if session else None,
             )
         except Exception as error:
             logger.warning(

@@ -3,13 +3,13 @@
 import logging
 import re
 from typing import Optional
-from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..knowledge import DuplicateDomainError, domain_matches, hostname_from_origin, phrasebook_value_to_text
 from ..models import WidgetBootstrapResponse
+from ..utils.page_path import normalize_page
 from .analytics import _check_track_rate_limit
 
 
@@ -29,15 +29,6 @@ class WidgetEventRequest(BaseModel):
     session_id: str = Field(default="", max_length=128)
     visitor_id: str = Field(default="", max_length=64)
     page: str = Field(default="", max_length=2000)
-
-
-def normalize_page(raw: str) -> str:
-    """только путь страницы: без домена, «?…» и «#…» — там бывают рекламные метки и личные данные."""
-
-    if not raw.strip():
-        return ""
-    path = unquote(urlsplit(raw.strip()).path)[:200]
-    return path.rstrip("/") or "/"
 
 
 def check_origin(origin: str | None, company_domains: list[str], dev_mode: bool) -> bool:

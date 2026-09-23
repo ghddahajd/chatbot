@@ -107,6 +107,9 @@ def managed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
     monkeypatch.setenv("LEADS_FILE", str(tmp_path / "leads.jsonl"))
     monkeypatch.setenv("ANALYTICS_FILE", str(tmp_path / "analytics.jsonl"))
     monkeypatch.setenv("DELIVERY_OUTBOX_FILE", str(tmp_path / "delivery_outbox.jsonl"))
+    # иначе preflight в тестах читает настоящий журнал сбоев Telegram из backend/logs
+    monkeypatch.setenv("TELEGRAM_BRIDGE_FAILURES_FILE", str(tmp_path / "telegram_bridge_failures.jsonl"))
+    monkeypatch.setenv("TELEGRAM_PENDING_CARDS_FILE", str(tmp_path / "telegram_pending_cards.jsonl"))
     monkeypatch.setenv("DELIVERY_RETRY_ENABLED", "false")
     monkeypatch.setenv("SESSION_EVICTION_ENABLED", "false")
     monkeypatch.setenv("SESSION_SNAPSHOT_FILE", "")

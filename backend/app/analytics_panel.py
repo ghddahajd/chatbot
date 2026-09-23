@@ -282,7 +282,7 @@ def render_analytics_panel(
     .pages-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
     .pages-table td { padding: 7px 8px; border-bottom: 1px solid var(--border-soft); }
     .pages-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .pages-table .page-path { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+    .page-path { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
     .funnel-fill-label { font-size: 11.5px; font-weight: 700; color: #fff; white-space: nowrap; }
 
     /* ── donut: лиды по типу ── */
@@ -702,13 +702,15 @@ def render_analytics_panel(
           <td>${escapeHtml(LEAD_REASON_LABELS[lead.reason] || lead.reason)}</td>
           <td>${escapeHtml(LEAD_TRIGGER_LABELS[lead.lead_trigger] || lead.lead_trigger)}</td>
           <td>${lead.needs_operator ? "да" : "—"}</td>
+          <td>${escapeHtml(lead.preferred_time || "—")}</td>
+          <td class="page-path" title="${escapeHtml(lead.page || "")}">${escapeHtml(lead.page || "—")}</td>
           <td class="chat-id">${escapeHtml((lead.session_id || "").slice(0, 8))}</td>
         </tr>
       `).join("");
       return `
         <table>
           <thead>
-            <tr><th>Дата</th><th>Услуга</th><th>Тип</th><th>Как пришёл</th><th>Нужен оператор</th><th>Сессия</th></tr>
+            <tr><th>Дата</th><th>Услуга</th><th>Тип</th><th>Как пришёл</th><th>Нужен оператор</th><th>Когда удобно</th><th>Страница</th><th>Сессия</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -840,15 +842,16 @@ def render_analytics_panel(
           <td class="num">${fmt(row.loads)}</td>
           <td class="num">${fmt(row.opens)}</td>
           <td class="num">${row.open_rate != null ? row.open_rate + "%" : "—"}</td>
+          <td class="num">${fmt(row.dialogs || 0)}</td>
         </tr>
       `).join("");
       return `
         <div class="card">
           <h2>Где открывают чат</h2>
-          <p class="card-hint">По страницам сайта · топ-20 по загрузкам · доля — открытий от загрузок</p>
+          <p class="card-hint">По страницам сайта · топ-20 по загрузкам · доля — открытий от загрузок · диалоги — где человек написал первым</p>
           <div class="table-scroll">
             <table class="pages-table">
-              <thead><tr><th>Страница</th><th class="num">Загрузок</th><th class="num">Открытий</th><th class="num">Доля</th></tr></thead>
+              <thead><tr><th>Страница</th><th class="num">Загрузок</th><th class="num">Открытий</th><th class="num">Доля</th><th class="num">Диалогов</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>

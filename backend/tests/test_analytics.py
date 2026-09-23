@@ -499,12 +499,12 @@ def test_conversion_funnel_counts_each_stage_and_step_percent(tmp_path) -> None:
     result = service.conversion_funnel()
 
     stages = {stage["label"]: stage for stage in result["stages"]}
-    assert stages["Виджет загружен"]["count"] == 100
-    assert stages["Виджет загружен"]["percent_of_previous"] == 100.0
-    assert stages["Чат открыт"]["count"] == 20
-    assert stages["Чат открыт"]["percent_of_previous"] == 20.0
+    assert stages["Посетители с виджетом"]["count"] == 100
+    assert stages["Посетители с виджетом"]["percent_of_previous"] == 100.0
+    assert stages["Открыли чат"]["count"] == 20
+    assert stages["Открыли чат"]["percent_of_previous"] == 20.0
     assert stages["Есть переписка"]["count"] == 5
-    # "Чат открыт"→"Есть переписка" сравнивает client-side маячок (часто режется адблокерами)
+    # "Открыли чат"→"Есть переписка" сравнивает client-side маячок (часто режется адблокерами)
     # с server-side счётчиком — разной надёжности метрики, честно нечего сравнивать (см.
     # analytics.py:conversion_funnel, обсуждено с пользователем 2026-08-29).
     assert stages["Есть переписка"]["percent_of_previous"] is None
@@ -1205,7 +1205,7 @@ def test_conversion_funnel_accepts_explicit_start_end_instead_of_days(tmp_path) 
     result = service.conversion_funnel(start=datetime(2026, 8, 10), end=datetime(2026, 8, 20))
 
     stages = {stage["label"]: stage["count"] for stage in result["stages"]}
-    assert stages["Виджет загружен"] == 1
+    assert stages["Посетители с виджетом"] == 1
 
 
 # ── лиды, "уровень 0" (2026-08-30) — таблица без персональных данных ──

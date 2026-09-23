@@ -1100,8 +1100,10 @@ class AnalyticsService:
         events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
         leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
 
-        impressions = sum(1 for event in events if event.get("event_type") == "widget_impression")
-        chat_opened = sum(1 for event in events if event.get("event_type") == "chat_opened")
+        impression_events = [event for event in events if event.get("event_type") == "widget_impression"]
+        opened_events = [event for event in events if event.get("event_type") == "chat_opened"]
+        impressions = _unique_visitors(impression_events)
+        chat_opened = _unique_visitors(opened_events)
         conversations = len(
             {
                 event.get("session_id")
@@ -1112,8 +1114,8 @@ class AnalyticsService:
         lead_count = len(leads)
 
         stages = [
-            {"label": "Виджет загружен", "count": impressions},
-            {"label": "Чат открыт", "count": chat_opened},
+            {"label": "Посетители с виджетом", "count": impressions, "page_loads": len(impression_events)},
+            {"label": "Открыли чат", "count": chat_opened},
             {"label": "Есть переписка", "count": conversations},
             {"label": "Стал лидом", "count": lead_count},
         ]
@@ -1137,7 +1139,10 @@ class AnalyticsService:
         # пользователем 2026-08-29) — не баг арифметики, а честно нечего сравнивать, проценты
         # с разных весов. Убираем именно ЭТОТ переход, остальные — Виджет→Чат (обе client-side)
         # и Переписка→Лид (обе server-side) — внутри своего яруса сравнимы, оставляем как есть.
-        stages[2]["percent_of_previous"] = None
+        # Исключение: если ВСЕ открытия за период пришли через /api/widget/event (с меткой
+        # посетителя), их не режет блокировщик — тогда ярусы сравнимы и процент возвращаем.
+        if not opened_events or any(not _visitor_id(event) for event in opened_events):
+            stages[2]["percent_of_previous"] = None
 
         # Честное число дней для хинта на дашборде ("За последние N дней") — не просто эхо
         # входного `days`: при кастомном периоде (2026-08-30), клэмпнутом до 55 дней вызывающим
@@ -1149,7 +1154,45 @@ class AnalyticsService:
         # range_end реально задан явно (кастом/клэмп) — иначе оставляем исходный `days` как есть.
         effective_days = (range_end.date() - range_start.date()).days + 1 if range_end is not None else days
 
-        return {"company_id": company_id, "days": effective_days, "stages": stages}
+        return {
+            "company_id": company_id,
+            "days": effective_days,
+            "stages": stages,
+            "pages": _widget_pages(impression_events, opened_events),
+        }
+
+
+def _visitor_id(event: dict[str, Any]) -> str:
+    metadata = event.get("metadata")
+    return str(metadata.get("visitor_id") or "") if isinstance(metadata, dict) else ""
+
+
+def _unique_visitors(events: list[dict[str, Any]]) -> int:
+    """посетитель = метка браузера; у событий от виджетов старше 2026-09-23 метки нет — каждое
+    такое считаем отдельно, как раньше считалась каждая загрузка страницы."""
+
+    visitors = {_visitor_id(event) for event in events if _visitor_id(event)}
+    return len(visitors) + sum(1 for event in events if not _visitor_id(event))
+
+
+def _widget_pages(
+    impression_events: list[dict[str, Any]], opened_events: list[dict[str, Any]], limit: int = 20
+) -> list[dict[str, Any]]:
+    """где открывают чат: загрузки и открытия по страницам сайта клиента, топ по загрузкам."""
+
+    rows: dict[str, dict[str, Any]] = {}
+    for field, events in (("loads", impression_events), ("opens", opened_events)):
+        for event in events:
+            metadata = event.get("metadata")
+            page = metadata.get("page") if isinstance(metadata, dict) else None
+            if not page:
+                continue
+            row = rows.setdefault(page, {"page": page, "loads": 0, "opens": 0})
+            row[field] += 1
+    top = sorted(rows.values(), key=lambda row: (-row["loads"], -row["opens"], row["page"]))[:limit]
+    for row in top:
+        row["open_rate"] = round(row["opens"] / row["loads"] * 100, 1) if row["loads"] else None
+    return top
 
 
 def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retention_days: int) -> int:

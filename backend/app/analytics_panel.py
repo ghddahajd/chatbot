@@ -276,6 +276,13 @@ def render_analytics_panel(
       transition: width .3s ease;
     }
     .funnel-fill.dim { background: var(--border); }
+    .funnel-sub { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: 6px; }
+    .table-scroll { overflow-x: auto; }
+    .pages-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .pages-table th { text-align: left; font-weight: 600; color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
+    .pages-table td { padding: 7px 8px; border-bottom: 1px solid var(--border-soft); }
+    .pages-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .pages-table .page-path { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
     .funnel-fill-label { font-size: 11.5px; font-weight: 700; color: #fff; white-space: nowrap; }
 
     /* ── donut: лиды по типу ── */
@@ -798,10 +805,12 @@ def render_analytics_panel(
         const widthPct = Math.min(Math.max(Math.round((stage.count / top) * 100), stage.count > 0 ? 4 : 0), 100);
         const percentText = stage.percent_of_previous != null
           ? `<span class="funnel-percent">(${stage.percent_of_previous}%)</span>` : "";
+        const loadsText = stage.page_loads != null
+          ? `<span class="funnel-sub">загрузок страниц: ${fmt(stage.page_loads)}</span>` : "";
         return `
           <div class="funnel-stage">
             <div class="funnel-row">
-              <span class="funnel-label">${escapeHtml(stage.label)}</span>
+              <span class="funnel-label">${escapeHtml(stage.label)} ${loadsText}</span>
               <span class="funnel-value">${fmt(stage.count)} ${percentText}</span>
             </div>
             <div class="funnel-track">
@@ -815,8 +824,34 @@ def render_analytics_panel(
       return `
         <div class="card">
           <h2>Воронка конверсии</h2>
-          <p class="card-hint">За последние ${funnel.days} дней · % — от предыдущей стадии</p>
+          <p class="card-hint">За последние ${funnel.days} дней · посетитель считается один раз за период · % — от предыдущей стадии</p>
           ${rows}
+        </div>
+      `;
+    }
+
+    function renderWidgetPages(pages) {
+      if (!pages || !pages.length) {
+        return `<div class="card"><h2>Где открывают чат</h2><p class="card-hint">По страницам сайта</p><div class="empty-state">Данные появятся после обновления виджета на сайте</div></div>`;
+      }
+      const rows = pages.map((row) => `
+        <tr>
+          <td class="page-path" title="${escapeHtml(row.page)}">${escapeHtml(row.page)}</td>
+          <td class="num">${fmt(row.loads)}</td>
+          <td class="num">${fmt(row.opens)}</td>
+          <td class="num">${row.open_rate != null ? row.open_rate + "%" : "—"}</td>
+        </tr>
+      `).join("");
+      return `
+        <div class="card">
+          <h2>Где открывают чат</h2>
+          <p class="card-hint">По страницам сайта · топ-20 по загрузкам · доля — открытий от загрузок</p>
+          <div class="table-scroll">
+            <table class="pages-table">
+              <thead><tr><th>Страница</th><th class="num">Загрузок</th><th class="num">Открытий</th><th class="num">Доля</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
         </div>
       `;
     }
@@ -1568,6 +1603,7 @@ def render_analytics_panel(
         content.innerHTML = `
           ${renderTiles(data)}
           ${renderFunnel(data.funnel)}
+          ${renderWidgetPages(data.funnel.pages)}
           <div class="grid-2">
             ${renderMonthChart(data.leads_by_month)}
             ${renderOperators(data.operators)}

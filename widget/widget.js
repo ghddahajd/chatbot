@@ -1854,14 +1854,42 @@
       }
     }
 
-    // маячок для воронки конверсии — fire-and-forget, отклик виджета не должен ждать сеть
+    // анонимная метка браузера для воронки: один человек = один посетитель, сколько бы страниц
+    // он ни открыл. Без имени и телефона; хранилище закрыто (инкогнито) — метка живёт до ухода со страницы
+    visitorId() {
+      if (this._visitorId) return this._visitorId;
+      const key = "ai-widget-visitor:" + this.state.companyId;
+      const fresh = () => ((window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36));
+      for (const storage of ["localStorage", "sessionStorage"]) {
+        try {
+          const store = window[storage];
+          let id = store.getItem(key);
+          if (!id) { id = fresh(); store.setItem(key, id); }
+          this._visitorId = id;
+          return id;
+        } catch (_) { /* пробуем следующее хранилище */ }
+      }
+      this._visitorId = fresh();
+      return this._visitorId;
+    }
+
+    // маячок для воронки конверсии — fire-and-forget, отклик виджета не должен ждать сеть.
+    // Путь /api/widget/…, а не /api/analytics/track/…: такие адреса режут блокировщики рекламы
     trackEvent(kind) {
       if (!this.state.companyId) return;
       try {
-        fetch(API_BASE + "/api/analytics/track/" + kind, {
+        fetch(API_BASE + "/api/widget/event", {
           method: "POST",
+          keepalive: true,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ company_id: this.state.companyId, session_id: this.state.sessionId || "" }),
+          body: JSON.stringify({
+            company_id: this.state.companyId,
+            session_id: this.state.sessionId || "",
+            visitor_id: this.visitorId(),
+            kind,
+            page: window.location.pathname,
+          }),
         }).catch(() => {});
       } catch (_) { /* не критично для работы чата */ }
     }

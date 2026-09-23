@@ -338,7 +338,7 @@ def test_analytics_dashboard_resolves_service_name_and_shape(test_client) -> Non
     assert len(result["activity_by_weekday"]) == 7
     assert result["leads_by_month"][-1]["month"] == datetime.utcnow().strftime("%Y-%m")
     assert [stage["label"] for stage in result["funnel"]["stages"]] == [
-        "Виджет загружен", "Чат открыт", "Есть переписка", "Стал лидом",
+        "Посетители с виджетом", "Открыли чат", "Есть переписка", "Стал лидом",
     ]
 
 
@@ -449,7 +449,7 @@ def test_analytics_dashboard_custom_range_funnel_clamp_uses_midnight_not_time_ma
     )
     stages = {stage["label"]: stage["count"] for stage in response.json()["funnel"]["stages"]}
 
-    assert stages["Виджет загружен"] == 1
+    assert stages["Посетители с виджетом"] == 1
 
 
 def test_analytics_dashboard_preset_days_unaffected_by_custom_range_code(test_client) -> None:
@@ -523,7 +523,7 @@ def test_track_impression_writes_analytics_event(test_client) -> None:
         "/api/analytics/dashboard?company_id=rosh_demo", headers=OPERATOR_HEADERS
     ).json()
     stages = {stage["label"]: stage["count"] for stage in dashboard["funnel"]["stages"]}
-    assert stages["Виджет загружен"] == 1
+    assert stages["Посетители с виджетом"] == 1
 
 
 def test_track_chat_opened_writes_analytics_event(test_client) -> None:
@@ -536,4 +536,4 @@ def test_track_chat_opened_writes_analytics_event(test_client) -> None:
         "/api/analytics/dashboard?company_id=rosh_demo", headers=OPERATOR_HEADERS
     ).json()
     stages = {stage["label"]: stage["count"] for stage in dashboard["funnel"]["stages"]}
-    assert stages["Чат открыт"] == 1
+    assert stages["Открыли чат"] == 1

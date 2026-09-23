@@ -1,16 +1,43 @@
 """роуты публичной настройки виджета."""
 
 import logging
+import re
 from typing import Optional
+from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from ..knowledge import DuplicateDomainError, domain_matches, hostname_from_origin, phrasebook_value_to_text
 from ..models import WidgetBootstrapResponse
+from .analytics import _check_track_rate_limit
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/widget", tags=["widget"])
+
+
+WIDGET_EVENT_TYPES = {"impression": "widget_impression", "chat-opened": "chat_opened"}
+VISITOR_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+# поисковые и служебные роботы тоже выполняют скрипты и накручивали бы «посетителей»
+BOT_USER_AGENT_PATTERN = re.compile(r"bot|crawl|spider|slurp|headless|lighthouse", re.IGNORECASE)
+
+
+class WidgetEventRequest(BaseModel):
+    company_id: str = Field(min_length=1, max_length=64)
+    kind: str
+    session_id: str = Field(default="", max_length=128)
+    visitor_id: str = Field(default="", max_length=64)
+    page: str = Field(default="", max_length=2000)
+
+
+def normalize_page(raw: str) -> str:
+    """только путь страницы: без домена, «?…» и «#…» — там бывают рекламные метки и личные данные."""
+
+    if not raw.strip():
+        return ""
+    path = unquote(urlsplit(raw.strip()).path)[:200]
+    return path.rstrip("/") or "/"
 
 
 def check_origin(origin: str | None, company_domains: list[str], dev_mode: bool) -> bool:
@@ -70,3 +97,32 @@ async def bootstrap_widget(
         greeting=greeting,
         quick_faq=knowledge_base.quick_faq,
     )
+
+
+@router.post("/event")
+async def track_widget_event(payload: WidgetEventRequest, request: Request) -> dict:
+    """сигналы воронки («виджет загружен», «чат открыт») идут по тому же пути, что и загрузка
+    виджета: адреса вида /api/analytics/track/… блокировщики рекламы режут первыми."""
+
+    event_type = WIDGET_EVENT_TYPES.get(payload.kind)
+    if event_type is None:
+        raise HTTPException(status_code=400, detail="Unknown event kind")
+    if not request.app.state.knowledge_base_resolver.client_exists(payload.company_id):
+        raise HTTPException(status_code=404, detail="Unknown company")
+    _check_track_rate_limit(request)
+    if BOT_USER_AGENT_PATTERN.search(request.headers.get("user-agent", "")):
+        return {"ok": True}
+
+    metadata: dict[str, str] = {}
+    if VISITOR_ID_PATTERN.fullmatch(payload.visitor_id):
+        metadata["visitor_id"] = payload.visitor_id
+    page = normalize_page(payload.page)
+    if page:
+        metadata["page"] = page
+    await request.app.state.analytics_service.track_event(
+        company_id=payload.company_id,
+        session_id=payload.session_id,
+        event_type=event_type,
+        metadata=metadata,
+    )
+    return {"ok": True}

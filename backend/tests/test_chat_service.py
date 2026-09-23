@@ -151,7 +151,7 @@ def test_booking_prompt_can_be_cancelled_with_common_typo(test_client) -> None:
 
     assert first_response.status_code == 200
     assert first_payload["action"] == "clarify"
-    assert "телефон" in first_payload["answer"].lower()
+    assert "когда вам удобно" in first_payload["answer"].lower()
 
     second_response = test_client.post(
         "/api/chat/message",
@@ -188,7 +188,7 @@ def test_booking_prompt_accepts_service_name_as_next_step(test_client) -> None:
 
     assert second_response.status_code == 200
     assert second_payload["action"] == "clarify"
-    assert "телефон" in second_payload["answer"].lower()
+    assert "когда вам удобно" in second_payload["answer"].lower()
     assert "такой услуги" not in second_payload["answer"].lower()
 
     third_response = test_client.post(
@@ -236,29 +236,28 @@ def test_earlier_complaint_flag_survives_into_later_lead(test_client, managed_en
 
 
 def test_booking_time_preference_is_captured_and_surfaced_in_lead(test_client, managed_env) -> None:
-    """§2/§3.3 скрипта: assumptive close "утро или вечер?" — квик-экшены на booking_contact_prompt.
-    Клик по "Утром" должен подтверждаться отдельно и попасть в текст заявки менеджеру, не
-    потеряться молча в общем "напишите телефон"."""
+    """выбор времени плиткой («Завтра») подтверждается отдельно и попадает в текст заявки
+    менеджеру, не теряется молча в общем "напишите телефон". Плитки вместо «Утром/Вечером» —
+    созвон с РОШ 2026-09-23."""
 
     first_response = test_client.post(
         "/api/chat/message",
         json={"company_id": "rosh_demo", "session_id": None, "message": "запишите меня на чистку лица"},
     )
     first_payload = first_response.json()
-    assert "Утром" in first_payload["quick_actions"] or any(
-        isinstance(item, dict) and item.get("label") == "Утром" for item in first_payload["quick_actions"]
-    )
+    assert [item["label"] for item in first_payload["quick_actions"]] == ["Сегодня", "Завтра", "На этой неделе", "Другое"]
 
     second_response = test_client.post(
         "/api/chat/message",
-        json={"company_id": "rosh_demo", "session_id": first_payload["session_id"], "message": "Утром"},
+        json={"company_id": "rosh_demo", "session_id": first_payload["session_id"], "message": "Завтра"},
     )
     second_payload = second_response.json()
 
     assert second_response.status_code == 200
     assert second_payload["action"] == "clarify"
-    assert "утром" in second_payload["answer"].lower()
-    assert "имя и телефон" in second_payload["answer"].lower()
+    assert "завтра" in second_payload["answer"].lower()
+    assert "номер телефона" in second_payload["answer"].lower()
+    assert "имя" not in second_payload["answer"].lower()
 
     third_response = test_client.post(
         "/api/chat/message",
@@ -273,7 +272,7 @@ def test_booking_time_preference_is_captured_and_surfaced_in_lead(test_client, m
 
     assert third_response.status_code == 200
     assert third_payload["lead_created"] is True
-    assert "утром" in lead["summary"].lower()
+    assert "завтра" in lead["summary"].lower()
 
 
 def test_article_guidance_uses_llm_when_approved_excerpt_passes_validator(test_client, managed_env) -> None:
@@ -862,7 +861,7 @@ def test_engagement_offer_does_not_interrupt_booking_contact_prompt(test_client)
 
     payload = _post_chat(test_client, message="хочу записаться", session_id=session_id)
 
-    assert "напишите имя, телефон" in payload["answer"].lower()
+    assert "когда вам удобно" in payload["answer"].lower()
     assert "диалог уже длинный" not in payload["answer"]
     assert _quick_action_labels(payload) != ["Передать администратору", "Продолжить тут"]
 
@@ -1767,14 +1766,14 @@ def test_second_booking_lead_summary_does_not_bleed_previous_booking_context(
     )
 
     assert first_payload["action"] == "clarify"
-    assert "На какую услугу хотите оставить заявку" in first_payload["answer"]
+    assert "Когда вам удобно" in first_payload["answer"]
     assert first_service_payload["action"] == "clarify"
-    assert "напишите имя, телефон" in first_service_payload["answer"].lower()
+    assert "Когда вам удобно" in first_service_payload["answer"]
     assert first_contact_payload["lead_created"] is True
     assert second_payload["action"] == "clarify"
-    assert "На какую услугу хотите оставить заявку" in second_payload["answer"]
+    assert "номер телефона" in second_payload["answer"].lower()  # «на вторник» уже названо
     assert second_service_payload["action"] == "clarify"
-    assert "напишите имя, телефон" in second_service_payload["answer"].lower()
+    assert "номер телефона" in second_service_payload["answer"].lower()
     assert second_contact_payload["lead_created"] is True
     leads = [
         json.loads(line)
@@ -1839,7 +1838,7 @@ def test_skipped_booking_service_selection_does_not_reuse_previous_service_id(
 
     assert first_contact_payload["lead_created"] is True
     assert second_payload["action"] == "clarify"
-    assert "На какую услугу хотите оставить заявку" in second_payload["answer"]
+    assert "номер телефона" in second_payload["answer"].lower()
     assert second_contact_payload["lead_created"] is True
     leads = [
         json.loads(line)

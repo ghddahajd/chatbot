@@ -26,6 +26,8 @@ from ..models import (
 )
 from ..policy import classify_and_extract, escalation_urgency_for, undisclosed_equipment_terms
 from ..policy.constants import (
+    BOOKING_DAY_CHOICES,
+    BOOKING_WHEN_TILES,
     CLINIC_LOCATION_KEYWORDS,
     NEGATIVE_MESSAGES,
     PAIN_FEAR_ANTICIPATION_KEYWORDS,
@@ -69,6 +71,13 @@ LEAD_CONTEXT_START_KEY = "lead_context_start_index"
 LEAD_SERVICE_ID_KEY = "lead_service_id"
 PREFERRED_TIME_KEY = "preferred_time"
 
+
+
+def _given_name(lead) -> str:
+    """имя, если человек его назвал; «Не указано» — заглушка из leads.py, в карточку её не пишем."""
+
+    name = str(lead.name or "").strip()
+    return "" if name.casefold() in {"", "не указано"} else name
 
 class ChatService:
     """оркестрирует обработку одного пользовательского сообщения."""
@@ -377,19 +386,35 @@ class ChatService:
             return None
         if self._looks_like_partial_phone(message):
             return "Похоже, номер неполный. Проверьте, пожалуйста, и отправьте телефон ещё раз."
+        booking = session.pending_action == PendingAction.BOOKING_CONTACT.value
+        phone_prompt = self._phrase("booking_phone_prompt", "Оставьте, пожалуйста, номер телефона.")
         if time_preference:
+            if booking:
+                return f"Хорошо, {time_preference}. {phone_prompt}"
             return f"Хорошо, {time_preference}. Напишите, пожалуйста, имя и телефон — передам заявку менеджеру."
         name = extract_name(message, None, known_services=knowledge_base.services)
         if name:
             return f"{name}, напишите, пожалуйста, телефон — передам заявку менеджеру."
+        if booking:
+            return phone_prompt
         return "Напишите, пожалуйста, телефон. Можно просто номер и имя одним сообщением."
 
-    def _last_user_message_before_current(self, session, current_message: str) -> str | None:
+    def _last_user_message_before_current(
+        self, session, current_message: str, *, skip_time_choices: bool = False
+    ) -> str | None:
         user_messages = [
             str(stored_message.text or "").strip()
             for stored_message in session.messages
             if stored_message.role == MessageRole.USER and str(stored_message.text or "").strip()
         ]
+        if skip_time_choices:
+            # плитки «Сегодня/Завтра/…» и «утром/вечером» идут в карточку отдельной строкой «Когда удобно»
+            user_messages = [
+                text
+                for text in user_messages
+                if normalize_text(text) not in BOOKING_DAY_CHOICES
+                and normalize_text(text) not in self._TIME_PREFERENCE_MARKERS
+            ]
         if len(user_messages) < 2:
             return None
         prior_message = user_messages[-2]
@@ -425,7 +450,7 @@ class ChatService:
         phone: str | None = None,
     ) -> str:
         prefix = "Заявка на запись: " if is_booking_request else ""
-        prior_message = self._last_user_message_before_current(session, message)
+        prior_message = self._last_user_message_before_current(session, message, skip_time_choices=is_booking_request)
         if prior_message:
             details = self._contact_message_remainder(message, name=name, phone=phone)
             details_suffix = f" ({details})" if details else ""
@@ -525,7 +550,7 @@ class ChatService:
         facts: list[str] = []
         preferred_time = str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip()
         if preferred_time and preferred_time not in summary_lower:
-            facts.append(f"Предпочитает: {preferred_time}")
+            facts.append(f"Когда удобно: {preferred_time}")
         for flag in session.notable_flags:
             if flag.lower() not in summary_lower:
                 facts.append(flag)
@@ -626,10 +651,12 @@ class ChatService:
             session.session_id,
             metadata={LEAD_SERVICE_ID_KEY: service.id},
         )
-        answer = self._phrase(
-            "booking_contact_prompt",
-            "Чтобы оставить заявку, напишите имя, телефон и удобное время. Мы передадим заявку, а менеджер подтвердит детали.",
-        )
+        if str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip():
+            answer = self._phrase("booking_phone_prompt", "Оставьте, пожалуйста, номер телефона.")
+            tiles: list[str] = []
+        else:
+            answer = self._phrase("booking_when_prompt", "Когда вам удобно?")
+            tiles = list(BOOKING_WHEN_TILES)
         await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
         session = await session_store.get(session.session_id)
         return ChatMessageResponse(
@@ -638,7 +665,7 @@ class ChatService:
             action=PolicyAction.CLARIFY,
             answer=answer,
             lead_created=False,
-            quick_actions=[],
+            quick_actions=format_quick_actions(tiles, self.request, knowledge_base),
         )
 
     async def _handle_pending_contact(
@@ -682,6 +709,32 @@ class ChatService:
             )
 
         phone = extract_phone(message)
+        day_choice = (
+            BOOKING_DAY_CHOICES.get(normalize_text(message))
+            if not phone and session.pending_action == PendingAction.BOOKING_CONTACT.value
+            else None
+        )
+        if day_choice is not None:
+            preference, phrase_key = day_choice
+            company = knowledge_base.company
+            if phrase_key == "booking_when_today" and not is_currently_open(
+                company.working_hours_schedule, company.timezone
+            ):
+                phrase_key = "booking_when_today_closed"
+                # администратор прочитает карточку утром — «сегодня» без пометки было бы двусмысленным
+                preference = "сегодня — запрос пришёл в нерабочее время"
+            await session_store.update_contact_draft(session.session_id, metadata={PREFERRED_TIME_KEY: preference})
+            answer = self._phrase(phrase_key, self._phrase("booking_phone_prompt", "Оставьте, пожалуйста, номер телефона."))
+            await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
+            session = await session_store.get(session.session_id)
+            return ChatMessageResponse(
+                session_id=session.session_id,
+                status=session.status,
+                action=PolicyAction.CLARIFY,
+                answer=answer,
+                lead_created=False,
+                quick_actions=[],
+            )
         if not phone:
             booking_service_response = await self._handle_booking_service_selection(
                 session_store=session_store,
@@ -892,6 +945,11 @@ class ChatService:
                 session.session_id,
                 metadata=self._lead_context_metadata(session, policy_result.service_id),
             )
+            preferred_time = str(policy_result.safe_context.get("preferred_time") or "").strip()
+            if preferred_time:
+                await session_store.update_contact_draft(
+                    session.session_id, metadata={PREFERRED_TIME_KEY: preferred_time}
+                )
             if prior_unresolved_metadata:
                 await session_store.update_contact_draft(session.session_id, metadata=prior_unresolved_metadata)
             return
@@ -1074,6 +1132,15 @@ class ChatService:
         await request.app.state.session_store.set_lead_requested(session.session_id, True)
         await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
 
+    def _lead_service(self, lead):
+        if not lead.service_id:
+            return None
+        try:
+            knowledge_base = self.request.app.state.knowledge_base_resolver.get(lead.company_id, fallback=False)
+        except KeyError:
+            return None
+        return knowledge_base.find_service_by_id(lead.service_id)
+
     async def _notify_telegram_for_lead(self, lead, *, reason: str) -> None:
         """Лид с needs_operator=True, для которого ЕЩЁ нет сигнала в очереди — реально ждёт
         живого человека впервые, карточка в General с клеймом (как operator_requested).
@@ -1104,7 +1171,7 @@ class ChatService:
             if needs_fresh_queue_card:
                 # contact_draft уже очищен к этому моменту (_clear_contact_state отрабатывает
                 # до вызова этого метода) — берём имя/телефон с самого lead, не с сессии.
-                client_label = lead.name or lead.phone or f"Сессия {lead.session_id[:8]}"
+                client_label = _given_name(lead) or lead.phone or f"Сессия {lead.session_id[:8]}"
                 await bridge.post_operator_queue_card(
                     session_id=lead.session_id,
                     reason=reason,
@@ -1120,11 +1187,14 @@ class ChatService:
                 # появлялся ни разу, хотя прямой вызов _telegram_text() в тестах работал.
                 short_id = _lead_short_id(lead.session_id)
                 id_tag = f" · #{short_id}" if short_id else ""
+                name = _given_name(lead)
+                service = self._lead_service(lead)
                 card_text = (
                     f"{reason}{id_tag}\n\n"
-                    f"Имя: {_escape_markdown(lead.name or 'не указано')}\n"
-                    f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n\n"
-                    f"{_escape_markdown(lead.summary)}"
+                    + (f"Имя: {_escape_markdown(name)}\n" if name else "")
+                    + f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n"
+                    + (f"Услуга: {_escape_markdown(service.name)}\n" if service else "")
+                    + f"\n{_escape_markdown(lead.summary)}"
                 )
                 await bridge.post_client_lead_card(card_text, session_id=lead.session_id)
         except Exception as error:

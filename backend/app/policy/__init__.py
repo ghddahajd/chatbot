@@ -25,6 +25,8 @@ from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
     BOOKING_KEYWORDS,
+    BOOKING_TIME_MENTION_PATTERN,
+    BOOKING_WHEN_TILES,
     PROMPT_INJECTION_KEYWORDS,
     COMPLAINT_ESCALATION_KEYWORDS,
     FRUSTRATION_LEAVING_KEYWORDS,
@@ -2630,9 +2632,6 @@ def _analyze_message_core(
         and not operator_requested
         and not looks_like_new_question
     ):
-        pending_service = service or knowledge_base.find_service_by_id(
-            session.last_service_id or last_service_from_history(session, knowledge_base)
-        )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.BOOKING_REQUEST,
@@ -2640,14 +2639,9 @@ def _analyze_message_core(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": _phrase(
-                    knowledge_base,
-                    "booking_contact_prompt_no_consultation"
-                    if is_consultation_only_service(pending_service)
-                    else "booking_contact_prompt",
-                ),
+                "message_to_user": _phrase(knowledge_base, "booking_when_prompt"),
             },
-            quick_actions=["Утром", "Вечером", "Оставить телефон", "Позвать менеджера"],
+            quick_actions=list(BOOKING_WHEN_TILES),
         )
 
     if intent == "location_mismatch" or is_location_mismatch(
@@ -3338,18 +3332,6 @@ def _analyze_message_core(
                 },
                 quick_actions=["Посмотреть услуги", "Позвать менеджера"],
             )
-        if service is None and not phone:
-            return PolicyResult(
-                action=PolicyAction.CLARIFY,
-                reason=PolicyReason.BOOKING_REQUEST,
-                confidence=0.86,
-                safe_context={
-                    "force_direct_answer": True,
-                    "booking_request": True,
-                    "message_to_user": "На какую услугу хотите оставить заявку?",
-                },
-                quick_actions=service_name_quick_actions(knowledge_base),
-            )
         if phone:
             return PolicyResult(
                 action=PolicyAction.ASK_CONTACT,
@@ -3364,6 +3346,23 @@ def _analyze_message_core(
                     booking_request=True,
                 ),
             )
+        # услугу не спрашиваем отдельным шагом — её уточнит администратор по телефону
+        time_mentions = BOOKING_TIME_MENTION_PATTERN.findall(normalized_message)
+        if time_mentions:
+            return PolicyResult(
+                action=PolicyAction.CLARIFY,
+                reason=PolicyReason.BOOKING_REQUEST,
+                service_id=service.id if service else None,
+                confidence=0.9,
+                safe_context={
+                    "force_direct_answer": True,
+                    "booking_request": True,
+                    # normalize_text съел двоеточие: «в 15 30» → «в 15:30» для карточки оператора
+                    "preferred_time": re.sub(r"(\d{1,2}) (\d{2})\b", r"\1:\2", " ".join(time_mentions)),
+                    "message_to_user": _phrase(knowledge_base, "booking_phone_prompt"),
+                },
+                quick_actions=[],
+            )
         return PolicyResult(
             action=PolicyAction.CLARIFY,
             reason=PolicyReason.BOOKING_REQUEST,
@@ -3372,14 +3371,9 @@ def _analyze_message_core(
             safe_context={
                 "force_direct_answer": True,
                 "booking_request": True,
-                "message_to_user": _phrase(
-                    knowledge_base,
-                    "booking_contact_prompt_no_consultation"
-                    if is_consultation_only_service(service)
-                    else "booking_contact_prompt",
-                ),
+                "message_to_user": _phrase(knowledge_base, "booking_when_prompt"),
             },
-            quick_actions=["Утром", "Вечером", "Оставить телефон", "Позвать менеджера"],
+            quick_actions=list(BOOKING_WHEN_TILES),
         )
 
     if phone and session.pending_action == PendingAction.BOOKING_CONTACT.value:
@@ -3606,6 +3600,9 @@ def _looks_like_answer_ignoring_booking(result: PolicyResult, booking_requested:
     # явно велено в BASE_SYSTEM_PROMPT не игнорировать второй вопрос молча, а текста на этом
     # уровне (до генерации) ещё нет, дополнять нечего.
     if not result.safe_context.get("force_direct_answer"):
+        return False
+    # ответ сам и есть шаг записи («Когда вам удобно?»): слов «запись/заявка» в нём может не быть
+    if result.safe_context.get("booking_request"):
         return False
     message_to_user = str(result.safe_context.get("message_to_user") or "")
     if not message_to_user:

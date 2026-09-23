@@ -733,7 +733,7 @@ def test_clinic_doctor_name_does_not_intercept_booking_request(policy_session, r
     assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.BOOKING_REQUEST
     assert result.safe_context["booking_request"] is True
-    assert "На какую услугу хотите оставить заявку" in result.safe_context["message_to_user"]
+    assert result.safe_context["message_to_user"] == "Когда вам удобно?"
     assert "Молотилова Ольга Юрьевна" not in result.safe_context["message_to_user"]
 
 
@@ -1441,7 +1441,9 @@ def test_booking_date_target_does_not_become_unknown_service(policy_session, kno
 
     assert result.action == PolicyAction.CLARIFY
     assert result.reason == PolicyReason.BOOKING_REQUEST
-    assert "услуг" in result.safe_context["message_to_user"].lower()
+    # «завтра» — это время записи, а не неизвестная услуга; плитки не нужны, просим телефон
+    assert result.safe_context["preferred_time"] == "завтра"
+    assert "номер телефона" in result.safe_context["message_to_user"].lower()
 
 
 def test_single_similar_service_binds_context_for_followup(

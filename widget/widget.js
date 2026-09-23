@@ -633,6 +633,9 @@
         transition: border-color .15s, transform .12s;
       }
       .welcome-card:hover { border-color: var(--accent-border); transform: translateY(-1px); }
+      /* box-shadow вместо толстой рамки — карточка не сдвигает соседей */
+      .welcome-card.is-highlighted,
+      .welcome-card.is-highlighted:hover { border-color: var(--highlight); box-shadow: 0 0 0 1px var(--highlight); }
       .welcome-card-icon {
         width: 32px;
         height: 32px;
@@ -1102,13 +1105,13 @@
       <section class="panel" aria-live="polite">
         <header class="header">
           <div class="header-info">
-            <div class="header-name">AI-консультант</div>
+            <div class="header-name">Консультант</div>
             <div class="header-status">
               <span class="dot"></span>
               <span class="status-label">на связи</span>
             </div>
           </div>
-          <button class="ai-badge" type="button" aria-label="Что значит «с ИИ»">
+          <button class="ai-badge" type="button" aria-label="Что значит «с ИИ»" style="display:none">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
             с ИИ
             <svg class="ai-badge-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
@@ -1213,10 +1216,13 @@
         widgetConfig: {
           primary_color: "#080E0D",
           button_color: "#080E0D",
-          header_title: "AI-консультант",
+          header_title: "Консультант",
           header_subtitle: "Запись, цены и услуги",
           position: "bottom-right",
           avatar_emoji: "👩‍⚕️",
+          assistant_label: "Ассистент",
+          ai_badge: "",
+          booking_highlight_color: "",
         },
       };
       this.shadow = this.attachShadow({ mode: "closed" });
@@ -1465,6 +1471,7 @@
           icon: "M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z",
           icon2: "M8 3v4M16 3v4M4 10h16M9 15l2 2 4-4",
           value: "Хочу записаться на консультацию",
+          booking: true,
         },
         {
           title: "Частые вопросы",
@@ -1486,6 +1493,7 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "welcome-card";
+        if (c.booking) btn.dataset.booking = "1";
         btn.innerHTML = `
           <div class="welcome-card-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1510,6 +1518,7 @@
       }
       d.appendChild(grid);
       this.el.messages.appendChild(d);
+      this.applyBookingHighlight();
     }
 
     showFaqList(welcomeEl) {
@@ -1772,7 +1781,18 @@
       root.style.setProperty("--accent-dark", this.darken(c.primary_color));
 
       this.el.headerName.textContent = c.header_title;
+      this.el.aiBadge.style.display = c.ai_badge === "show" ? "" : "none";
+      this.applyBookingHighlight();
       this.el.shell.classList.toggle("pos-left", c.position === "bottom-left");
+    }
+
+    // стартовый экран рисуется до того, как пришли настройки клиента, поэтому зовётся и отсюда, и из applyConfig
+    applyBookingHighlight() {
+      const color = this.state.widgetConfig.booking_highlight_color;
+      this.el.messages.querySelectorAll('.welcome-card[data-booking="1"]').forEach((card) => {
+        card.classList.toggle("is-highlighted", Boolean(color));
+        if (color) card.style.setProperty("--highlight", color);
+      });
     }
 
     darken(hex) {
@@ -1862,7 +1882,7 @@
         const label = document.createElement("div");
         label.className = "msg-label";
         const cfg = this.state.widgetConfig;
-        if (role === "assistant") label.textContent = cfg.avatar_emoji + " AI";
+        if (role === "assistant") label.textContent = cfg.avatar_emoji + " " + cfg.assistant_label;
         else if (role === "operator") label.textContent = "Специалист";
         else if (role === "user") label.textContent = "";
         if (label.textContent) article.appendChild(label);
@@ -1908,7 +1928,7 @@
       this.clearGreeting();
       const b = document.createElement("div");
       b.className = "typing-bubble";
-      b.setAttribute("aria-label", "AI печатает");
+      b.setAttribute("aria-label", this.state.widgetConfig.assistant_label + " печатает");
       for (let i = 0; i < 3; i++) {
         const d = document.createElement("div");
         d.className = "typing-dot";

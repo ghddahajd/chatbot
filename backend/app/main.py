@@ -366,7 +366,17 @@ app.include_router(widget.router)
 app.include_router(ws.router)
 app.include_router(settings_routes.router)
 
-app.mount("/static", StaticFiles(directory=str(settings.widget_path.parent)), name="static")
+class RevalidatedStaticFiles(StaticFiles):
+    """виджет подключён на сайтах клиентов: без no-cache браузер держит старую копию
+    часами после выкатки. no-cache = сверка по ETag на каждой загрузке, без изменений — 304."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatedStaticFiles(directory=str(settings.widget_path.parent)), name="static")
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])

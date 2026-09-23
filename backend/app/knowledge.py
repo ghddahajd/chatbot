@@ -35,7 +35,14 @@ DEFAULT_WIDGET_CONFIG = {
     "header_subtitle": "Подскажем по услугам и ценам",
     "position": "bottom-right",
     "avatar_emoji": "💬",
+    # подпись над ответами бота; человеком не притворяемся, но и «AI» не выпячиваем
+    "assistant_label": "Ассистент",
+    # "show" — кнопка «с ИИ» в шапке с пояснением; по умолчанию скрыта
+    "ai_badge": "",
+    # рамка карточки «Записаться на приём» на стартовом экране, #RGB или #RRGGBB; пусто — без рамки
+    "booking_highlight_color": "",
 }
+HEX_COLOR_PATTERN = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
 DEFAULT_DOMAIN_PROFILE = {
     "type": "generic",
     "safety_level": "normal",
@@ -1085,6 +1092,9 @@ class KnowledgeBaseResolver:
 
         if config["position"] not in {"bottom-right", "bottom-left"}:
             config["position"] = DEFAULT_WIDGET_CONFIG["position"]
+        # цвет уходит прямо в стиль виджета на сайте клиента — пропускаем только hex
+        if not HEX_COLOR_PATTERN.fullmatch(str(config["booking_highlight_color"])):
+            config["booking_highlight_color"] = ""
         return config
 
     def domain_profile(self, company_id: str) -> dict[str, object]:

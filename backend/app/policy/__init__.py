@@ -3553,7 +3553,7 @@ def _analyze_message_core(
             action=PolicyAction.REJECT,
             reason=PolicyReason.OUT_OF_SCOPE,
             confidence=0.9,
-            safe_context={"message_to_user": "Сейчас чат недоступен для AI-ответов."},
+            safe_context={"message_to_user": "Сейчас чат недоступен."},
         )
 
     similar_result = similar_services_result(message, knowledge_base, classifier_confidence or 0.7)

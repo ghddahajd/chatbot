@@ -117,6 +117,9 @@ def test_widget_config_from_client_config(test_client, managed_env) -> None:
         "header_subtitle": "Запись и цены",
         "position": "bottom-left",
         "avatar_emoji": "👩‍⚕️",
+        "assistant_label": "Ассистент",
+        "ai_badge": "",
+        "booking_highlight_color": "",
     }
 
 

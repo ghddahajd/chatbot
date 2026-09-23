@@ -191,6 +191,39 @@ def _check_client_files(company_id: str, client_dir: Path, state: CheckState) ->
     return services, prices, company
 
 
+def _check_articles_and_symptoms(client_dir: Path, state: CheckState) -> None:
+    print("\nСтатьи и карта симптомов:")
+    if not client_dir.exists():
+        return
+    from app.knowledge import KnowledgeBase  # noqa: WPS433
+
+    try:
+        kb = KnowledgeBase.load(client_dir)
+    except Exception as error:  # noqa: BLE001
+        state.block(f"база знаний не загрузилась: {type(error).__name__}")
+        return
+
+    rag = kb.rag_status()
+    if rag.get("disabled"):
+        state.ok("статей нет (rag.corpus: none)")
+    elif rag.get("error") == "not_declared":
+        state.block("не указан rag.corpus в config.yaml — путь к корпусу статей клиента или none")
+    elif rag.get("error"):
+        state.block(f"корпус статей: {rag['error']} ({rag.get('path')})")
+    else:
+        state.ok(f"корпус статей: {rag['chunk_count']} кусков ({rag['path']})")
+
+    if not kb.symptom_service_map:
+        state.ok("карты симптомов нет — похожие услуги подбираются по прайсу")
+        return
+    known_ids = {service.id for service in kb.services}
+    unknown = sorted({sid for ids in kb.symptom_service_map.values() for sid in ids} - known_ids)
+    if unknown:
+        state.block("в symptom_service_map.yaml есть услуги, которых нет в services.json: " + ", ".join(unknown))
+    else:
+        state.ok(f"карта симптомов: {len(kb.symptom_service_map)} фраз, все услуги есть в прайсе")
+
+
 def _masked_value(value: str) -> str:
     stripped = value.strip()
     if not stripped:
@@ -392,6 +425,7 @@ def main() -> int:
         print("══════════════════════════════════════")
 
         services, _prices, _company = _check_client_files(args.company, client_dir, state)
+        _check_articles_and_symptoms(client_dir, state)
         _check_notifications(args.company, client_dir, temp_dir, original_env, state)
         if state.blockers:
             print("\nBootstrap / Chat smoke / Leads:")

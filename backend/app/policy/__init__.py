@@ -236,7 +236,7 @@ def _article_quick_actions(matches: list[dict[str, object]]) -> list[object]:
     return actions
 
 
-def _retrieve_article_context_safe(message: str) -> list[dict[str, object]]:
+def _retrieve_article_context_safe(message: str, knowledge_base: KnowledgeBase) -> list[dict[str, object]]:
     # Живой баг (ручное тестирование пользователем, 2026-08-24): "секс"/"вы кто"/"что делает"
     # зацепляли случайные статьи (ВМС, контрацептивы, эпиляция для мужчин) через ЛЮБУЮ ветку,
     # что вызывает эту функцию (off_topic, faq_question, body-topic) — единственное значимое
@@ -249,13 +249,19 @@ def _retrieve_article_context_safe(message: str) -> list[dict[str, object]]:
     # скорера) — единая точка входа для всех вызовов ниже, а не по одной проверке на ветку.
     if len(rag_tokenize(message)) < 2:
         return []
+    corpus_path = knowledge_base.rag_corpus_path()
+    if corpus_path is None:
+        return []
+    company_id = knowledge_base.company.company_id
     try:
-        return retrieve_article_context(message)
+        return retrieve_article_context(message, path=corpus_path)
     except FileNotFoundError:
-        logger.warning("rag article corpus not found; faq_question will clarify")
+        logger.warning("rag article corpus not found; faq_question will clarify company_id=%s", company_id)
         return []
     except ValueError as error:
-        logger.warning("rag article corpus invalid; faq_question will clarify error=%s", type(error).__name__)
+        logger.warning(
+            "rag article corpus invalid; faq_question will clarify company_id=%s error=%s", company_id, type(error).__name__
+        )
         return []
 
 
@@ -300,7 +306,10 @@ def _article_guidance_result_from_entry(
     # (не докурировали) — без него ниже остаётся только безликий шаблон "у нас обычно
     # рассматривают: X" без единого слова о содержании. РАГ-корпус уже содержит полный текст
     # каждой статьи по её URL — берём оттуда, раз куратор ничего не написал вручную.
-    candidate_excerpt = excerpt or (get_opening_excerpt_for_url(entry.url) or "")
+    candidate_excerpt = excerpt
+    corpus_path = knowledge_base.rag_corpus_path()
+    if not candidate_excerpt and corpus_path is not None:
+        candidate_excerpt = get_opening_excerpt_for_url(entry.url, path=corpus_path) or ""
     if candidate_excerpt:
         article_guidance_candidate = {
             "title": entry.title,
@@ -924,7 +933,7 @@ def _growth_removal_service_for_referral(normalized_message: str, knowledge_base
     # 2026-08-18: клиент подтвердил, что тема новообразований (родинки/папилломы/бородавки)
     # не настолько деликатная, чтобы прятать саму услугу удаления — но передачу оператору
     # на "родинк"/"новообраз" сохраняем как есть (см. MEDICAL_REFERRAL_KEYWORDS): в отличие
-    # от папиллом/бородавок (см. COSMETIC_CONCERN_SERVICE_MAP), тут может стоять вопрос
+    # от папиллом/бородавок (см. symptom_service_map.yaml клиента), тут может стоять вопрос
     # онкологической настороженности, решать заочно не должен ни бот, ни прямая продажа услуги.
     # Поэтому вместо ЗАМЕНЫ хэндофа — дополняем его видимой опцией услуги.
     if not contains_keyword(normalized_message, {"родинк", "новообраз"}):
@@ -2418,7 +2427,7 @@ def _analyze_message_core(
 
     if medical_requested:
         if not _has_hard_restricted_signal(normalized_message):
-            article_matches = _retrieve_article_context_safe(message)
+            article_matches = _retrieve_article_context_safe(message, knowledge_base)
             guidance_result = _cosmetic_article_guidance_result(
                 knowledge_base,
                 article_matches,
@@ -2802,7 +2811,7 @@ def _analyze_message_core(
             return _lab_test_result(knowledge_base, session, classifier_confidence)
 
         if contains_keyword(normalized_message, BODY_TOPIC_SIGNAL_KEYWORDS):
-            article_matches = _retrieve_article_context_safe(message)
+            article_matches = _retrieve_article_context_safe(message, knowledge_base)
             guidance_result = _cosmetic_article_guidance_result(
                 knowledge_base,
                 article_matches,
@@ -2861,7 +2870,7 @@ def _analyze_message_core(
         # погода...), спасать тут нечего: в отличие от "трихология" (нет в услугах, но есть
         # статья), тут не бывает легитимной статьи по теме — пропускаем RAG-спасалку целиком.
         if not contains_keyword(normalized_message, OFF_TOPIC_KEYWORDS):
-            article_matches = _retrieve_article_context_safe(message)
+            article_matches = _retrieve_article_context_safe(message, knowledge_base)
             if article_matches:
                 return PolicyResult(
                     action=PolicyAction.ANSWER,
@@ -2930,7 +2939,7 @@ def _analyze_message_core(
         # безусловный полный каталог — но только при уверенном совпадении (curated
         # trigger_phrase или 2+ значимых слова пересечения), иначе для честного "покажи все
         # услуги" каталог остаётся правильным ответом.
-        article_matches = _retrieve_article_context_safe(message)
+        article_matches = _retrieve_article_context_safe(message, knowledge_base)
         guidance_result = _cosmetic_article_guidance_result(
             knowledge_base,
             article_matches,
@@ -3044,7 +3053,7 @@ def _analyze_message_core(
         # Куратированная статья (человек уже проверил формулировку и подобрал услуги) —
         # более конкретный и информативный ответ, чем общий шаблон ниже. Пробуем её первой;
         # шаблон "обычно подходят: X, Y" — фолбэк для симптомов без готовой статьи.
-        article_matches = _retrieve_article_context_safe(message)
+        article_matches = _retrieve_article_context_safe(message, knowledge_base)
         guidance_result = _cosmetic_article_guidance_result(
             knowledge_base,
             article_matches,
@@ -3099,7 +3108,7 @@ def _analyze_message_core(
             return _lab_test_result(knowledge_base, session, classifier_confidence)
 
         article_query = f"{service.name} {message}" if service is not None else message
-        article_matches = _retrieve_article_context_safe(article_query)
+        article_matches = _retrieve_article_context_safe(article_query, knowledge_base)
 
         guidance_result = _cosmetic_article_guidance_result(
             knowledge_base,
@@ -3166,7 +3175,7 @@ def _analyze_message_core(
         if similar_result is not None:
             return similar_result
 
-        article_matches = _retrieve_article_context_safe(message)
+        article_matches = _retrieve_article_context_safe(message, knowledge_base)
         guidance_result = _cosmetic_article_guidance_result(
             knowledge_base,
             article_matches,

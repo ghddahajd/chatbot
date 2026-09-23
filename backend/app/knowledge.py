@@ -16,11 +16,13 @@ import yaml
 
 from . import config_overrides
 from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, QuickFaqItem, Service
+from .services.rag_search import rag_corpus_dir, rag_corpus_status
 
 
 logger = logging.getLogger(__name__)
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 KB_REQUIRED_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
+RAG_CORPUS_NONE = "none"
 PhrasebookValue = str | list[str]
 DEFAULT_WIDGET_FEATURES = {
     "operator": True,
@@ -624,6 +626,7 @@ class KnowledgeBase:
         config_payload: Optional[dict[str, object]] = None,
         article_service_map: Optional[dict[str, ArticleServiceMapEntry]] = None,
         quick_faq: Optional[list[QuickFaqItem]] = None,
+        symptom_service_map: Optional[dict[str, list[str]]] = None,
     ) -> None:
         self.company = company
         self.services = services
@@ -635,6 +638,7 @@ class KnowledgeBase:
         self.article_service_map = article_service_map or {}
         self.quick_faq = quick_faq or []
         self._quick_faq_by_id = {item.id: item for item in self.quick_faq}
+        self.symptom_service_map = symptom_service_map or {}
 
         self._services_by_id = {service.id: service for service in services}
         self._prices_by_service_id = {price.service_id: price for price in prices}
@@ -665,6 +669,7 @@ class KnowledgeBase:
         config_payload = config_payload or {}
         article_service_map = cls._load_article_service_map(data_dir)
         quick_faq = cls._load_quick_faq(data_dir)
+        symptom_service_map = cls._load_symptom_service_map(data_dir)
         domain_profile = _domain_profile_from_payload(company_payload)
         return cls(
             company=company,
@@ -675,7 +680,65 @@ class KnowledgeBase:
             config_payload=config_payload if isinstance(config_payload, dict) else {},
             article_service_map=article_service_map,
             quick_faq=quick_faq,
+            symptom_service_map=symptom_service_map,
         )
+
+    @property
+    def rag_corpus(self) -> Optional[str]:
+        """rag.corpus из config.yaml: None — не указан, "none" — статей нет, иначе путь к корпусу."""
+
+        rag = self.config_payload.get("rag")
+        if not isinstance(rag, dict) or "corpus" not in rag:
+            return None
+        value = str(rag.get("corpus") or "").strip()
+        return value if value and value.lower() != RAG_CORPUS_NONE else RAG_CORPUS_NONE
+
+    def rag_corpus_path(self) -> Optional[Path]:
+        """файл корпуса статей этого клиента; None — статей нет, чужой корпус не подставляется."""
+
+        if self.rag_corpus in (None, RAG_CORPUS_NONE):
+            return None
+        relative = Path(self.rag_corpus)
+        # путь только внутри папки корпусов: файл клиента не должен указывать на что угодно на сервере
+        if relative.is_absolute() or ".." in relative.parts:
+            return None
+        return rag_corpus_dir() / relative
+
+    def rag_status(self) -> dict[str, object]:
+        """состояние корпуса статей клиента для /health, preflight и проверки запуска."""
+
+        if self.rag_corpus is None:
+            return {"ok": False, "chunk_count": 0, "error": "not_declared", "path": None}
+        if self.rag_corpus == RAG_CORPUS_NONE:
+            return {"ok": True, "chunk_count": 0, "error": None, "path": None, "disabled": True}
+        path = self.rag_corpus_path()
+        if path is None:
+            return {"ok": False, "chunk_count": 0, "error": "invalid_path", "path": self.rag_corpus}
+        return rag_corpus_status(path)
+
+    @staticmethod
+    def _load_symptom_service_map(data_dir: Path) -> dict[str, list[str]]:
+        """фраза в сообщении → id услуг из symptom_service_map.yaml клиента, порядок сохраняется.
+        Нет файла или он битый — пусто: бот подбирает похожие услуги из прайса клиента сам."""
+
+        map_path = data_dir / "symptom_service_map.yaml"
+        if not map_path.exists():
+            return {}
+        try:
+            payload = yaml.safe_load(map_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            logger.warning("symptom_service_map.yaml invalid YAML, ignoring path=%s", map_path)
+            return {}
+        if not isinstance(payload, dict):
+            logger.warning("symptom_service_map.yaml must be a mapping, ignoring path=%s", map_path)
+            return {}
+        symptom_map: dict[str, list[str]] = {}
+        for phrase, service_ids in payload.items():
+            key = normalize_text(str(phrase))
+            ids = [str(item).strip() for item in service_ids if str(item).strip()] if isinstance(service_ids, list) else []
+            if key and ids:
+                symptom_map[key] = ids
+        return symptom_map
 
     @staticmethod
     def _load_quick_faq(data_dir: Path) -> list[QuickFaqItem]:

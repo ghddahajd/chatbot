@@ -220,6 +220,15 @@ def _client_summary(resolver: Any, company_id: str) -> dict[str, Any]:
     if not str(company.phone or "").strip():
         status = _worst([status, "degraded"])
         problems.append("нет телефона")
+    rag = kb.rag_status()
+    if rag.get("error"):
+        status = _worst([status, "degraded"])
+        problems.append("не указан rag.corpus" if rag["error"] == "not_declared" else f"корпус статей: {rag['error']}")
+    known_ids = {service.id for service in kb.services}
+    unknown_symptom_ids = sorted({sid for ids in kb.symptom_service_map.values() for sid in ids} - known_ids)
+    if unknown_symptom_ids:
+        status = _worst([status, "degraded"])
+        problems.append("в карте симптомов нет таких услуг: " + ", ".join(unknown_symptom_ids))
     open_now: bool | None = None
     try:
         open_now = is_currently_open(company.working_hours_schedule, company.timezone)
@@ -234,6 +243,8 @@ def _client_summary(resolver: Any, company_id: str) -> dict[str, Any]:
         "prices": len(kb.prices),
         "quick_faq": len(kb.quick_faq),
         "article_map": len(kb.article_service_map),
+        "rag": rag,
+        "symptom_map": len(kb.symptom_service_map),
         "phrasebook_keys": len(kb.phrasebook),
         "sensitive_topics": len(topics) if isinstance(topics, list) else 0,
         "domains": list(company.allowed_domains),

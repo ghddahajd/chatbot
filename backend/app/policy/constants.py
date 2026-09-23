@@ -1203,28 +1203,6 @@ LAB_TEST_KEYWORDS = {
     "анализ",
     "анализы",
 }
-# ID реального прайса rosh_import_demo (services.json) — раньше тут были ID из отставной
-# демо-заглушки rosh_demo (facial_cleansing/cosmetologist_consultation/biorevitalization),
-# которых в реальных данных клиента никогда не существовало: find_service_by_id всегда
-# возвращал None, сопоставление никогда не срабатывало, всё падало в общий fuzzy-фолбэк.
-COSMETIC_CONCERN_SERVICE_MAP = {
-    "акне": ["chistki_e744e513", "konsultacii_b8520924"],
-    "жирная кожа": ["chistki_e744e513", "konsultacii_b8520924"],
-    "прыщ": ["chistki_e744e513", "konsultacii_b8520924"],
-    "сальная кожа": ["chistki_e744e513", "konsultacii_b8520924"],
-    "поры": ["chistki_e744e513", "konsultacii_b8520924"],
-    "расширенные поры": ["chistki_e744e513", "konsultacii_b8520924"],
-    "черные точки": ["chistki_e744e513", "konsultacii_b8520924"],
-    "тусклый цвет": ["biorevitalizaciya_9d426f68", "konsultacii_b8520924"],
-    "тусклая кожа": ["biorevitalizaciya_9d426f68", "konsultacii_b8520924"],
-    "цвет лица": ["biorevitalizaciya_9d426f68", "konsultacii_b8520924"],
-    "неровный тон": ["konsultacii_b8520924", "chistki_e744e513"],
-    "морщин": ["botulinoterapiya_9d5734af", "biorevitalizaciya_9d426f68", "fillery_f2df3e74"],
-    "пигмент": ["fotolechenie_bbl_85e80491", "lazernaya_shlifovka_8965cb81", "pilingi_8dde1279"],
-    "папиллом": ["udalenie_novoobrazovanii_12634fed", "konsultacii_b8520924"],
-    "бородавк": ["udalenie_novoobrazovanii_12634fed", "konsultacii_b8520924"],
-    "шипиц": ["udalenie_novoobrazovanii_12634fed", "konsultacii_b8520924"],
-}
 GENERIC_PRICE_MESSAGES = {
     "хочу уточнить цену",
     "уточнить цену",

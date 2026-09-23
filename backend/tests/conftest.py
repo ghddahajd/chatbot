@@ -63,6 +63,10 @@ def _write_medical_config(path: Path) -> None:
     path.write_text(
         "\n".join(
             [
+                # тот же корпус РОШ, что до шага 5 подставлялся любому клиенту по умолчанию;
+                # раздел в начале: тесты дописывают строки в конец, под domain_profile
+                "rag:",
+                '  corpus: "normalized/rosh_articles/crawl/chunks.corpus.jsonl"',
                 "domain_profile:",
                 '  type: "medical"',
                 "  restricted_advice:",

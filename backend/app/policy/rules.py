@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from ..knowledge import KnowledgeBase, normalize_text
 from ..models import PolicyAction, PolicyReason, PolicyResult
-from .constants import COSMETIC_CONCERN_SERVICE_MAP, GENERIC_PRICE_MESSAGES
+from .constants import GENERIC_PRICE_MESSAGES
 from .extractors import inflect_city_prepositional
 from .quick_actions import services_summary
 
@@ -55,7 +55,7 @@ def similar_services_result(
 def cosmetic_concern_services(message: str, knowledge_base: KnowledgeBase) -> list[Any]:
     normalized_message = normalize_text(message)
     service_ids: list[str] = []
-    for keyword, mapped_service_ids in COSMETIC_CONCERN_SERVICE_MAP.items():
+    for keyword, mapped_service_ids in knowledge_base.symptom_service_map.items():
         if keyword in normalized_message:
             service_ids.extend(mapped_service_ids)
 

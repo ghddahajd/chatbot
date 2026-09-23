@@ -17,7 +17,7 @@ from .auth import OPERATOR_COOKIE_NAME, verify_operator_token
 from .config import get_settings
 from .login_panel import render_login_page, sanitize_next_path
 from .delivery import DeliveryService
-from .health_checks import collect_health_checks, overall_status
+from .health_checks import client_rag_statuses, collect_health_checks, overall_status, rag_index_check
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService, archive_old_leads
 from .llm import build_llm_client, get_system_prompt
@@ -25,7 +25,6 @@ from .logging_setup import configure_logging, log_event
 from .policy import analyze_message
 from .preflight import DEFAULT_OPERATOR_TOKEN, code_fingerprint
 from .rate_limit import RateLimiter
-from .services.rag_search import rag_corpus_status
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .routes import settings as settings_routes
 from .sessions import SessionStore, archive_session
@@ -151,23 +150,21 @@ async def lifespan(app: FastAPI):
     )
     app.state.knowledge_base_resolver.build_domain_index()
     app.state.knowledge_base = app.state.knowledge_base_resolver.get(settings.default_company_id)
-    app.state.rag_corpus_status = rag_corpus_status()
-    if app.state.rag_corpus_status["ok"]:
-        logger.info(
-            "rag corpus loaded path=%s chunks=%d",
-            app.state.rag_corpus_status["path"],
-            app.state.rag_corpus_status["chunk_count"],
-        )
-    else:
-        # Не падаем — бот всё ещё отвечает по услугам/ценам без статей, это деградация,
-        # не полная неработоспособность. Но раньше это узнавали только от клиента, теперь
-        # видно в логе при старте и в /health.
-        logger.warning(
-            "rag corpus MISSING or EMPTY path=%s error=%s — faq answers will degrade to "
-            "generic clarify, article guidance disabled",
-            app.state.rag_corpus_status["path"],
-            app.state.rag_corpus_status["error"],
-        )
+    # заодно прогревает кэш корпусов до первого сообщения; без статей бот отвечает дальше
+    # по услугам и ценам, поэтому только предупреждение
+    app.state.rag_corpus_statuses = client_rag_statuses(app.state.knowledge_base_resolver)
+    for rag_company_id, rag_status in app.state.rag_corpus_statuses.items():
+        if rag_status.get("disabled"):
+            logger.info("rag corpus company_id=%s disabled (rag.corpus: none)", rag_company_id)
+        elif rag_status["ok"]:
+            logger.info("rag corpus company_id=%s chunks=%d path=%s", rag_company_id, rag_status["chunk_count"], rag_status["path"])
+        else:
+            logger.warning(
+                "rag corpus company_id=%s error=%s path=%s — articles disabled for this client",
+                rag_company_id,
+                rag_status["error"],
+                rag_status["path"],
+            )
     app.state.session_store = SessionStore()
     snapshot_file = Path(settings.session_snapshot_file) if settings.session_snapshot_file else None
     if snapshot_file is not None:
@@ -299,7 +296,7 @@ async def lifespan(app: FastAPI):
             clients=len(client_ids),
             client_ids=",".join(client_ids),
             default_company=settings.default_company_id,
-            rag_chunks=app.state.rag_corpus_status.get("chunk_count", 0),
+            rag_chunks=rag_index_check(app.state.rag_corpus_statuses)["chunks_loaded"],
             telegram_enabled=bridge.enabled,
             telegram_mode=bridge.routing.mode,
             telegram_groups=len(bridge.routing.groups()),

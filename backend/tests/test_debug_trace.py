@@ -21,6 +21,13 @@ def _write_rag_chunks(path: Path) -> None:
     )
 
 
+def _use_rag_corpus(monkeypatch, knowledge_base, chunks_file: Path) -> None:
+    """корпус статей клиента → тестовый файл (rag.corpus считается от RAG_CORPUS_DIR)."""
+
+    monkeypatch.setenv("RAG_CORPUS_DIR", str(chunks_file.parent))
+    monkeypatch.setitem(knowledge_base.config_payload, "rag", {"corpus": chunks_file.name})
+
+
 def test_debug_trace_requires_operator_token(test_client) -> None:
     response = test_client.post(
         "/api/debug/trace",
@@ -54,7 +61,7 @@ def test_debug_trace_returns_decision_steps(test_client) -> None:
 def test_debug_trace_includes_rag_retrieval_matches(test_client, tmp_path: Path, monkeypatch) -> None:
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, test_client.app.state.knowledge_base_resolver.get("rosh_demo", fallback=False), chunks_file)
 
     async def fake_resolve_classification(*_args, **_kwargs):
         return {"intent": "faq_question", "service_id": None, "confidence": 0.9}
@@ -79,7 +86,7 @@ def test_debug_trace_does_not_trigger_rag_without_faq_intent(
 ) -> None:
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, test_client.app.state.knowledge_base_resolver.get("rosh_demo", fallback=False), chunks_file)
 
     response = test_client.post(
         "/api/debug/trace?token=demo-operator-token",

@@ -47,6 +47,13 @@ def _write_rag_chunks(path: Path) -> None:
     )
 
 
+def _use_rag_corpus(monkeypatch, knowledge_base, chunks_file: Path) -> None:
+    """корпус статей клиента → тестовый файл (rag.corpus считается от RAG_CORPUS_DIR)."""
+
+    monkeypatch.setenv("RAG_CORPUS_DIR", str(chunks_file.parent))
+    monkeypatch.setitem(knowledge_base.config_payload, "rag", {"corpus": chunks_file.name})
+
+
 def _copy_rosh_import_kb(resolver, managed_env, *, config_append: str = ""):
     source_dir = Path("backend/data/clients/rosh_import_demo")
     target_dir = managed_env["clients_dir"] / "rosh_import_demo"
@@ -1930,7 +1937,7 @@ def test_prompt_injection_declines_even_with_a_confident_rag_match(
     monkeypatch.setattr(
         policy_module,
         "_retrieve_article_context_safe",
-        lambda message: [
+        lambda message, knowledge_base: [
             {"title": "Не по теме", "url": "https://example.test/x", "snippet": "x", "score": 99.0}
         ],
     )
@@ -2389,7 +2396,7 @@ def test_faq_question_uses_article_context(
 ) -> None:
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "как проходит кольпоскопия",
@@ -2419,7 +2426,7 @@ def test_faq_question_ignores_single_generic_word_even_if_it_would_score(
 
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "кольпоскопия",
@@ -2446,7 +2453,7 @@ def test_off_topic_answers_from_article_when_confident_rag_match(
 
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "как проходит кольпоскопия",
@@ -2472,7 +2479,7 @@ def test_off_topic_still_declines_without_a_confident_rag_match(
 
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "какая сегодня погода на улице",
@@ -2500,7 +2507,7 @@ def test_off_topic_ignores_single_generic_word_even_if_it_would_score(
 
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     # "кольпоскопия" само по себе — единственное значимое слово, оно же заголовок статьи,
     # так что при прямом обращении к RAG получило бы уверенный score (тот же обход правила).
@@ -2549,7 +2556,7 @@ def test_faq_question_can_use_article_context_for_known_service(
         "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "как проходит чистка лица",
@@ -2573,7 +2580,7 @@ def test_faq_question_does_not_override_price_flow(
 ) -> None:
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "сколько стоит чистка лица",
@@ -2596,7 +2603,7 @@ def test_faq_question_clarifies_without_confident_article_context(
 ) -> None:
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "нерелевантный вопрос без совпадений",
@@ -2619,10 +2626,10 @@ def test_fact_guard_stays_before_faq_rag(
 ) -> None:
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
     source_dir = Path("backend/data/clients/rosh_import_demo")
     shutil.copytree(source_dir, managed_env["clients_dir"] / "rosh_import_demo")
     knowledge_base = resolver.get("rosh_import_demo", fallback=False)
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     result = analyze_message(
         "есть ботокс?",
@@ -3573,7 +3580,7 @@ def test_curated_entry_without_excerpt_falls_back_to_rag_corpus_text(
 
     chunks_file = tmp_path / "chunks.jsonl"
     _write_rag_chunks(chunks_file)
-    monkeypatch.setenv("RAG_CHUNKS_FILE", str(chunks_file))
+    _use_rag_corpus(monkeypatch, knowledge_base, chunks_file)
 
     service_id = knowledge_base.services[0].id
     knowledge_base.article_service_map = {

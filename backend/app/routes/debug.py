@@ -19,7 +19,7 @@ from ..policy.constants import DURATION_KEYWORDS, PRICE_KEYWORDS
 from ..policy.extractors import contains_keyword
 from ..policy.restricted import is_restricted_question
 from ..preflight import run_preflight
-from ..services.rag_search import default_rag_chunks_path, retrieve_article_context, search_rag_chunks
+from ..services.rag_search import retrieve_article_context, search_rag_chunks
 from ..validator import validate_article_guidance_response
 from .chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
@@ -45,6 +45,8 @@ class DebugTraceRequest(BaseModel):
 class RagSearchRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
+    # чей корпус искать; пусто — клиент по умолчанию
+    company_id: Optional[str] = None
 
 
 async def _final_answer_for_policy(
@@ -287,12 +289,16 @@ async def debug_trace(
     )
     if rag_triggered:
         rag_query = f"{service.name} {message}" if service is not None else message
-        try:
-            article_matches = retrieve_article_context(rag_query)
-        except FileNotFoundError:
-            rag_error = f"corpus_not_found: {default_rag_chunks_path()}"
-        except (json.JSONDecodeError, ValueError) as error:
-            rag_error = f"invalid_corpus: {type(error).__name__}"
+        corpus_path = knowledge_base.rag_corpus_path()
+        if corpus_path is None:
+            rag_error = f"no_corpus: rag.corpus={knowledge_base.rag_corpus}"
+        else:
+            try:
+                article_matches = retrieve_article_context(rag_query, path=corpus_path)
+            except FileNotFoundError:
+                rag_error = f"corpus_not_found: {corpus_path}"
+            except (json.JSONDecodeError, ValueError) as error:
+                rag_error = f"invalid_corpus: {type(error).__name__}"
     steps.append(
         {
             "step": "rag_retrieval",
@@ -481,15 +487,23 @@ async def debug_rag_search(
     if not query:
         raise HTTPException(status_code=400, detail="Query is empty")
 
+    company_id = payload.company_id or request.app.state.settings.default_company_id
     try:
-        return search_rag_chunks(query=query, top_k=payload.top_k)
+        knowledge_base = request.app.state.knowledge_base_resolver.get(company_id, fallback=False)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown company") from error
+    corpus_path = knowledge_base.rag_corpus_path()
+    if corpus_path is None:
+        raise HTTPException(
+            status_code=404, detail=f"У клиента {company_id} нет корпуса статей (rag.corpus={knowledge_base.rag_corpus})"
+        )
+
+    try:
+        return search_rag_chunks(query=query, top_k=payload.top_k, path=corpus_path)
     except FileNotFoundError as error:
         raise HTTPException(
             status_code=404,
-            detail=(
-                "RAG chunks corpus not found. Run crawl_article_batch.py first "
-                f"or set RAG_CHUNKS_FILE. Expected: {default_rag_chunks_path()}"
-            ),
+            detail=f"RAG chunks corpus not found for {company_id}. Expected: {corpus_path}",
         ) from error
     except (json.JSONDecodeError, ValueError) as error:
         raise HTTPException(status_code=500, detail=f"Invalid RAG chunks corpus: {error}") from error

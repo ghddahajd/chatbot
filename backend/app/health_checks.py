@@ -11,7 +11,6 @@ from typing import Any
 from fastapi import FastAPI
 
 from .llm.mock import MockLLMClient
-from .services.rag_search import rag_corpus_status
 
 
 def collect_health_checks(app: FastAPI) -> dict[str, dict[str, Any]]:
@@ -31,15 +30,7 @@ def collect_health_checks(app: FastAPI) -> dict[str, dict[str, Any]]:
         "detail": ", ".join(client_ids) if client_ids else "no client directories configured",
     }
 
-    corpus_status = getattr(app.state, "rag_corpus_status", None) or rag_corpus_status()
-    chunk_count = int(corpus_status.get("chunk_count") or 0)
-    if corpus_status.get("ok") and chunk_count > 0:
-        rag_status, rag_detail = "ok", f"{chunk_count} chunks loaded"
-    elif corpus_status.get("ok"):
-        rag_status, rag_detail = "degraded", "corpus loaded but empty"
-    else:
-        rag_status, rag_detail = "unavailable", str(corpus_status.get("error") or "not loaded")
-    checks["rag_index"] = {"status": rag_status, "chunks_loaded": chunk_count, "detail": rag_detail}
+    checks["rag_index"] = rag_index_check(client_rag_statuses(resolver))
 
     # Живой репро (аудит §2026-08-22): раньше сравнивали settings.llm_provider == "mock" —
     # строку конфига, не то, что реально построил build_llm_client(). Незнакомый provider
@@ -73,3 +64,49 @@ def overall_status(checks: dict[str, dict[str, Any]]) -> tuple[str, int]:
     if statuses - {"ok"}:
         return "degraded", 207
     return "ok", 200
+
+
+def client_rag_statuses(resolver: Any) -> dict[str, dict[str, Any]]:
+    """корпус статей по каждому клиенту: у каждого свой, из rag.corpus в его config.yaml."""
+
+    if resolver is None or not resolver.clients_data_dir.exists():
+        return {}
+    statuses: dict[str, dict[str, Any]] = {}
+    for company_id in sorted(item.name for item in resolver.clients_data_dir.iterdir() if item.is_dir()):
+        try:
+            statuses[company_id] = resolver.get(company_id, fallback=False).rag_status()
+        except Exception as error:  # noqa: BLE001 — один сломанный клиент не должен ронять проверку остальных
+            error_name = f"kb_load_failed: {type(error).__name__}"
+            statuses[company_id] = {"ok": False, "chunk_count": 0, "error": error_name, "path": None}
+    return statuses
+
+
+def rag_index_check(statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """сводка для /health: корпус пропал или битый — unavailable; пустой или не указан — degraded."""
+
+    # у rosh_import_demo и rosh_test один и тот же корпус — считаем его один раз
+    chunks_by_path = {
+        str(item["path"]): int(item.get("chunk_count") or 0)
+        for item in statuses.values()
+        if item.get("ok") and item.get("path")
+    }
+    problems: list[str] = []
+    severity = 0
+    for company_id, item in statuses.items():
+        error = item.get("error")
+        if not error:
+            continue
+        problems.append(f"{company_id}: {'не указан rag.corpus' if error == 'not_declared' else error}")
+        severity = max(severity, 1 if error in {"not_declared", "empty_corpus"} else 2)
+    if not statuses:
+        severity, problems = 2, ["нет клиентов"]
+    per_client = [
+        f"{company_id}: {'статей нет (none)' if item.get('disabled') else str(item['chunk_count']) + ' chunks'}"
+        for company_id, item in statuses.items()
+        if item.get("ok")
+    ]
+    return {
+        "status": ("ok", "degraded", "unavailable")[severity],
+        "chunks_loaded": sum(chunks_by_path.values()),
+        "detail": "; ".join(problems + per_client),
+    }

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import Request
 
+from ..editable_texts import button_renames
 from ..hours import is_currently_open
 from ..knowledge import KnowledgeBase
 from ..llm import MockLLMClient
@@ -115,6 +116,7 @@ def format_quick_actions(
     # когда физически некому ответить — та же кнопка "Оставить телефон", что клиент уже видит в
     # других местах, а не третья, специально для ночи придуманная формулировка.
     is_open = is_currently_open(company.working_hours_schedule, company.timezone)
+    renames = button_renames(getattr(knowledge_base, "config_payload", {}) or {})
 
     actions: list[QuickAction] = []
     seen_labels: set[str] = set()
@@ -137,6 +139,7 @@ def format_quick_actions(
         # Дедуп по итоговому лейблу — не спецкейс под конкретную пару кнопок, а общая защита:
         # если после подмены выше (или по любой другой причине) в одном ответе оказались две
         # кнопки с одинаковой подписью, показываем только первую вместо видимого дубля.
+        label = renames.get(label, label)
         if label.casefold() in seen_labels:
             continue
         seen_labels.add(label.casefold())

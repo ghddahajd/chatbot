@@ -362,6 +362,23 @@ def render_analytics_panel(
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-deep) 18%, transparent);
     }
     .settings-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; max-width: 420px; }
+    .settings-field input[type="number"] { font: inherit; font-size: 14px; padding: 9px 12px; border-radius: var(--field-radius); border: 1px solid var(--border); background: var(--bg); color: var(--text); width: 110px; }
+    .text-group { border: 1px solid var(--border-soft); border-radius: 10px; margin-bottom: 10px; }
+    .text-group > summary { cursor: pointer; padding: 11px 14px; font-weight: 700; font-size: 14px; list-style: none; }
+    .text-group > summary::-webkit-details-marker { display: none; }
+    .text-group > summary::before { content: "▸ "; color: var(--text-muted); }
+    .text-group[open] > summary::before { content: "▾ "; }
+    .text-group-count { color: var(--text-muted); font-weight: 500; margin-left: 6px; }
+    .text-item { padding: 12px 14px; border-top: 1px solid var(--border-soft); }
+    .text-item-head { display: flex; align-items: center; gap: 8px; }
+    .text-item-label { font-weight: 600; font-size: 13.5px; }
+    .text-badge { font-size: 11px; font-weight: 700; color: var(--accent-deep); background: var(--accent-soft, #e7f2ec); border-radius: 999px; padding: 1px 8px; }
+    .text-item-where { font-size: 12.5px; color: var(--text-muted); margin: 3px 0 8px; }
+    .text-variant { display: block; width: 100%; max-width: 680px; box-sizing: border-box; font: inherit; font-size: 13.5px; line-height: 1.45; padding: 8px 11px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); margin-bottom: 6px; resize: vertical; }
+    .text-variant:focus { outline: none; border-color: var(--accent-deep); }
+    .text-item-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+    .text-ph { color: var(--text-muted); }
+    .text-item-actions button { font: inherit; font-size: 12.5px; border: 1px solid var(--border); background: var(--bg); color: var(--text-secondary); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
     .settings-field label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
     .settings-checkbox {
       display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; cursor: pointer;
@@ -551,6 +568,10 @@ def render_analytics_panel(
           <label for="settingsWebsite">Сайт</label>
           <input type="text" id="settingsWebsite" />
         </div>
+        <div class="settings-field">
+          <label for="settingsPrivacyUrl">Ссылка на политику обработки данных</label>
+          <input type="text" id="settingsPrivacyUrl" placeholder="https://…" />
+        </div>
       </div>
       <div class="card">
         <div class="settings-card-header">
@@ -593,6 +614,22 @@ def render_analytics_panel(
           <input type="text" id="settingsHighlightColor" placeholder="#2E9E6B, пусто — без рамки" />
         </div>
         <label class="settings-checkbox"><input type="checkbox" id="settingsAiBadge" /> Показывать в шапке кнопку «с ИИ»</label>
+        <div class="settings-field">
+          <label for="settingsLauncherLabel">Надпись на кнопке чата</label>
+          <input type="text" id="settingsLauncherLabel" maxlength="30" placeholder="Задать вопрос" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsStatusOnline">Статус под заголовком</label>
+          <input type="text" id="settingsStatusOnline" maxlength="30" placeholder="на связи" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsInputPlaceholder">Подсказка в поле ввода</label>
+          <input type="text" id="settingsInputPlaceholder" maxlength="60" placeholder="Напишите вопрос…" />
+        </div>
+        <div class="settings-field">
+          <label for="settingsOperatorLabel">Подпись над ответами администратора</label>
+          <input type="text" id="settingsOperatorLabel" maxlength="30" placeholder="Специалист" />
+        </div>
       </div>
       <div class="card">
         <div class="settings-card-header">
@@ -613,6 +650,32 @@ def render_analytics_panel(
         <p class="card-hint">Имя обязательно, специализация и расписание — по желанию</p>
         <div id="doctorsList"></div>
         <button type="button" class="doctor-add-btn" id="doctorAddBtn">+ Добавить врача</button>
+      </div>
+      <div class="card">
+        <div class="settings-card-header">
+          <h2>Кнопки в ответах бота</h2>
+          <button type="button" class="settings-reset-btn" data-block="buttons" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
+        <p class="card-hint">Меняется только подпись — бот понимает нажатие как раньше. Пусто — как есть.</p>
+        <div id="buttonLabelsList"></div>
+      </div>
+      <div class="card">
+        <div class="settings-card-header">
+          <h2>Поведение</h2>
+          <button type="button" class="settings-reset-btn" data-block="behavior" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
+        <div class="settings-field">
+          <label for="settingsWaitMinutes">Через сколько минут предлагать «Администратор пока не подключился — продолжим с ботом?»</label>
+          <input type="number" id="settingsWaitMinutes" min="1" max="60" />
+        </div>
+      </div>
+      <div class="card">
+        <div class="settings-card-header">
+          <h2>Тексты бота</h2>
+          <button type="button" class="settings-reset-btn" data-block="texts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+        </div>
+        <p class="card-hint">Что бот отвечает в разных ситуациях. Несколько вариантов — бот чередует их. Медицинские, кризисные и ценовые тексты здесь не меняются.</p>
+        <div id="textsEditor"></div>
       </div>
       <div class="card">
         <button type="button" class="settings-save-btn" id="settingsSaveBtn">Сохранить</button>
@@ -1495,6 +1558,14 @@ def render_analytics_panel(
         document.getElementById("factSells").checked = Boolean(data.facts.sells_products);
         document.getElementById("factDoctorSchedule").checked = Boolean(data.facts.discloses_doctor_schedule);
         document.getElementById("doctorsList").innerHTML = renderDoctorsList(data.doctors);
+        document.getElementById("settingsPrivacyUrl").value = data.privacy_policy_url || "";
+        document.getElementById("settingsLauncherLabel").value = data.widget.launcher_label || "";
+        document.getElementById("settingsStatusOnline").value = data.widget.status_online || "";
+        document.getElementById("settingsInputPlaceholder").value = data.widget.input_placeholder || "";
+        document.getElementById("settingsOperatorLabel").value = data.widget.operator_label || "";
+        document.getElementById("settingsWaitMinutes").value = data.operator_wait_offer_minutes || 5;
+        document.getElementById("buttonLabelsList").innerHTML = renderButtonLabels(data.button_labels || []);
+        document.getElementById("textsEditor").innerHTML = renderTextsEditor(data.texts || []);
       } catch (error) {
         document.getElementById("hoursGrid").innerHTML = "";
         document.getElementById("doctorsList").innerHTML = "";
@@ -1525,7 +1596,15 @@ def render_analytics_panel(
           assistant_label: document.getElementById("settingsAssistantLabel").value.trim() || "Ассистент",
           ai_badge: document.getElementById("settingsAiBadge").checked ? "show" : "",
           booking_highlight_color: document.getElementById("settingsHighlightColor").value.trim(),
+          launcher_label: document.getElementById("settingsLauncherLabel").value.trim() || "Задать вопрос",
+          status_online: document.getElementById("settingsStatusOnline").value.trim() || "на связи",
+          input_placeholder: document.getElementById("settingsInputPlaceholder").value.trim() || "Напишите вопрос…",
+          operator_label: document.getElementById("settingsOperatorLabel").value.trim() || "Специалист",
         },
+        privacy_policy_url: document.getElementById("settingsPrivacyUrl").value.trim(),
+        button_labels: collectButtonLabels(),
+        operator_wait_offer_minutes: parseInt(document.getElementById("settingsWaitMinutes").value, 10) || 5,
+        texts: collectTexts(),
         facts: {
           oms: document.getElementById("factOms").checked,
           dms: document.getElementById("factDms").checked,
@@ -1558,6 +1637,71 @@ def render_analytics_panel(
       } finally {
         button.disabled = false;
       }
+    }
+
+    // «Тексты бота»: по умолчанию — то, что задано в данных клиента или в коде; хранится только отличие
+    const textDefaults = {};
+
+    function renderTextsEditor(groups) {
+      return groups.map((group) => {
+        const changed = group.items.filter((item) => item.customized).length;
+        const items = group.items.map((item) => {
+          textDefaults[item.key] = item.default;
+          const variants = (item.value.length ? item.value : [""]).map(
+            (text) => `<textarea class="text-variant" rows="2">${escapeHtml(text)}</textarea>`
+          ).join("");
+          const hint = item.placeholders.length
+            ? `<span class="text-ph">Можно подставить: ${item.placeholders.map((name) => "{" + escapeHtml(name) + "}").join(", ")}</span>` : "";
+          return `
+            <div class="text-item" data-key="${escapeHtml(item.key)}">
+              <div class="text-item-head">
+                <span class="text-item-label">${escapeHtml(item.label)}</span>
+                ${item.customized ? '<span class="text-badge">изменён</span>' : ""}
+              </div>
+              <div class="text-item-where">${escapeHtml(item.where)}</div>
+              <div class="text-variants">${variants}</div>
+              <div class="text-item-actions">
+                ${hint}
+                <button type="button" class="text-add-variant"${item.value.length >= 3 ? " hidden" : ""}>+ вариант</button>
+                <button type="button" class="text-reset">Вернуть по умолчанию</button>
+              </div>
+            </div>
+          `;
+        }).join("");
+        return `
+          <details class="text-group">
+            <summary>${escapeHtml(group.title)}<span class="text-group-count">${group.items.length}${changed ? " · изменено: " + changed : ""}</span></summary>
+            ${items}
+          </details>
+        `;
+      }).join("");
+    }
+
+    function collectTexts() {
+      const texts = {};
+      document.querySelectorAll("#textsEditor .text-item").forEach((item) => {
+        texts[item.dataset.key] = Array.from(item.querySelectorAll(".text-variant"))
+          .map((area) => area.value.trim())
+          .filter(Boolean);
+      });
+      return texts;
+    }
+
+    function renderButtonLabels(buttons) {
+      return buttons.map((button) => `
+        <div class="settings-field">
+          <label>«${escapeHtml(button.original)}»</label>
+          <input type="text" class="button-label-input" data-original="${escapeHtml(button.original)}" maxlength="30" placeholder="${escapeHtml(button.original)}" value="${escapeHtml(button.label)}" />
+        </div>
+      `).join("");
+    }
+
+    function collectButtonLabels() {
+      const labels = {};
+      document.querySelectorAll("#buttonLabelsList .button-label-input").forEach((input) => {
+        labels[input.dataset.original] = input.value.trim();
+      });
+      return labels;
     }
 
     async function resetSettingsBlock(block, button) {
@@ -1664,6 +1808,19 @@ def render_analytics_panel(
     document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
     document.querySelectorAll(".settings-reset-btn").forEach((btn) => {
       btn.addEventListener("click", () => resetSettingsBlock(btn.dataset.block, btn));
+    });
+    document.getElementById("textsEditor").addEventListener("click", (event) => {
+      const item = event.target.closest(".text-item");
+      if (!item) return;
+      const variants = item.querySelector(".text-variants");
+      if (event.target.closest(".text-add-variant")) {
+        variants.insertAdjacentHTML("beforeend", '<textarea class="text-variant" rows="2"></textarea>');
+        if (variants.children.length >= 3) event.target.closest(".text-add-variant").hidden = true;
+      } else if (event.target.closest(".text-reset")) {
+        const defaults = textDefaults[item.dataset.key] || [""];
+        variants.innerHTML = defaults.map((text) => `<textarea class="text-variant" rows="2">${escapeHtml(text)}</textarea>`).join("");
+        item.querySelector(".text-add-variant").hidden = defaults.length >= 3;
+      }
     });
     document.querySelectorAll(".filter-btn").forEach((btn) => {
       btn.addEventListener("click", () => {

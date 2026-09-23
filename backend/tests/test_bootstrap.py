@@ -120,6 +120,10 @@ def test_widget_config_from_client_config(test_client, managed_env) -> None:
         "assistant_label": "Ассистент",
         "ai_badge": "",
         "booking_highlight_color": "",
+        "launcher_label": "Задать вопрос",
+        "status_online": "на связи",
+        "input_placeholder": "Напишите вопрос…",
+        "operator_label": "Специалист",
     }
 
 

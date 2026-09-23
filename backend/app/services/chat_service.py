@@ -34,6 +34,7 @@ from ..policy.constants import (
     PHONE_PATTERN,
 )
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
+from ..editable_texts import operator_wait_offer_minutes
 from ..utils.page_path import normalize_page
 from ..routes.chat_utils import (
     CONSULTATION_RISK_RESTRICTED,
@@ -1505,7 +1506,8 @@ class ChatService:
             elif (
                 not session.telegram_claimed_by
                 and not session.operator_return_offered
-                and (self._minutes_since_handoff(session) or 0) >= 5
+                and (self._minutes_since_handoff(session) or 0)
+                >= operator_wait_offer_minutes(knowledge_base.config_payload)
             ):
                 # Живой баг (ручное тестирование пользователем, 2026-08-26): если оператор не
                 # подключился 5+ минут, клиент раньше просто застревал без выхода. Оффер —

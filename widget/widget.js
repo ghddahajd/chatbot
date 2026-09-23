@@ -1223,6 +1223,10 @@
           assistant_label: "Ассистент",
           ai_badge: "",
           booking_highlight_color: "",
+          launcher_label: "Задать вопрос",
+          status_online: "на связи",
+          input_placeholder: "Напишите вопрос…",
+          operator_label: "Специалист",
         },
       };
       this.shadow = this.attachShadow({ mode: "closed" });
@@ -1782,6 +1786,8 @@
 
       this.el.headerName.textContent = c.header_title;
       this.el.aiBadge.style.display = c.ai_badge === "show" ? "" : "none";
+      const launcherLabel = this.$(".launcher-label");
+      if (launcherLabel) launcherLabel.textContent = c.launcher_label;
       this.applyBookingHighlight();
       this.el.shell.classList.toggle("pos-left", c.position === "bottom-left");
     }
@@ -1911,7 +1917,7 @@
         label.className = "msg-label";
         const cfg = this.state.widgetConfig;
         if (role === "assistant") label.textContent = cfg.avatar_emoji + " " + cfg.assistant_label;
-        else if (role === "operator") label.textContent = "Специалист";
+        else if (role === "operator") label.textContent = cfg.operator_label;
         else if (role === "user") label.textContent = "";
         if (label.textContent) article.appendChild(label);
       }
@@ -1980,15 +1986,16 @@
     setStatus(status) {
       this.state.status = status;
       const dotClass = { AI_ACTIVE:"", WAITING_OPERATOR:"waiting", HUMAN_ACTIVE:"human", CLOSED:"closed", UNAVAILABLE:"unavailable" };
+      const cfg = this.state.widgetConfig;
       const labels = {
-        AI_ACTIVE: "на связи",
+        AI_ACTIVE: cfg.status_online,
         WAITING_OPERATOR: "ожидаем специалиста",
         HUMAN_ACTIVE: "специалист в чате",
         CLOSED: "диалог завершён",
         UNAVAILABLE: "недоступен",
       };
       const placeholders = {
-        AI_ACTIVE: "Напишите вопрос…",
+        AI_ACTIVE: cfg.input_placeholder,
         WAITING_OPERATOR: "Добавьте детали…",
         HUMAN_ACTIVE: "Напишите…",
         CLOSED: "",

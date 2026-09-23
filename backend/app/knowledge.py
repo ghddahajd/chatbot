@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import yaml
 
 from . import config_overrides
+from .editable_texts import EDITABLE_TEXTS
 from .models import ArticleServiceMapEntry, CompanyConfig, PriceEntry, QuickFaqItem, Service
 
 
@@ -41,6 +42,10 @@ DEFAULT_WIDGET_CONFIG = {
     "ai_badge": "",
     # рамка карточки «Записаться на приём» на стартовом экране, #RGB или #RRGGBB; пусто — без рамки
     "booking_highlight_color": "",
+    "launcher_label": "Задать вопрос",
+    "status_online": "на связи",
+    "input_placeholder": "Напишите вопрос…",
+    "operator_label": "Специалист",
 }
 HEX_COLOR_PATTERN = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
 # для этих полей пустая строка — осмысленное «выключить», а не «не задано»
@@ -1123,6 +1128,20 @@ class KnowledgeBaseResolver:
         return _domain_profile_from_payload(payload)
 
     def phrasebook(self, company_id: str) -> dict[str, PhrasebookValue]:
+        """фразы клиента + то, что клиника поменяла во вкладке «Настройки» (только тексты из EDITABLE_TEXTS)."""
+
+        phrasebook = self.base_phrasebook(company_id)
+        if self.overrides_dir is None:
+            return phrasebook
+        texts = config_overrides.load_overrides(self.overrides_dir, company_id).get("texts")
+        if isinstance(texts, dict):
+            for key, value in texts.items():
+                normalized_value = _normalize_phrasebook_value(value)
+                if key in EDITABLE_TEXTS and key in phrasebook and normalized_value is not None:
+                    phrasebook[key] = normalized_value
+        return phrasebook
+
+    def base_phrasebook(self, company_id: str) -> dict[str, PhrasebookValue]:
         """возвращает user-facing фразы клиента с нейтральными fallback-значениями."""
 
         phrasebook = _default_phrasebook()

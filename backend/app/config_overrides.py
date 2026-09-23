@@ -167,6 +167,8 @@ def apply_company_overrides(company: Any, override: dict[str, Any]) -> None:
         company.telegram_url = str(override["telegram_url"])
     if "website_url" in override:
         company.website_url = str(override["website_url"])
+    if "privacy_policy_url" in override:
+        company.privacy_policy_url = str(override["privacy_policy_url"])
     if "working_hours_schedule" in override:
         schedule = {
             day: (DaySchedule(**value) if value is not None else None)
@@ -199,6 +201,12 @@ def apply_config_payload_overrides(config_payload: dict[str, Any], override: dic
         clinic_info = config_payload.setdefault("clinic_info", {})
         if isinstance(clinic_info, dict):
             clinic_info["doctors"] = override["doctors"]
+    if "button_labels" in override:
+        config_payload["button_labels"] = override["button_labels"]
+    if "operator" in override:
+        operator = config_payload.setdefault("operator", {})
+        if isinstance(operator, dict):
+            operator.update(override["operator"])
 
 
 _MISSING = object()
@@ -244,10 +252,14 @@ _RESET_BLOCKS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("company", "address"),
         ("company", "telegram_url"),
         ("company", "website_url"),
+        ("company", "privacy_policy_url"),
     ),
     "widget": (("widget",),),
     "facts": (("facts",),),
     "doctors": (("doctors",),),
+    "texts": (("texts",),),
+    "buttons": (("button_labels",),),
+    "behavior": (("operator",),),
 }
 
 

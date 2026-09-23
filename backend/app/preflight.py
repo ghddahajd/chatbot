@@ -667,6 +667,11 @@ async def check_telegram(app: FastAPI, *, include_network: bool) -> dict[str, An
     if failures["last_24h"]:
         status = _worst([status, "degraded"])
         problems.append(f"ошибок отправки за сутки: {failures['last_24h']}")
+    pending = bridge.pending_count() if hasattr(bridge, "pending_count") else 0
+    extra["pending_cards"] = pending
+    if pending:
+        status = _worst([status, "degraded"])
+        problems.append(f"в очереди на досылку: {pending} карт.")
     poll = _poll_status(bridge)
     if poll is not None:
         extra["polling"] = {"status": poll["status"], **poll["info"]}

@@ -16,9 +16,12 @@ tasks/CODEX_TELEGRAM_TOPICS_BRIDGE_PLAN.md.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -51,6 +54,12 @@ TOPIC_TYPE_EMOJI = {
 }
 TOPIC_TYPE_EMOJI_DEFAULT = "🟢"
 HTTP_TIMEOUT_SECONDS = 40.0
+# клиент ждёт ответа на «позовите оператора» — не держим его дольше ~10 секунд (2 попытки)
+FAST_SEND_TIMEOUT_SECONDS = 5.0
+PENDING_RESEND_INTERVAL_SECONDS = 60.0
+# старше суток — номер уже неактуален для «перезвоните», только в журнал сбоев
+PENDING_MAX_AGE = timedelta(hours=24)
+PENDING_TIMEZONE = ZoneInfo("Europe/Moscow")
 _MAX_RATE_LIMIT_RETRIES = 3
 # Живой баг (ручное тестирование пользователем, 2026-08-26): любая ошибка КРОМЕ 429 (сетевой
 # сбой, 409 Conflict от параллельного инстанса, 5xx) раньше не ретраилась вообще — одна
@@ -60,6 +69,22 @@ _MAX_RATE_LIMIT_RETRIES = 3
 # ловит как раз такие переходные сбои, не отправляя карточку с опозданием в час/день.
 _MAX_TRANSIENT_RETRIES = 2
 _TRANSIENT_RETRY_DELAY_SECONDS = 2.0
+
+
+def _parse_iso(value: str) -> datetime | None:
+    """время из очереди: наивное = UTC (так его пишет delivery._utcnow)."""
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _rewrite_jsonl(path: Path, entries: list[dict[str, Any]]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _telegram_retry_after(data: dict[str, Any]) -> float | None:
@@ -148,6 +173,7 @@ class TelegramBridgeService:
         ws_manager: Any,
         clients_topic_id: str = "",
         failures_file: Path | None = None,
+        pending_file: Path | None = None,
         proxy_url: str = "",
         analytics_service: Any = None,
     ) -> None:
@@ -157,6 +183,9 @@ class TelegramBridgeService:
         self.ws_manager = ws_manager
         self.clients_topic_id = clients_topic_id
         self.failures_file = failures_file
+        # карточки, которые не ушли (Telegram недоступен) — досылаются фоном, см. resend_pending_cards
+        self.pending_file = pending_file
+        self._pending_lock = asyncio.Lock()
         # Опционально (None в части тестов) — используется для operator_claimed/operator_closed
         # событий, см. _track_operator_event. Аналитика "по манагерам" (в разработке,
         # 2026-08-27) без этого не имеет источника данных — до сих пор telegram_claimed_by жил
@@ -270,7 +299,9 @@ class TelegramBridgeService:
     def enabled(self) -> bool:
         return bool(self.bot_token and self.group_chat_id)
 
-    async def _call(self, method: str, **params: Any) -> dict[str, Any]:
+    async def _call(
+        self, method: str, *, _http_timeout: float | None = None, _max_retries: int | None = None, **params: Any
+    ) -> dict[str, Any]:
         """Telegram лимитирует примерно 1 сообщение/сек в один и тот же чат — все карточки
         очереди операторов идут в одну группу, так что под конкурентной нагрузкой 429 ("Too
         Many Requests") — ожидаемый случай, не редкость. Раньше он тихо логировался и
@@ -285,13 +316,14 @@ class TelegramBridgeService:
         data: dict[str, Any] = {}
         rate_limit_attempt = 0
         transient_attempt = 0
+        max_transient_retries = _MAX_TRANSIENT_RETRIES if _max_retries is None else _max_retries
         while True:
             try:
-                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, proxy=self.proxy_url) as client:
+                async with httpx.AsyncClient(timeout=_http_timeout or HTTP_TIMEOUT_SECONDS, proxy=self.proxy_url) as client:
                     response = await client.post(f"{self._api_base}/{method}", json=params)
                     data = response.json()
             except httpx.HTTPError as error:
-                if transient_attempt >= _MAX_TRANSIENT_RETRIES:
+                if transient_attempt >= max_transient_retries:
                     logger.warning(
                         "telegram_bridge network_error method=%s error=%s attempt=%s/%s",
                         method,
@@ -327,7 +359,7 @@ class TelegramBridgeService:
                 await asyncio.sleep(retry_after)
                 continue
 
-            if retry_after is None and transient_attempt < _MAX_TRANSIENT_RETRIES:
+            if retry_after is None and transient_attempt < max_transient_retries:
                 logger.warning(
                     "telegram_bridge api_error_retry method=%s description=%s attempt=%s/%s",
                     method,
@@ -399,12 +431,17 @@ class TelegramBridgeService:
         reason: str,
         last_message: str,
         client_label: str,
-    ) -> None:
+        fast: bool = False,
+        is_lead: bool = False,
+    ) -> bool:
         """Карточка в General — очередь входящих, ждущих оператора. Тема сессии создаётся
-        только при клейме (_handle_callback_query), не здесь."""
+        только при клейме (_handle_callback_query), не здесь.
+
+        fast — клиент ждёт ответа прямо сейчас: не дольше ~10 секунд вместо минут при зависшей сети.
+        Возвращает, ушла ли карточка; не ушла — ставится в очередь досылки."""
 
         if not self.enabled:
-            return
+            return False
         card_text = (
             f"{reason} — *{_escape_markdown(client_label)}*\n\n"
             f"💬 \"{_escape_markdown(last_message)}\"\n\n"
@@ -421,16 +458,27 @@ class TelegramBridgeService:
             text=card_text,
             parse_mode="Markdown",
             reply_markup=keyboard,
+            _http_timeout=FAST_SEND_TIMEOUT_SECONDS if fast else None,
+            _max_retries=1 if fast else None,
         )
-        if not data.get("ok"):
-            self._record_failure(kind="operator_queue_card", session_id=session_id, data=data)
+        if data.get("ok"):
+            return True
+        self._record_failure(kind="operator_queue_card", session_id=session_id, data=data)
+        await self._enqueue_pending(
+            kind="lead" if is_lead else "operator_request",
+            session_id=session_id,
+            text=f"{reason} — *{_escape_markdown(client_label)}*\n\n💬 \"{_escape_markdown(last_message)}\"",
+            client_label=client_label,
+            last_message=last_message,
+        )
+        return False
 
-    async def post_client_lead_card(self, card_text: str, *, session_id: str = "") -> None:
+    async def post_client_lead_card(self, card_text: str, *, session_id: str = "") -> bool:
         """Карточка в тему "Клиенты" — лид/запись без прямой необходимости в операторе.
-        Без кнопки, без своей темы — просто лог."""
+        Без кнопки, без своей темы — просто лог. Не ушла — в очередь досылки."""
 
         if not self.enabled or not self.clients_topic_id:
-            return
+            return False
         data = await self._call(
             "sendMessage",
             chat_id=self.group_chat_id,
@@ -438,8 +486,84 @@ class TelegramBridgeService:
             text=card_text,
             parse_mode="Markdown",
         )
-        if not data.get("ok"):
-            self._record_failure(kind="client_lead_card", session_id=session_id or None, data=data)
+        if data.get("ok"):
+            return True
+        self._record_failure(kind="client_lead_card", session_id=session_id or None, data=data)
+        await self._enqueue_pending(kind="lead", session_id=session_id, text=card_text)
+        return False
+
+    async def _enqueue_pending(self, *, kind: str, session_id: str, text: str, **extra: str) -> None:
+        if self.pending_file is None:
+            return
+        entry = {"id": uuid.uuid4().hex, "kind": kind, "session_id": session_id, "created_at": _iso(_utcnow()), "text": text, **extra}
+        async with self._pending_lock:
+            append_jsonl(self.pending_file, entry)
+
+    def pending_count(self) -> int:
+        return len(read_jsonl(self.pending_file)) if self.pending_file is not None else 0
+
+    async def _late_card_text(self, entry: dict[str, Any]) -> str | None:
+        """текст досылаемой карточки или None, если она уже не нужна."""
+
+        sent_at = _parse_iso(str(entry.get("created_at") or ""))
+        when = sent_at.astimezone(PENDING_TIMEZONE).strftime("%d.%m %H:%M") if sent_at else "—"
+        header = f"⏳ Доставлено с опозданием — не было связи с Telegram. Запрос от {when} МСК"
+        if entry.get("kind") == "lead":
+            return f"{header}\n\n{entry.get('text') or ''}"
+        session = await self.session_store.get(str(entry.get("session_id") or ""))
+        if session is not None and session.lead_requested:
+            return None  # человек оставил телефон — его заявку и так дошлём отдельной карточкой
+        return (
+            f"{header}\n\n📞 Пропущенный запрос оператора — *{_escape_markdown(str(entry.get('client_label') or ''))}*\n"
+            f"💬 \"{_escape_markdown(str(entry.get('last_message') or ''))}\"\n"
+            f"Контакт не оставил · сессия #{str(entry.get('session_id') or '')[:8]}"
+        )
+
+    async def resend_pending_cards(self) -> int:
+        """одна попытка дослать очередь; первый же сбой — ждём следующего круга, не долбим лежащий Telegram."""
+
+        if self.pending_file is None or not self.enabled:
+            return 0
+        async with self._pending_lock:
+            entries = read_jsonl(self.pending_file)
+            if not entries:
+                return 0
+            sent = 0
+            remaining: list[dict[str, Any]] = []
+            now = datetime.now(timezone.utc)
+            blocked = False
+            for entry in entries:
+                sent_at = _parse_iso(str(entry.get("created_at") or ""))
+                if sent_at is None or now - sent_at > PENDING_MAX_AGE:
+                    self._record_failure(kind=f"pending_expired:{entry.get('kind')}", session_id=entry.get("session_id"), data={})
+                    continue
+                if blocked:
+                    remaining.append(entry)
+                    continue
+                text = await self._late_card_text(entry)
+                if text is None:
+                    continue
+                params: dict[str, Any] = {"chat_id": self.group_chat_id, "text": text, "parse_mode": "Markdown"}
+                if self.clients_topic_id:
+                    params["message_thread_id"] = int(self.clients_topic_id)
+                data = await self._call("sendMessage", _max_retries=0, **params)
+                if data.get("ok"):
+                    sent += 1
+                else:
+                    blocked = True
+                    remaining.append(entry)
+            _rewrite_jsonl(self.pending_file, remaining)
+        if sent:
+            log_event(logger, logging.INFO, "telegram_pending_resent", sent=sent, left=len(remaining))
+        return sent
+
+    async def run_pending_resend_loop(self, interval_seconds: float = PENDING_RESEND_INTERVAL_SECONDS) -> None:
+        while True:
+            try:
+                await self.resend_pending_cards()
+            except Exception as error:  # noqa: BLE001 — фоновая досылка не должна умирать от одного сбоя
+                logger.warning("telegram_bridge pending resend failed error=%s", type(error).__name__)
+            await asyncio.sleep(interval_seconds)
 
     async def forward_client_message(self, session_id: str, text: str) -> None:
         """Пересылает новое сообщение клиента в уже существующую тему сессии (если есть)."""

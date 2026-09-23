@@ -2045,7 +2045,7 @@ class _FakeTelegramBridge:
     async def forward_client_message(self, session_id: str, text: str) -> None:
         self.forwarded.append((session_id, text))
 
-    async def post_operator_queue_card(self, *, session_id, reason, last_message, client_label):
+    async def post_operator_queue_card(self, *, session_id, reason, last_message, client_label, **_kwargs):
         self.queue_cards.append(
             {
                 "session_id": session_id,

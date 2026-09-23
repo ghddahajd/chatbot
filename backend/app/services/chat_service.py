@@ -1040,7 +1040,10 @@ class ChatService:
 
         return None
 
-    async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> None:
+    async def _enqueue_operator_requested(self, *, company_id: str, session_id: str, message: str) -> bool | None:
+        """True/False — ушла ли карточка оператору в Telegram; None — Telegram не подключён или
+        тема уже есть (тогда отправлять было нечего)."""
+
         delivery_service = getattr(self.request.app.state, "delivery_service", None)
         if delivery_service is not None:
             try:
@@ -1063,17 +1066,18 @@ class ChatService:
 
         bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
         if bridge is None or not bridge.enabled:
-            return
+            return None
         try:
             session = await self.request.app.state.session_store.get(session_id)
             if session is not None and session.telegram_topic_id is not None:
-                return  # тема уже есть (например, повторный запрос) — не дублируем карточку
+                return None  # тема уже есть (например, повторный запрос) — не дублируем карточку
             client_label = client_label_for_session(session) if session is not None else session_id[:8]
-            await bridge.post_operator_queue_card(
+            return await bridge.post_operator_queue_card(
                 session_id=session_id,
                 reason="⚡️ Запросил оператора",
                 last_message=message,
                 client_label=client_label,
+                fast=True,
             )
         except Exception as error:
             logger.warning(
@@ -1081,6 +1085,23 @@ class ChatService:
                 session_id,
                 type(error).__name__,
             )
+            return False
+
+    async def _operator_unreachable(self, session_store, session, knowledge_base) -> tuple[str, list[str]]:
+        """карточка оператору не ушла (нет связи с Telegram): не делаем вид, что передали, —
+        просим телефон; он станет срочной заявкой, а карточку мост дошлёт, когда связь вернётся."""
+
+        await session_store.set_status(session.session_id, SessionStatus.AI_ACTIVE)
+        await session_store.set_pending_action(session.session_id, PendingAction.COLLECT_CONTACT.value)
+        await session_store.update_contact_draft(session.session_id, metadata=self._lead_context_metadata(session))
+        answer = self._phrase(
+            "operator_unreachable",
+            "Не получилось сразу связаться с менеджером. Оставьте, пожалуйста, номер телефона — перезвоним, как только сможем.",
+        )
+        phone = str(knowledge_base.company.phone or "").strip()
+        if phone:
+            answer = f"{answer} Или позвоните нам: {phone}."
+        return answer, ["Написать в Telegram"]
 
     async def maybe_capture_human_active_lead(self, session, message: str) -> None:
         """Тихая фиксация лида, когда бот не отвечает по содержанию — оператор уже в чате
@@ -1177,6 +1198,7 @@ class ChatService:
                     reason=reason,
                     last_message=lead.summary,
                     client_label=client_label,
+                    is_lead=True,
                 )
             else:
                 # Живой баг (ручное тестирование пользователем, 2026-08-26): короткий id
@@ -1694,19 +1716,23 @@ class ChatService:
             else:
                 await session_store.set_operator_requested(session.session_id, True)
                 await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
-                await self._enqueue_operator_requested(
+                delivered = await self._enqueue_operator_requested(
                     company_id=session.company_id,
                     session_id=session.session_id,
                     message=message,
                 )
-                answer = str(
-                    policy_result.safe_context.get("handoff_message")
-                    or policy_result.safe_context.get("message_to_user")
-                    or self._phrase(
-                        "handoff_message",
-                        "Передаю диалог менеджеру. Он увидит историю переписки.",
+                if delivered is False:
+                    answer, response_quick_actions = await self._operator_unreachable(session_store, session, knowledge_base)
+                    response_action = PolicyAction.ASK_CONTACT
+                else:
+                    answer = str(
+                        policy_result.safe_context.get("handoff_message")
+                        or policy_result.safe_context.get("message_to_user")
+                        or self._phrase(
+                            "handoff_message",
+                            "Передаю диалог менеджеру. Он увидит историю переписки.",
+                        )
                     )
-                )
         elif policy_result.action == PolicyAction.CLARIFY:
             direct_clarify_reasons = {
                 PolicyReason.OPERATOR_REQUESTED,
@@ -1795,14 +1821,20 @@ class ChatService:
                     )
                     await session_store.set_operator_requested(session.session_id, True)
                     await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
-                    await self._enqueue_operator_requested(
+                    delivered = await self._enqueue_operator_requested(
                         company_id=session.company_id,
                         session_id=session.session_id,
                         message=message,
                     )
-                    answer = await safe_restricted_handoff(request, message)
-                    response_action = PolicyAction.TRANSFER_OPERATOR
-                    response_quick_actions = ["Оставить телефон"]
+                    if delivered is False:
+                        answer, response_quick_actions = await self._operator_unreachable(
+                            session_store, session, knowledge_base
+                        )
+                        response_action = PolicyAction.ASK_CONTACT
+                    else:
+                        answer = await safe_restricted_handoff(request, message)
+                        response_action = PolicyAction.TRANSFER_OPERATOR
+                        response_quick_actions = ["Оставить телефон"]
             else:
                 answer = await safe_complete(
                     request,

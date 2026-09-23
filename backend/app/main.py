@@ -203,6 +203,7 @@ async def lifespan(app: FastAPI):
         ws_manager=app.state.ws_manager,
         clients_topic_id=settings.telegram_clients_topic_id,
         failures_file=settings.telegram_bridge_failures_file,
+        pending_file=settings.telegram_pending_cards_file,
         proxy_url=settings.telegram_proxy_url,
         analytics_service=app.state.analytics_service,
     )
@@ -230,8 +231,10 @@ async def lifespan(app: FastAPI):
             )
         )
     telegram_bridge_task = None
+    telegram_resend_task = None
     if settings.telegram_bridge_enabled:
         telegram_bridge_task = asyncio.create_task(app.state.telegram_bridge_service.run_polling_loop())
+        telegram_resend_task = asyncio.create_task(app.state.telegram_bridge_service.run_pending_resend_loop())
     leads_archive_task = None
     if settings.leads_archive_enabled:
         leads_archive_task = asyncio.create_task(
@@ -261,6 +264,7 @@ async def lifespan(app: FastAPI):
             ("delivery_retry", retry_task),
             ("session_eviction", eviction_task),
             ("telegram_polling", telegram_bridge_task),
+            ("telegram_resend", telegram_resend_task),
             ("leads_archive", leads_archive_task),
             ("analytics_prune", analytics_prune_task),
         )
@@ -303,10 +307,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        if telegram_bridge_task is not None:
-            telegram_bridge_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await telegram_bridge_task
+        for bridge_task in (telegram_bridge_task, telegram_resend_task):
+            if bridge_task is not None:
+                bridge_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await bridge_task
         if eviction_task is not None:
             eviction_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

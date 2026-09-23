@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     telegram_bridge_failures_file: Path = Field(
         default_factory=lambda: BASE_DIR / "logs" / "telegram_bridge_failures.jsonl"
     )
+    # карточки, не ушедшие в Telegram при сбое связи, — досылаются фоном раз в минуту
+    telegram_pending_cards_file: Path = Field(
+        default_factory=lambda: BASE_DIR / "logs" / "telegram_pending_cards.jsonl"
+    )
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")
     demo_dir: Path = Field(default_factory=lambda: PROJECT_DIR / "demo")
 

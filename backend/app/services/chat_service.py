@@ -78,6 +78,8 @@ ENGAGEMENT_DISMISS_MESSAGES = {
 LEAD_CONTEXT_START_KEY = "lead_context_start_index"
 LEAD_SERVICE_ID_KEY = "lead_service_id"
 PREFERRED_TIME_KEY = "preferred_time"
+# цифры вместе с пробелами, дефисами, скобками и «+» — кусок, похожий на номер телефона
+_PHONE_LEFTOVER_PATTERN = re.compile(r"\+?\d[\d\s()\-]*\d")
 
 
 
@@ -444,8 +446,13 @@ class ChatService:
                 remainder,
                 flags=re.IGNORECASE,
             )
-        remainder = re.sub(r"[\d+\-\(\)]", " ", remainder)
+        # обрывки номера, которые PHONE_PATTERN не взял; «в 16:00», «10 000 ₽», даты — не номер, остаются
+        remainder = _PHONE_LEFTOVER_PATTERN.sub(
+            lambda match: " " if len(re.sub(r"\D", "", match.group(0))) >= 7 else match.group(0), remainder
+        )
         remainder = re.sub(r"\s+", " ", remainder)
+        remainder = re.sub(r"\s*,(?:\s*,)+", ",", remainder)  # «16:00, , ТЕСТ» после вырезанного имени
+        remainder = re.sub(r"\s+([,;.!?])", r"\1", remainder)
         return remainder.strip(" ,;:.!?|")
 
     def _lead_summary(

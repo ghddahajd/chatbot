@@ -4,6 +4,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.llm.mock import MockLLMClient
@@ -1478,6 +1479,26 @@ def test_pending_contact_lead_summary_keeps_prior_user_request(test_client, mana
     assert lead["unresolved_query"] == "хочу татуаж"
     assert "татуаж" in lead["summary"].lower()
     assert "неподтверждённую услугу" in lead["summary"]
+
+
+@pytest.mark.parametrize(
+    ("message", "name", "phone", "expected"),
+    [
+        # живой Docker 2026-09-24: все цифры стирались — «завтра в 16:00» превращалось в «завтра в : ,»
+        (
+            "Запишите меня на чистку завтра в 16:00, Анна, +7 900 000-00-88",
+            "Анна",
+            "+79000000088",
+            "Запишите меня на чистку завтра в 16:00",
+        ),
+        ("бюджет до 10 000 ₽, номер 8 (999) 123 45 67", None, "+79991234567", "бюджет до 10 000 ₽, номер"),
+        ("можно 25.09 после 18:30? 89991234567", None, "+79991234567", "можно 25.09 после 18:30"),
+    ],
+)
+def test_lead_summary_removes_only_the_phone_and_name(message: str, name, phone: str, expected: str) -> None:
+    chat_service = object.__new__(ChatService)
+
+    assert chat_service._contact_message_remainder(message, name=name, phone=phone) == expected
 
 
 def test_lead_summary_fallback_removes_contact_details_but_keeps_tail() -> None:

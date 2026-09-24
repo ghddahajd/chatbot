@@ -36,6 +36,9 @@ MESSAGE_RETENTION_EVENT_TYPES = {"message_answered", "widget_impression", "chat_
 # КОРОЧЕ ретеншна (60 дней), чтобы каждая стадия всегда считалась по ещё живым сырым
 # записям, а не молча деградировала на старых данных.
 FUNNEL_WINDOW_DAYS = 30
+# просьба перенести или отменить уже существующую запись — работа администратора, но не новый клиент:
+# в таблице заявок и у операторов она есть, в воронке, KPI и графике по месяцам — нет
+NOT_NEW_CLIENT_LEAD_REASONS = {PolicyReason.BOOKING_CHANGE.value}
 WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
@@ -130,6 +133,9 @@ class AnalyticsService:
         if self.leads_archive_file is not None:
             leads = leads + read_jsonl(self.leads_archive_file)
         return leads
+
+    def _new_client_leads(self) -> list[dict[str, Any]]:
+        return [lead for lead in self._all_leads() if str(lead.get("reason") or "") not in NOT_NEW_CLIENT_LEAD_REASONS]
 
     async def track_event(
         self,
@@ -240,7 +246,7 @@ class AnalyticsService:
         ]
         leads = [
             lead
-            for lead in self._all_leads()
+            for lead in self._new_client_leads()
             if company_id is None or lead.get("company_id") == company_id
         ]
         events = [
@@ -462,7 +468,7 @@ class AnalyticsService:
 
         leads = [
             lead
-            for lead in self._all_leads()
+            for lead in self._new_client_leads()
             if company_id is None or lead.get("company_id") == company_id
         ]
         counts: Counter[str] = Counter()
@@ -495,7 +501,7 @@ class AnalyticsService:
         знает о KnowledgeBase намеренно, имя резолвит вызывающий route, у которого он есть)."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
+        leads = _within_range(self._new_client_leads(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for lead in leads:
             service_id = lead.get("service_id")
@@ -1062,7 +1068,7 @@ class AnalyticsService:
             )
 
         all_events = read_jsonl(self.analytics_file)
-        all_leads = self._all_leads()
+        all_leads = self._new_client_leads()
 
         current_conversations = _conversations(_in_range(all_events, conversation_current_start, now))
         previous_conversations = _conversations(
@@ -1101,7 +1107,7 @@ class AnalyticsService:
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
         events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
-        leads = _within_range(self._all_leads(), start=range_start, end=range_end, company_id=company_id)
+        leads = _within_range(self._new_client_leads(), start=range_start, end=range_end, company_id=company_id)
 
         impression_events = [event for event in events if event.get("event_type") == "widget_impression"]
         opened_events = [event for event in events if event.get("event_type") == "chat_opened"]

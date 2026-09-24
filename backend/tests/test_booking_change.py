@@ -205,3 +205,34 @@ def test_clinic_can_change_the_text_and_the_phone_is_still_added(test_client) ->
 
     assert answer.startswith("Перенесём или отменим. Напишите номер, на который записывались.")
     assert "Или позвоните нам" in answer
+
+
+# ---------------------------------------------------------------- аналитика
+
+
+def test_change_requests_are_not_counted_as_new_clients(tmp_path) -> None:
+    """перенос — работа администратора, но не новый клиент: в таблице и у операторов есть,
+    в воронке, KPI и графике по месяцам — нет."""
+
+    from datetime import datetime, timedelta
+
+    from app.analytics import AnalyticsService
+    from app.utils.jsonl import append_jsonl
+
+    leads_file = tmp_path / "leads.jsonl"
+    now = datetime.utcnow() - timedelta(minutes=5)
+    for index, reason in enumerate(("booking", "booking_change", "booking_change")):
+        append_jsonl(
+            leads_file,
+            {"timestamp": now.isoformat(), "company_id": "rosh_demo", "session_id": f"s{index}", "reason": reason, "service_id": None},
+        )
+    service = AnalyticsService(analytics_file=tmp_path / "analytics.jsonl", leads_file=leads_file)
+
+    assert service.conversion_funnel(company_id="rosh_demo")["stages"][-1]["count"] == 1
+    assert service.period_comparison(company_id="rosh_demo")["leads"]["current"] == 1
+    assert service.leads_by_month(company_id="rosh_demo")[-1]["count"] == 1
+    assert service.summary([], company_id="rosh_demo")["leads"]["total"] == 1
+
+    assert len(service.leads_feed(company_id="rosh_demo")) == 3
+    assert service.leads_feed(company_id="rosh_demo", reason="booking_change")[0]["reason"] == "booking_change"
+    assert {row["reason"]: row["count"] for row in service.leads_by_reason(company_id="rosh_demo")} == {"booking": 1, "booking_change": 2}

@@ -30,6 +30,8 @@ from .routes import analytics, chat, debug, delivery, leads, operator, widget, w
 from .routes import settings as settings_routes
 from .sessions import SessionStore, archive_session
 from .telegram_bridge import TelegramBridgeService
+from .ops_bot import run_ops_bot_loop
+from .watchdog import ops_alerts_from_settings, run_watchdog_loop
 from .ws_manager import ConnectionManager
 
 
@@ -235,6 +237,13 @@ async def lifespan(app: FastAPI):
     if settings.telegram_bridge_enabled:
         telegram_bridge_task = asyncio.create_task(app.state.telegram_bridge_service.run_polling_loop())
         telegram_resend_task = asyncio.create_task(app.state.telegram_bridge_service.run_pending_resend_loop())
+    watchdog_task = asyncio.create_task(run_watchdog_loop(app)) if settings.watchdog_enabled else None
+    ops_alerts = ops_alerts_from_settings(settings)
+    ops_bot_task = (
+        asyncio.create_task(run_ops_bot_loop(app, ops_alerts))
+        if settings.ops_commands_enabled and ops_alerts.enabled
+        else None
+    )
     leads_archive_task = None
     if settings.leads_archive_enabled:
         leads_archive_task = asyncio.create_task(
@@ -267,6 +276,8 @@ async def lifespan(app: FastAPI):
             ("telegram_resend", telegram_resend_task),
             ("leads_archive", leads_archive_task),
             ("analytics_prune", analytics_prune_task),
+            ("watchdog", watchdog_task),
+            ("ops_bot", ops_bot_task),
         )
         if task is not None
     }
@@ -307,7 +318,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        for bridge_task in (telegram_bridge_task, telegram_resend_task):
+        for bridge_task in (telegram_bridge_task, telegram_resend_task, watchdog_task, ops_bot_task):
             if bridge_task is not None:
                 bridge_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

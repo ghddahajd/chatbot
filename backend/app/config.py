@@ -98,6 +98,23 @@ class Settings(BaseSettings):
     analytics_message_retention_days: int = 60
     analytics_prune_interval_seconds: int = 86400
     analytics_prune_enabled: bool = True
+    # сторож: сам прогоняет проверки preflight и пишет нам о переходах «в порядке ↔ проблема»;
+    # проблема должна продержаться watchdog_confirm_runs прогонов подряд — разовый сбой сети не будит
+    watchdog_enabled: bool = True
+    watchdog_interval_seconds: int = 600
+    watchdog_first_delay_seconds: int = 60
+    watchdog_confirm_runs: int = 2
+    watchdog_reminder_hours: int = 6
+    # оповещения нам, не клинике: личка или группа в Telegram; без токена и чата сторож молчит
+    ops_alert_bot_token: str = ""
+    ops_alert_chat_id: str = ""
+    ops_project_name: str = "чат-бот"
+    ops_digest_hour_msk: int = 10
+    # команды боту приборки («инфа», «проблемы»…) — только на одном сервере: второй опрос того же
+    # токена (например, локальный Docker) Telegram не допускает, и сообщения терялись бы
+    ops_commands_enabled: bool = False
+    # публичный адрес сервера (https://…) — по нему сторож следит за сроком SSL-сертификата
+    public_base_url: str = ""
     chat_rate_limit_enabled: bool = True
     chat_rate_limit_per_minute: int = 30
     # Сколько доверенных обратных прокси стоит перед приложением (Render = минимум 1).
@@ -141,6 +158,9 @@ class Settings(BaseSettings):
     telegram_pending_cards_file: Path = Field(
         default_factory=lambda: BASE_DIR / "logs" / "telegram_pending_cards.jsonl"
     )
+    watchdog_state_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "watchdog_state.json")
+    # журнал «что когда сломалось и починилось» — для будущей вкладки «Состояние»
+    system_events_file: Path = Field(default_factory=lambda: BASE_DIR / "logs" / "system_events.jsonl")
     widget_path: Path = Field(default_factory=lambda: PROJECT_DIR / "widget" / "widget.js")
     demo_dir: Path = Field(default_factory=lambda: PROJECT_DIR / "demo")
 

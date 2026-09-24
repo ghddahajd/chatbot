@@ -54,6 +54,17 @@ def collect_health_checks(app: FastAPI) -> dict[str, dict[str, Any]]:
         "detail": "mock mode — no real LLM API configured" if is_mock_llm else settings.llm_model,
     }
 
+    # вердикт сторожа (watchdog.py) из последнего прогона — /health его не пересчитывает, поэтому
+    # дешёвый. Только degraded (207), не error: на 503 Docker счёл бы контейнер нездоровым, а бот работает
+    watchdog_status = getattr(app.state, "watchdog_status", None)
+    if isinstance(watchdog_status, dict):
+        problems = list(watchdog_status.get("problems") or [])
+        checks["watchdog"] = {
+            "status": "degraded" if problems else "ok",
+            "detail": ("проблемы: " + ", ".join(problems)) if problems else "проблем нет",
+            "checked_at": watchdog_status.get("checked_at"),
+        }
+
     delivery_service = getattr(app.state, "delivery_service", None)
     checks["delivery"] = (
         delivery_service.outbox_health()

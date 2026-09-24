@@ -103,6 +103,10 @@ class OpenAIClient(BaseLLMClient):
         self.timeout = timeout
         self.disable_thinking = disable_thinking
 
+    async def ping(self) -> None:
+        payload = {"model": self.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
+        await self._post_chat_completions(payload, {"Authorization": f"Bearer {self.api_key}"})
+
     async def _post_chat_completions(self, payload: dict[str, Any], headers: dict[str, str]) -> httpx.Response:
         request_payload = dict(payload)
         if self.disable_thinking:

@@ -20,6 +20,9 @@ class BaseLLMClient(ABC):
     ) -> str:
         """возвращает ответ модели на основе переданного безопасного контекста."""
 
+    async def ping(self) -> None:
+        """самый короткий запрос к модели: жив ли ключ; ошибка — исключением. У заглушки — ничего."""
+
     async def classify_and_extract(
         self,
         user_message: str,

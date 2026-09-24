@@ -161,6 +161,64 @@ def test_asking_for_a_contact_does_not_swallow_a_cancel_request(test_client, man
     assert _last_lead(managed_env)["reason"] == "booking_change"
 
 
+# ---------------------------------------------------------------- номер уже есть в этом чате
+
+
+def test_known_phone_is_not_asked_again(test_client, managed_env) -> None:
+    """живая выгрузка: записался в чате и сразу «Отмените пожалуйста запись» — номер спрашивали заново."""
+
+    bridge = _CardBridge()
+    test_client.app.state.telegram_bridge_service = bridge
+    first = _chat(test_client, "Запишите меня на чистку завтра в 16:00, Анна, +7 900 000-00-11")
+    assert first["lead_created"] is True
+
+    payload = _chat(test_client, "Отмените пожалуйста запись", first["session_id"])
+
+    assert payload["lead_created"] is True
+    assert payload["answer"] == (
+        "Спасибо. Передали менеджеру — он свяжется с вами по номеру, который вы оставили. "
+        "Если запись на другой номер — напишите его."
+    )
+    card = bridge.client_cards[-1]
+    assert card.startswith("🔁 Перенос или отмена записи")
+    assert "Телефон: +79000000011" in card
+    lead = _last_lead(managed_env)
+    assert (lead["reason"], lead["phone"]) == ("booking_change", "+79000000011")
+
+
+def test_other_number_after_the_change_goes_as_a_change_too(test_client, managed_env) -> None:
+    """«запись на другой номер» раньше упиралась в «Контакты уже передали» — номер никуда не уходил."""
+
+    bridge = _CardBridge()
+    test_client.app.state.telegram_bridge_service = bridge
+    first = _chat(test_client, "Запишите меня на чистку завтра в 16:00, Анна, +7 900 000-00-11")
+    _chat(test_client, "Отмените пожалуйста запись", first["session_id"])
+
+    payload = _chat(test_client, "запись на другой номер: 8 900 000-00-22", first["session_id"])
+
+    assert payload["lead_created"] is True
+    assert bridge.client_cards[-1].startswith("🔁 Перенос или отмена записи")
+    assert (_last_lead(managed_env)["reason"], _last_lead(managed_env)["phone"]) == ("booking_change", "+79000000022")
+
+
+def test_second_contact_without_a_change_request_keeps_the_old_answer(test_client) -> None:
+    first = _chat(test_client, "Запишите меня на чистку завтра в 16:00, Анна, +7 900 000-00-11")
+
+    payload = _chat(test_client, "мой второй номер 8 900 000-00-22", first["session_id"])
+
+    assert payload["lead_created"] is False
+    assert payload["answer"].startswith("Контакты уже передали")
+
+
+def test_without_a_phone_in_the_chat_we_still_ask(test_client) -> None:
+    first = _chat(test_client, "сколько стоит чистка лица")
+
+    payload = _chat(test_client, "Отмените пожалуйста запись", first["session_id"])
+
+    assert payload["lead_created"] is False
+    assert "номер телефона, на который вы записаны" in payload["answer"]
+
+
 # ---------------------------------------------------------------- во время оформления новой записи
 
 

@@ -246,12 +246,16 @@ class SessionStore:
                 session.first_page = page
             return session
 
-    async def set_lead_requested(self, session_id: str, value: bool = True) -> Optional[Session]:
+    async def set_lead_requested(
+        self, session_id: str, value: bool = True, *, phone: Optional[str] = None
+    ) -> Optional[Session]:
         async with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
             session.lead_requested = value
+            if phone:
+                session.lead_phone = phone
             session.updated_at = datetime.utcnow()
             return session
 

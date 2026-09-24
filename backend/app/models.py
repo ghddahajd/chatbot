@@ -101,6 +101,8 @@ class Session(BaseModel):
     # маленькой модели надёжно теряет/смазывает именно такие детали (см. чат от 2026-08-10).
     notable_flags: list[str] = Field(default_factory=list)
     lead_requested: bool = False
+    # номер из последней заявки в этом чате — на «отмените запись» не спрашиваем его заново
+    lead_phone: Optional[str] = None
     operator_requested: bool = False
     pending_action: Optional[str] = None
     last_service_id: Optional[str] = None

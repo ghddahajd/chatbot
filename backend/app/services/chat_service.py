@@ -848,7 +848,7 @@ class ChatService:
             lead,
             event_type="booking_created" if is_booking_request else "lead_created",
         )
-        await session_store.set_lead_requested(session.session_id, True)
+        await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
         await self._clear_contact_state(session_store, session.session_id)
         await self._notify_telegram_for_lead(
             lead,
@@ -1155,7 +1155,7 @@ class ChatService:
         )
         await self._finalize_lead_summary(session, lead)
         await request.app.state.lead_service.save(lead)
-        await request.app.state.session_store.set_lead_requested(session.session_id, True)
+        await request.app.state.session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
         await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
 
     def _lead_service(self, lead):
@@ -1173,7 +1173,15 @@ class ChatService:
             return "🔁 Перенос или отмена записи"
         return "📅 Новая запись" if is_booking_request else "🔔 Новый лид"
 
-    def _lead_success_answer(self, lead, *, is_booking_request: bool, knowledge_base) -> str:
+    def _lead_success_answer(
+        self, lead, *, is_booking_request: bool, knowledge_base, phone_from_chat: bool = False
+    ) -> str:
+        if lead.reason == PolicyReason.BOOKING_CHANGE.value and phone_from_chat:
+            return self._phrase(
+                "booking_change_known_phone",
+                "Спасибо. Передали менеджеру — он свяжется с вами по номеру, который вы оставили. "
+                "Если запись на другой номер — напишите его.",
+            )
         if lead.reason == PolicyReason.BOOKING_CHANGE.value:
             return self._phrase(
                 "booking_change_success",
@@ -1502,9 +1510,14 @@ class ChatService:
                 )
                 await self._finalize_lead_summary(session, lead)
                 await lead_service.save(lead)
-                await session_store.set_lead_requested(session.session_id, True)
+                await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
                 await self._notify_telegram_for_lead(lead, reason=self._lead_card_title(lead, is_booking_request=False))
-                answer = self._lead_success_answer(lead, is_booking_request=False, knowledge_base=knowledge_base)
+                answer = self._lead_success_answer(
+                    lead,
+                    is_booking_request=False,
+                    knowledge_base=knowledge_base,
+                    phone_from_chat=bool(waiting_policy_result.safe_context.get("phone_from_chat")),
+                )
                 await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
                 session = await session_store.get(session.session_id)
                 return ChatMessageResponse(
@@ -1671,14 +1684,17 @@ class ChatService:
                     event_type="booking_created" if is_booking_request else "lead_created",
                 )
                 lead_created = True
-                await session_store.set_lead_requested(session.session_id, True)
+                await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
                 await self._clear_contact_state(session_store, session.session_id)
                 await self._notify_telegram_for_lead(
                     lead,
                     reason=self._lead_card_title(lead, is_booking_request=is_booking_request),
                 )
                 answer = self._lead_success_answer(
-                    lead, is_booking_request=is_booking_request, knowledge_base=knowledge_base
+                    lead,
+                    is_booking_request=is_booking_request,
+                    knowledge_base=knowledge_base,
+                    phone_from_chat=bool(policy_result.safe_context.get("phone_from_chat")),
                 )
                 if not is_booking_request and session.operator_requested:
                     await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
@@ -1726,7 +1742,7 @@ class ChatService:
                     await self._finalize_lead_summary(session, lead)
                     await lead_service.save(lead)
                     lead_created = True
-                    await session_store.set_lead_requested(session.session_id, True)
+                    await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
                     await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
                 response_action, answer, response_quick_actions = await self._regulated_soft_offer_response(
                     session_store=session_store,

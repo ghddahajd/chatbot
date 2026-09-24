@@ -251,12 +251,27 @@ def _booking_cancelled_result(knowledge_base: KnowledgeBase) -> PolicyResult:
     )
 
 
-def _booking_change_result(message: str, phone: str | None, knowledge_base: KnowledgeBase) -> PolicyResult:
+def _booking_change_result(
+    message: str, phone: str | None, knowledge_base: KnowledgeBase, known_phone: str | None = None
+) -> PolicyResult:
     """отмену и перенос делает администратор по номеру, на который человек записан.
 
     Услугу не передаём: из контекста она подтягивается из прошлых вопросов, а переносят свою запись —
-    в карточке была бы чужая «Услуга». Сама просьба и так видна в карточке."""
+    в карточке была бы чужая «Услуга». Сама просьба и так видна в карточке.
+    known_phone — номер, уже оставленный в этом чате: второй раз не спрашиваем."""
 
+    if not phone and known_phone:
+        return PolicyResult(
+            action=PolicyAction.ASK_CONTACT,
+            reason=PolicyReason.BOOKING_CHANGE,
+            confidence=0.9,
+            safe_context={
+                "contact": {"name": None, "phone": known_phone},
+                "service": None,
+                "lead_reason": PolicyReason.BOOKING_CHANGE.value,
+                "phone_from_chat": True,
+            },
+        )
     if phone:
         safe_context = _contact_safe_context(message, phone, None, knowledge_base.services)
         safe_context["lead_reason"] = PolicyReason.BOOKING_CHANGE.value
@@ -2566,7 +2581,7 @@ def _analyze_message_core(
             normalized_message
         ):
             return _booking_cancelled_result(knowledge_base)
-        return _booking_change_result(message, phone, knowledge_base)
+        return _booking_change_result(message, phone, knowledge_base, session.lead_phone)
 
     # Живой баг (аудит §2026-08-06): "хотя нет забудьте, а сколько стоит биоревитализация
     # губ?" — классификация уже верно распознала price_question (0.86), но бывшая голая
@@ -2679,6 +2694,10 @@ def _analyze_message_core(
             },
             quick_actions=["Посмотреть услуги", "Позвать менеджера"],
         )
+
+    if phone and session.lead_requested and session.last_intent == PolicyReason.BOOKING_CHANGE.value:
+        # «запись на другой номер» после просьбы о переносе — это тот же перенос, а не повтор контакта
+        return _booking_change_result(message, phone, knowledge_base)
 
     if phone and session.lead_requested:
         return PolicyResult(

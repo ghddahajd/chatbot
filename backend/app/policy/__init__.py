@@ -24,7 +24,15 @@ from ..services.rag_search import (
 from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
+    BOOKING_ABSENCE_PHRASES,
+    BOOKING_CANCEL_PREFIX,
+    BOOKING_CHANGE_OBJECT_PREFIXES,
+    BOOKING_CHANGE_TOKENS,
+    BOOKING_EXISTING_MARKERS,
     BOOKING_KEYWORDS,
+    BOOKING_REBOOK_TOKENS,
+    BOOKING_RESCHEDULE_EXTRA_OBJECTS,
+    BOOKING_RESCHEDULE_TOKENS,
     BOOKING_TIME_MENTION_PATTERN,
     BOOKING_WHEN_TILES,
     PROMPT_INJECTION_KEYWORDS,
@@ -227,6 +235,58 @@ def _contact_safe_context(
         safe_context["service_unresolved"] = True
         safe_context["unresolved_query"] = message.strip()
     return safe_context
+
+
+def _booking_cancelled_result(knowledge_base: KnowledgeBase) -> PolicyResult:
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.BOOKING_REQUEST,
+        confidence=0.9,
+        safe_context={
+            "force_direct_answer": True,
+            "booking_request_cancelled": True,
+            "message_to_user": _phrase(knowledge_base, "booking_cancelled"),
+        },
+        quick_actions=["Посмотреть услуги", "Позвать менеджера"],
+    )
+
+
+def _booking_change_result(message: str, phone: str | None, knowledge_base: KnowledgeBase) -> PolicyResult:
+    """отмену и перенос делает администратор по номеру, на который человек записан.
+
+    Услугу не передаём: из контекста она подтягивается из прошлых вопросов, а переносят свою запись —
+    в карточке была бы чужая «Услуга». Сама просьба и так видна в карточке."""
+
+    if phone:
+        safe_context = _contact_safe_context(message, phone, None, knowledge_base.services)
+        safe_context["lead_reason"] = PolicyReason.BOOKING_CHANGE.value
+        return PolicyResult(
+            action=PolicyAction.ASK_CONTACT,
+            reason=PolicyReason.BOOKING_CHANGE,
+            confidence=0.92,
+            safe_context=safe_context,
+        )
+    answer = _phrase(knowledge_base, "booking_change_prompt")
+    company = knowledge_base.company
+    clinic_phone = str(company.phone or "").strip()
+    if clinic_phone:
+        hours = str(company.working_hours or "").strip()
+        # ночью по номеру никто не ответит — пусть человек знает, когда звонить
+        if hours and not is_currently_open(company.working_hours_schedule, company.timezone):
+            answer = f"{answer} Или позвоните нам в часы работы ({hours}): {clinic_phone}."
+        else:
+            answer = f"{answer} Или позвоните нам: {clinic_phone}."
+    return PolicyResult(
+        action=PolicyAction.ASK_CONTACT,
+        reason=PolicyReason.BOOKING_CHANGE,
+        confidence=0.9,
+        safe_context={
+            "force_direct_answer": True,
+            "lead_reason": PolicyReason.BOOKING_CHANGE.value,
+            "message_to_user": answer,
+        },
+        quick_actions=[],
+    )
 
 
 def _article_quick_actions(matches: list[dict[str, object]]) -> list[object]:
@@ -2016,6 +2076,35 @@ def _has_acute_danger_signal(normalized_message: str) -> bool:
 _NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}
 
 
+def is_booking_change_request(normalized_message: str) -> bool:
+    """просьба отменить или перенести уже существующую запись, а не записаться заново."""
+
+    tokens = normalized_message.split()
+    if any(token in BOOKING_REBOOK_TOKENS for token in tokens):
+        return True
+    existing = any(token in BOOKING_EXISTING_MARKERS or token.startswith("записан") for token in tokens)
+    has_object = existing or any(token.startswith(BOOKING_CHANGE_OBJECT_PREFIXES) for token in tokens)
+    reschedule = any(token in BOOKING_RESCHEDULE_TOKENS for token in tokens)
+    cancel = any(token.startswith(BOOKING_CANCEL_PREFIX) for token in tokens)
+    if (reschedule or cancel) and has_object:
+        return True
+    if reschedule and any(token.startswith(BOOKING_RESCHEDULE_EXTRA_OBJECTS) for token in tokens):
+        return True
+    if existing and any(token in BOOKING_CHANGE_TOKENS for token in tokens):
+        return True
+    return contains_keyword(normalized_message, BOOKING_ABSENCE_PHRASES) and (existing or reschedule or cancel)
+
+
+def is_booking_cancel_only(normalized_message: str) -> bool:
+    """«отмените запись» без переноса — во время оформления новой записи это отказ от неё самой."""
+
+    tokens = set(normalized_message.split())
+    return (
+        is_booking_change_request(normalized_message)
+        and not tokens & (BOOKING_RESCHEDULE_TOKENS | BOOKING_REBOOK_TOKENS | BOOKING_CHANGE_TOKENS)
+    )
+
+
 def _has_bare_negative_signal(normalized_message: str) -> bool:
     """Живой баг: 'ты реальный или нет' матчило NEGATIVE_MESSAGES буквально по слову 'нет' и
     отвечало 'Ок, ничего не оформляем' — хотя это риторический оборот ('или нет'/'либо нет',
@@ -2471,6 +2560,14 @@ def _analyze_message_core(
             quick_actions=["Написать в Telegram", "Открыть сайт"],
         )
 
+    if is_booking_change_request(normalized_message):
+        # во время оформления новой записи в чате «отмените запись» относится к ней самой
+        if session.pending_action == PendingAction.BOOKING_CONTACT.value and is_booking_cancel_only(
+            normalized_message
+        ):
+            return _booking_cancelled_result(knowledge_base)
+        return _booking_change_result(message, phone, knowledge_base)
+
     # Живой баг (аудит §2026-08-06): "хотя нет забудьте, а сколько стоит биоревитализация
     # губ?" — классификация уже верно распознала price_question (0.86), но бывшая голая
     # проверка на "нет" срабатывала первой и полностью проглатывала вопрос ("Ок, ничего не
@@ -2518,17 +2615,7 @@ def _analyze_message_core(
         and _has_bare_negative_signal(normalized_message)
         and not has_competing_substantive_signal
     ):
-        return PolicyResult(
-            action=PolicyAction.CLARIFY,
-            reason=PolicyReason.BOOKING_REQUEST,
-            confidence=0.9,
-            safe_context={
-                "force_direct_answer": True,
-                "booking_request_cancelled": True,
-                "message_to_user": _phrase(knowledge_base, "booking_cancelled"),
-            },
-            quick_actions=["Посмотреть услуги", "Позвать менеджера"],
-        )
+        return _booking_cancelled_result(knowledge_base)
 
     # Живой баг (переписка 2026-09-10): злое прощание после мягкого предложения оператора
     # попадало в ветку "оператор отклонён" ниже и получало "Хорошо, слушаю — что вас

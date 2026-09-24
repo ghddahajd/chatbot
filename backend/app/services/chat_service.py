@@ -24,7 +24,13 @@ from ..models import (
     PolicyReason,
     SessionStatus,
 )
-from ..policy import classify_and_extract, escalation_urgency_for, undisclosed_equipment_terms
+from ..policy import (
+    classify_and_extract,
+    escalation_urgency_for,
+    is_booking_cancel_only,
+    is_booking_change_request,
+    undisclosed_equipment_terms,
+)
 from ..policy.constants import (
     BOOKING_DAY_CHOICES,
     BOOKING_WHEN_TILES,
@@ -685,7 +691,15 @@ class ChatService:
             return None
 
         normalized_message = normalize_text(message)
-        if contains_keyword(normalized_message, NEGATIVE_MESSAGES):
+        cancels_this_booking = session.pending_action == PendingAction.BOOKING_CONTACT.value and is_booking_cancel_only(
+            normalized_message
+        )
+        if is_booking_change_request(normalized_message) and not cancels_this_booking:
+            # про уже существующую запись; иначе «хочу отменить запись» поймалось бы как отказ оставлять контакт,
+            # а из черновика новой записи в карточку переноса попало бы чужое «Когда удобно»
+            await self._clear_contact_state(session_store, session.session_id)
+            return None
+        if cancels_this_booking or contains_keyword(normalized_message, NEGATIVE_MESSAGES):
             was_booking_request = session.pending_action == PendingAction.BOOKING_CONTACT.value
             await self._clear_contact_state(session_store, session.session_id)
             if was_booking_request:
@@ -813,7 +827,7 @@ class ChatService:
             ),
             service_id=self._lead_service_id(
                 session,
-                is_booking_request=is_booking_request,
+                is_booking_request=is_booking_request or draft_reason == PolicyReason.BOOKING_CHANGE.value,
                 draft=session.contact_draft,
             ),
             reason=draft_reason
@@ -838,22 +852,9 @@ class ChatService:
         await self._clear_contact_state(session_store, session.session_id)
         await self._notify_telegram_for_lead(
             lead,
-            reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
+            reason=self._lead_card_title(lead, is_booking_request=is_booking_request),
         )
-
-        if is_booking_request:
-            booked_service = knowledge_base.find_service_by_id(lead.service_id)
-            answer = self._phrase(
-                "booking_success_no_consultation"
-                if is_consultation_only_service(booked_service)
-                else "booking_success",
-                "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
-            )
-        else:
-            answer = self._phrase(
-                "lead_success",
-                "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
-            )
+        answer = self._lead_success_answer(lead, is_booking_request=is_booking_request, knowledge_base=knowledge_base)
         await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
         session = await session_store.get(session.session_id)
         return ChatMessageResponse(
@@ -938,6 +939,9 @@ class ChatService:
             )
             if prior_unresolved_metadata:
                 await session_store.update_contact_draft(session.session_id, metadata=prior_unresolved_metadata)
+            lead_reason = str(policy_result.safe_context.get("lead_reason") or "").strip()
+            if lead_reason:
+                await session_store.update_contact_draft(session.session_id, metadata={"reason": lead_reason})
             return
 
         if policy_result.action == PolicyAction.CLARIFY and policy_result.safe_context.get("booking_request"):
@@ -1162,6 +1166,29 @@ class ChatService:
         except KeyError:
             return None
         return knowledge_base.find_service_by_id(lead.service_id)
+
+    def _lead_card_title(self, lead, *, is_booking_request: bool) -> str:
+        if lead.reason == PolicyReason.BOOKING_CHANGE.value:
+            # отдельный заголовок, чтобы администратор не принял перенос за новую запись
+            return "🔁 Перенос или отмена записи"
+        return "📅 Новая запись" if is_booking_request else "🔔 Новый лид"
+
+    def _lead_success_answer(self, lead, *, is_booking_request: bool, knowledge_base) -> str:
+        if lead.reason == PolicyReason.BOOKING_CHANGE.value:
+            return self._phrase(
+                "booking_change_success",
+                "Спасибо. Передали менеджеру — он найдёт вашу запись и свяжется с вами.",
+            )
+        if is_booking_request:
+            booked_service = knowledge_base.find_service_by_id(lead.service_id)
+            return self._phrase(
+                "booking_success_no_consultation" if is_consultation_only_service(booked_service) else "booking_success",
+                "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
+            )
+        return self._phrase(
+            "lead_success",
+            "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
+        )
 
     async def _notify_telegram_for_lead(self, lead, *, reason: str) -> None:
         """Лид с needs_operator=True, для которого ЕЩЁ нет сигнала в очереди — реально ждёт
@@ -1463,7 +1490,8 @@ class ChatService:
                         phone=contact.get("phone") if isinstance(contact, dict) else None,
                     ),
                     service_id=waiting_policy_result.service_id,
-                    reason=str(unresolved_metadata.get("reason") or "")
+                    reason=str(waiting_policy_result.safe_context.get("lead_reason") or "")
+                    or str(unresolved_metadata.get("reason") or "")
                     or classify_lead_reason(last_intent=session.last_intent, is_booking_request=False),
                     needs_operator=True,
                     lead_trigger=str(unresolved_metadata.get("lead_trigger") or "")
@@ -1475,11 +1503,8 @@ class ChatService:
                 await self._finalize_lead_summary(session, lead)
                 await lead_service.save(lead)
                 await session_store.set_lead_requested(session.session_id, True)
-                await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
-                answer = self._phrase(
-                    "lead_success",
-                    "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
-                )
+                await self._notify_telegram_for_lead(lead, reason=self._lead_card_title(lead, is_booking_request=False))
+                answer = self._lead_success_answer(lead, is_booking_request=False, knowledge_base=knowledge_base)
                 await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
                 session = await session_store.get(session.session_id)
                 return ChatMessageResponse(
@@ -1593,6 +1618,7 @@ class ChatService:
                 draft_lead_trigger = str(prior_contact_draft.get("lead_trigger") or "").strip()
                 draft_reason = str(prior_contact_draft.get("reason") or "").strip()
                 draft_unresolved_query = str(prior_contact_draft.get("unresolved_query") or "").strip()
+                is_booking_change = policy_result.reason == PolicyReason.BOOKING_CHANGE
                 unresolved_metadata = self._current_unresolved_lead_metadata(
                     policy_result,
                     message,
@@ -1619,11 +1645,12 @@ class ChatService:
                     ),
                     service_id=self._lead_service_id(
                         session,
-                        is_booking_request=is_booking_request,
+                        is_booking_request=is_booking_request or is_booking_change,
                         policy_service_id=policy_result.service_id,
-                        draft=prior_contact_draft,
+                        draft=None if is_booking_change else prior_contact_draft,
                     ),
-                    reason=draft_reason
+                    reason=str(policy_result.safe_context.get("lead_reason") or "")
+                    or draft_reason
                     or unresolved_reason
                     or classify_lead_reason(last_intent=prior_last_intent, is_booking_request=is_booking_request),
                     needs_operator=draft_needs_operator or session.operator_requested,
@@ -1648,21 +1675,11 @@ class ChatService:
                 await self._clear_contact_state(session_store, session.session_id)
                 await self._notify_telegram_for_lead(
                     lead,
-                    reason="📅 Новая запись" if is_booking_request else "🔔 Новый лид",
+                    reason=self._lead_card_title(lead, is_booking_request=is_booking_request),
                 )
-                if is_booking_request:
-                    booked_service = knowledge_base.find_service_by_id(lead.service_id)
-                    answer = self._phrase(
-                        "booking_success_no_consultation"
-                        if is_consultation_only_service(booked_service)
-                        else "booking_success",
-                        "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
-                    )
-                else:
-                    answer = self._phrase(
-                        "lead_success",
-                        "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
-                    )
+                answer = self._lead_success_answer(
+                    lead, is_booking_request=is_booking_request, knowledge_base=knowledge_base
+                )
                 if not is_booking_request and session.operator_requested:
                     await session_store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
             else:

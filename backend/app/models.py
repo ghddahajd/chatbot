@@ -50,6 +50,7 @@ class PolicyReason(str, Enum):
     SERVICE_EXPLANATION = "service_explanation"
     FAQ_QUESTION = "faq_question"
     BOOKING_REQUEST = "booking_request"
+    BOOKING_CHANGE = "booking_change"
     OUT_OF_SCOPE = "out_of_scope"
     SMALL_TALK = "small_talk"
     OFF_TOPIC = "off_topic"

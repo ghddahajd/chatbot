@@ -532,6 +532,7 @@ def render_analytics_panel(
             <option value="medical_risk">Консультация</option>
             <option value="commercial_interest">Интерес к услуге</option>
             <option value="unknown_service">Неизвестная услуга</option>
+            <option value="booking_change">Перенос / отмена</option>
           </select>
         </div>
         <div id="leadsTableWrap"><div class="loading">Загрузка…</div></div>
@@ -739,6 +740,7 @@ def render_analytics_panel(
     const LEAD_REASON_LABELS = {
       booking: "Запись", price_question: "Вопрос о цене", medical_risk: "Консультация",
       commercial_interest: "Интерес к услуге", unknown_service: "Неизвестная услуга",
+      booking_change: "Перенос / отмена",
     };
     const LEAD_TRIGGER_LABELS = {
       ask_contact: "Оставил контакт", booking_request: "Запись",
@@ -928,6 +930,7 @@ def render_analytics_panel(
       medical_risk: "Консультация",
       commercial_interest: "Интерес к услуге",
       unknown_service: "Неизвестная услуга",
+      booking_change: "Перенос / отмена",
     };
 
     function renderReasonDonut(items) {
@@ -1077,7 +1080,7 @@ def render_analytics_panel(
       ok: "Обычный ответ", price_question: "Цена", price_question_no_service: "Цена (без услуги)",
       list_services: "Список услуг", small_talk: "Смолток", off_topic: "Офтоп",
       off_topic_body_redirect: "Офтоп (про тело)", operator_requested: "Просьба оператора",
-      booking_request: "Запись", contact_provided: "Контакт получен", lead_request: "Лид",
+      booking_request: "Запись", booking_change: "Перенос / отмена", contact_provided: "Контакт получен", lead_request: "Лид",
       cosmetic_concern: "Косметический вопрос", medical_advice: "Мед. вопрос",
       regulated_advice: "Регулируемый мед. вопрос", unknown_service: "Неизвестная услуга",
       similar_services_found: "Похожие услуги", contact_link: "Ссылка/контакт",

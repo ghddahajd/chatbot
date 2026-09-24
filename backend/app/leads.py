@@ -26,6 +26,7 @@ REASON_LABELS = {
     "medical_risk": "Консультация",
     "commercial_interest": "Оператор/контакт",
     "unknown_service": "Неизвестная услуга",
+    "booking_change": "Перенос / отмена",
 }
 
 

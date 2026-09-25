@@ -1457,3 +1457,76 @@ def test_health_check_reports_group_lookup_failure(monkeypatch) -> None:
     result = anyio.run(run)
 
     assert result["operators_group"] == {"status": "error", "detail": "chat not found"}
+
+
+# ---------------------------------------------------------------- только группа клиники
+
+
+def test_messages_from_a_foreign_chat_never_reach_the_patient(monkeypatch) -> None:
+    """бота можно добавить в свою группу с темами и подогнать номер темы под живой диалог —
+    такой текст не должен уйти пациенту от имени администратора, а /done — закрыть диалог."""
+
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42)
+        service = _service(store, ws_manager)
+        foreign = {"id": -100999, "type": "supergroup"}
+        await service._process_update({"update_id": 1, "message": {"chat": foreign, "message_thread_id": 42, "text": "Оплатите по ссылке"}})
+        await service._process_update({"update_id": 2, "message": {"chat": foreign, "message_thread_id": 42, "text": "/done"}})
+        await service._process_update({"update_id": 3, "callback_query": {"id": "cb", "data": "close:x", "message": {"chat": foreign, "message_id": 5}}})
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    async def check() -> None:
+        refreshed = await store.get(session_id)
+        assert all(message.role != MessageRole.OPERATOR for message in refreshed.messages)
+        assert refreshed.status != SessionStatus.CLOSED
+
+    anyio.run(check)
+    assert ws_manager.sent == []
+    assert FakeAsyncClient.calls == []
+
+
+def test_messages_from_the_clinic_group_still_reach_the_patient(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42)
+        service = _service(store, ws_manager)
+        group = {"id": -100123, "type": "supergroup"}
+        await service._process_update({"update_id": 1, "message": {"chat": group, "message_thread_id": 42, "text": "Добрый день!"}})
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    assert ws_manager.sent == [
+        (session_id, {"type": "message", "role": "operator", "text": "Добрый день!", "session_id": session_id})
+    ]
+
+
+def test_group_set_by_public_name_is_recognised(monkeypatch) -> None:
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_telegram_bridge(session.session_id, topic_id=42)
+        service = _service(store, ws_manager, group_chat_id="@rosh_operators")
+        group = {"id": -100123, "type": "supergroup", "username": "ROSH_operators"}
+        stranger = {"id": -100999, "type": "supergroup", "username": "other_group"}
+        await service._process_update({"update_id": 1, "message": {"chat": stranger, "message_thread_id": 42, "text": "чужое"}})
+        await service._process_update({"update_id": 2, "message": {"chat": group, "message_thread_id": 42, "text": "Добрый день!"}})
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    assert [payload["text"] for _session, payload in ws_manager.sent] == ["Добрый день!"]

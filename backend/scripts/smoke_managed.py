@@ -239,6 +239,7 @@ def main() -> int:
                 lambda: (
                     client.post(
                         "/api/leads",
+                        headers={"x-operator-token": "demo-operator-token"},
                         json={
                             "company_id": "rosh_demo",
                             "session_id": "smoke-session",

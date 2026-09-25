@@ -348,6 +348,7 @@ def _run_api_checks(
         print("\nLeads:")
         lead_response = client.post(
             "/api/leads",
+            headers={"x-operator-token": os.environ["OPERATOR_TOKEN"]},
             json={
                 "company_id": company_id,
                 "session_id": "launch-check",

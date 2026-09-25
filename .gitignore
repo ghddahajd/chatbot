@@ -13,6 +13,10 @@ venv/
 
 # Build / runtime
 backend/logs/*.jsonl
+# состояние сторожа приборки
+backend/logs/watchdog_state.json
+# копии .env при замене ключей — в них секреты
+.env.bak*
 backend/logs/preflight/
 
 # Live session state (real chat content, contact drafts) — must never be tracked

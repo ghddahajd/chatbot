@@ -865,10 +865,29 @@ class TelegramBridgeService:
         return result
 
     async def _process_update(self, update: dict[str, Any]) -> None:
+        # только группа клиники: иначе бота можно добавить в свою группу с темами и, подогнав номер
+        # темы под живой диалог, писать пациенту в виджет от имени администратора
         if "callback_query" in update:
-            await self._handle_callback_query(update["callback_query"])
+            callback = update["callback_query"]
+            if self._from_operators_group((callback.get("message") or {}).get("chat")):
+                await self._handle_callback_query(callback)
         elif "message" in update:
-            await self._handle_message(update["message"])
+            message = update["message"]
+            if self._from_operators_group(message.get("chat")):
+                await self._handle_message(message)
+
+    def _from_operators_group(self, chat: Any) -> bool:
+        chat = chat if isinstance(chat, dict) else {}
+        chat_id = str(chat.get("id") or "")
+        expected = str(self.group_chat_id).strip()
+        # группа в настройках бывает числом (-100…) или публичным именем (@group)
+        if chat_id and chat_id == expected:
+            return True
+        username = str(chat.get("username") or "")
+        if expected.startswith("@") and username and username.lower() == expected[1:].lower():
+            return True
+        logger.warning("telegram_bridge update_ignored foreign_chat=%s", chat_id or "?")
+        return False
 
     async def run_polling_loop(self) -> None:
         if not self.enabled:

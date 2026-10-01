@@ -283,6 +283,7 @@ class ChatService:
         referral_service: object = None,
         extra_referral_service: object = None,
         urgent: bool = True,
+        emergency: bool = False,
     ) -> tuple[PolicyAction, str, list[dict[str, str]]]:
         await session_store.set_pending_action(session.session_id, PendingAction.OFFERED_OPERATOR.value)
         await session_store.update_context(session.session_id, last_intent=PolicyReason.REGULATED_ADVICE.value)
@@ -304,7 +305,15 @@ class ChatService:
         # нерабочее время" — предложил и тут же отказал в одном разговоре. 103 — реальная
         # круглосуточная линия, её оставляем даже ночью для действительно срочных случаев.
         is_open = is_currently_open(knowledge_base.company.working_hours_schedule, knowledge_base.company.timezone)
-        if not is_open:
+        if emergency:
+            # угроза жизни: скорая — первой фразой, днём и ночью одинаково; менеджер тут не помощник
+            answer = self._phrase(
+                "regulated_soft_offer_emergency",
+                "Это может быть опасно — пожалуйста, не ждите ответа в чате: прямо сейчас звоните в скорую, "
+                "103 (с мобильного можно 112). Когда станет легче, напишите нам — поможем с дальнейшими шагами.",
+                seed=f"{session.session_id}:regulated_soft_offer:{session.message_count}",
+            )
+        elif not is_open:
             phrase_key = "regulated_soft_offer_after_hours_urgent" if urgent else "regulated_soft_offer_after_hours"
             answer = self._phrase(
                 phrase_key,
@@ -1771,6 +1780,7 @@ class ChatService:
                     referral_service=policy_result.safe_context.get("referral_service"),
                     extra_referral_service=policy_result.safe_context.get("extra_referral_service"),
                     urgent=policy_result.safe_context.get("escalation_urgency") != "calm",
+                    emergency=policy_result.safe_context.get("escalation_urgency") == "emergency",
                 )
             else:
                 await session_store.set_operator_requested(session.session_id, True)
@@ -1869,6 +1879,7 @@ class ChatService:
                         knowledge_base=knowledge_base,
                         message=message,
                         urgent=escalation_urgency_for(message) != "calm",
+                        emergency=escalation_urgency_for(message) == "emergency",
                     )
                 else:
                     await analytics_service.track_event(

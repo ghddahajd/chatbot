@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app import policy
 from app.models import PolicyAction, PolicyReason, PolicyResult
 from app.policy.engine import Decision, Incoming, Rule, run_rules
@@ -80,8 +82,8 @@ def test_safety_rules_order_is_deliberate() -> None:
     assert [rule.name for rule in policy.SAFETY_RULES] == [
         "ambulance_fact",
         "sensitive_topic",
-        "medical",
         "complaint",
+        "medical",
         "booking_change",
     ]
 
@@ -122,13 +124,58 @@ def test_analyze_message_signs_which_rule_decided(policy_session, knowledge_base
     assert (legacy.rule, legacy.rules_matched) == (None, [])  # ветка ещё не вынесена в правило
 
 
-def test_medical_currently_shadows_a_complaint_and_the_dispute_is_visible(policy_session, knowledge_base) -> None:
-    # Yandex считает «хочу пожаловаться на врача» медицинским вопросом. Пока медицина выше жалобы —
-    # она и отвечает; проигравшая жалоба видна в rules_matched.
+def test_complaint_wins_over_medical_and_the_dispute_is_visible(policy_session, knowledge_base) -> None:
+    # Yandex считает «хочу пожаловаться на врача» медицинским вопросом — отвечает всё равно жалоба
     result = policy.analyze_message(
         "хочу пожаловаться на врача", policy_session, knowledge_base, {"intent": "regulated_advice", "confidence": 0.9}
     )
 
+    assert result.rule == "complaint"
+    assert result.rules_matched == ["complaint", "medical"]
+    assert result.reason == PolicyReason.COMPLAINT
+
+
+def test_complaint_with_acute_danger_goes_to_medical_with_urgency(policy_session, knowledge_base) -> None:
+    message = "буду жаловаться, после укола кровь не останавливается"
+
+    result = policy.analyze_message(message, policy_session, knowledge_base, {"intent": "medical_advice", "confidence": 0.9})
+
     assert result.rule == "medical"
-    assert result.rules_matched == ["medical", "complaint"]
+    assert "complaint" not in result.rules_matched  # жалоба уступает, а не проигрывает спор
+    assert policy.escalation_urgency_for(message) == "urgent"
+
+
+def test_complaint_yields_to_danger_only_when_medicine_takes_it(knowledge_base) -> None:
+    # иначе сообщение не досталось бы ни жалобе, ни медицине и упало бы в случайную ветку ниже
+    def signals(medical: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            normalized="буду жаловаться кровь не останавливается", medical_requested=medical, sensitive_topic=None,
+            service=None, knowledge_base=knowledge_base, session=None,
+        )
+
+    assert run_rules(policy.SAFETY_RULES, signals(medical=False)).rule == "complaint"
+    assert [rule.name for rule in policy.SAFETY_RULES if rule.when(signals(medical=True))] == ["medical"]
+
+
+def test_urgency_levels() -> None:
+    assert policy.escalation_urgency_for("у меня отек лица и тяжело дышать") == "emergency"
+    assert policy.escalation_urgency_for("после укола задыхаюсь") == "emergency"
+    assert policy.escalation_urgency_for("кровь не останавливается") == "urgent"
+    assert policy.escalation_urgency_for("отёк губ после филлера сколько держится") == "calm"
+
+
+def test_life_threat_is_medical_even_when_the_classifier_missed_it(policy_session, knowledge_base) -> None:
+    # местный классификатор (модель недоступна, человек ждёт оператора) видит тут «услугу»
+    result = policy.analyze_message("после укола задыхаюсь", policy_session, knowledge_base, {"intent": "service_mention", "confidence": 0.5})
+
+    assert result.rule == "medical"
     assert result.reason == PolicyReason.REGULATED_ADVICE
+    assert result.safe_context.get("escalation_urgency") == "emergency"
+
+
+def test_life_threat_answer_leads_with_the_ambulance(test_client) -> None:
+    response = test_client.post("/api/chat/message", json={"company_id": "rosh_demo", "message": "у меня отек лица и тяжело дышать"})
+
+    answer = response.json()["answer"]
+    assert answer.startswith("Это может быть опасно")
+    assert "103" in answer and "112" in answer

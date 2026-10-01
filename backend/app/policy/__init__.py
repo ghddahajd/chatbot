@@ -90,6 +90,7 @@ from .detectors import (
     BOOKING_CHANGE,
     COMPLAINT,
     CRISIS,
+    LIFE_THREAT,
     SYMPTOM_MENTION,
     is_booking_cancel_only,
     is_booking_change_request,
@@ -2023,17 +2024,15 @@ def _has_hard_restricted_signal(normalized_message: str) -> bool:
 
 
 def escalation_urgency_for(message: str) -> str:
-    """calm/urgent для regulated_soft_offer — единая точка расчёта срочности.
+    """срочность медицинского вопроса — одна точка расчёта для всех путей, которые её показывают.
 
-    Живой баг (аудит §2026-08-22, "скорая 103" систематически, Топ-1): раньше это считалось
-    инлайном только в _medical_referral_result (keyword-путь), а LLM-риск-путь в
-    chat_service.py вызывал _regulated_soft_offer_response() вообще без urgent=,
-    молча получая дефолт True — "скорая" на ЛЮБОЕ сообщение, попавшее именно в этот
-    путь, независимо от реальной срочности текста. Единая функция — чтобы оба
-    вызывающих пути не могли разойтись снова тем же образом.
-    """
+    emergency — угроза жизни: первой фразой скорая; urgent — острый случай: «если срочно — 103»;
+    calm — без скорой: на рядовой вопрос она пугает."""
 
-    return "urgent" if ACUTE_DANGER(normalize_text(message)) else "calm"
+    normalized = normalize_text(message)
+    if LIFE_THREAT(normalized):
+        return "emergency"
+    return "urgent" if ACUTE_DANGER(normalized) else "calm"
 
 
 _NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}
@@ -2321,7 +2320,8 @@ def _rule_sensitive_topic(s: Signals) -> PolicyResult:
 
 
 def _rule_medical(s: Signals) -> PolicyResult:
-    if not _has_hard_restricted_signal(s.normalized):
+    # при угрозе жизни — сразу направление со скорой, без подсказок из статей
+    if not _has_hard_restricted_signal(s.normalized) and not LIFE_THREAT(s.normalized):
         article_matches = _retrieve_article_context_safe(s.message, s.knowledge_base)
         guidance_result = _cosmetic_article_guidance_result(
             s.knowledge_base,
@@ -2393,14 +2393,16 @@ SAFETY_RULES: tuple[Rule[Signals], ...] = (
     ),
     # у чувствительных тем клиента своё решение (ответить, отказать, передать) — оно точнее общей медицины
     Rule("sensitive_topic", when=lambda s: s.sensitive_topic is not None, answer=lambda s: _rule_sensitive_topic(s)),
-    Rule("medical", when=lambda s: s.medical_requested, answer=lambda s: _rule_medical(s)),
-    # жалоба, возврат денег, угроза отзывом — сразу администратору; выше записи, цены и «не по теме»,
-    # иначе они перехватывают такие сообщения
+    # жалоба, возврат денег, угроза отзывом — сразу администратору. Выше медицины: недовольство
+    # результатом процедуры модель часто считает медицинским вопросом, и человек вместо извинения
+    # получал «это вопрос для консультации». Уступает только острой опасности, которую забирает
+    # медицина, — там нужен ответ «звоните 103»
     Rule(
         "complaint",
-        when=lambda s: COMPLAINT(s.normalized),
+        when=lambda s: COMPLAINT(s.normalized) and not (s.medical_requested and ACUTE_DANGER(s.normalized)),
         answer=lambda s: _rule_complaint(s),
     ),
+    Rule("medical", when=lambda s: s.medical_requested, answer=lambda s: _rule_medical(s)),
     # «отменить / перенести запись» — про существующую запись, её ведёт администратор; выше новой записи
     Rule("booking_change", when=lambda s: BOOKING_CHANGE(s.normalized), answer=lambda s: _rule_booking_change(s)),
 )
@@ -2512,6 +2514,8 @@ def _analyze_message_core(
         # исключения §4.5-объекшен (research.md #5) всё равно проваливался бы в эскалацию
         # здесь, даже когда chat_utils уже провалидировал, что другого мед-сигнала нет.
         medical_requested = False
+    if LIFE_THREAT(normalized_message):
+        medical_requested = True
     # Живой баг (run_ai_evals.py, u_service_details): "что входит в Биоревитализация?" — NER
     # принял капитализированное, незнакомое модели название услуги за топоним. Реальный каталог
     # клиента — сверка, чтобы не доверять такому NER-совпадению (см. find_unsupported_city).

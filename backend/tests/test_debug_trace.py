@@ -120,3 +120,14 @@ def test_debug_page_renders(test_client) -> None:
     assert response.status_code == 200
     assert "Debug trace" in response.text
     assert "/api/debug/trace" in response.text
+
+
+def test_debug_trace_shows_which_rule_decided(test_client) -> None:
+    response = test_client.post(
+        "/api/debug/trace?token=demo-operator-token",
+        json={"company_id": "rosh_demo", "message": "не хочу больше жить"},
+    )
+
+    decision = next(step for step in response.json()["steps"] if step["step"] == "policy_decision")["result"]
+    assert decision["rule"] == "crisis"
+    assert decision["rules_matched"] == ["crisis"]

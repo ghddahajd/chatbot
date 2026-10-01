@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from app import policy
 from app.models import PolicyAction, PolicyReason, PolicyResult
-from app.policy.engine import Incoming, Rule, run_rules
+from app.policy.engine import Decision, Incoming, Rule, run_rules
 
 
 def _incoming(text: str = "привет") -> Incoming:
@@ -96,3 +96,39 @@ def test_crisis_is_decided_before_any_parsing(knowledge_base) -> None:
 
     assert outcome.rule == "crisis"
     assert outcome.result.reason == PolicyReason.SELF_HARM_CRISIS
+
+
+# ---------------------------------------------------------------- подпись решения
+
+
+def test_decision_collects_matches_across_lists_and_keeps_the_winner() -> None:
+    decision = Decision()
+
+    decision.note(run_rules((Rule("a", when=lambda _: True, answer=lambda _: None),), _incoming()))
+    decision.note(run_rules(
+        (Rule("b", when=lambda _: True, answer=_answer(PolicyReason.OK)), Rule("c", when=lambda _: True, answer=_answer(PolicyReason.OK))),
+        _incoming(),
+    ))
+
+    assert decision.rule == "b"
+    assert decision.matched == ["a", "b", "c"]
+
+
+def test_analyze_message_signs_which_rule_decided(policy_session, knowledge_base) -> None:
+    crisis = policy.analyze_message("не хочу больше жить", policy_session, knowledge_base, {"intent": "unknown", "confidence": 0.0})
+    legacy = policy.analyze_message("привет", policy_session, knowledge_base, {"intent": "small_talk", "confidence": 0.9})
+
+    assert (crisis.rule, crisis.rules_matched) == ("crisis", ["crisis"])
+    assert (legacy.rule, legacy.rules_matched) == (None, [])  # ветка ещё не вынесена в правило
+
+
+def test_medical_currently_shadows_a_complaint_and_the_dispute_is_visible(policy_session, knowledge_base) -> None:
+    # Yandex считает «хочу пожаловаться на врача» медицинским вопросом. Пока медицина выше жалобы —
+    # она и отвечает; проигравшая жалоба видна в rules_matched.
+    result = policy.analyze_message(
+        "хочу пожаловаться на врача", policy_session, knowledge_base, {"intent": "regulated_advice", "confidence": 0.9}
+    )
+
+    assert result.rule == "medical"
+    assert result.rules_matched == ["medical", "complaint"]
+    assert result.reason == PolicyReason.REGULATED_ADVICE

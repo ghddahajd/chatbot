@@ -22,6 +22,7 @@ from ..models import (
     PendingAction,
     PolicyAction,
     PolicyReason,
+    PolicyResult,
     SessionStatus,
 )
 from ..policy import (
@@ -94,6 +95,13 @@ class ChatService:
 
     def __init__(self, request: Request) -> None:
         self.request = request
+        # какое правило решило этот ход и какие проиграли — для строки chat_turn в логе
+        self._policy_rule: str | None = None
+        self._policy_rules_lost: list[str] = []
+
+    def _remember_rule(self, policy_result: PolicyResult) -> None:
+        self._policy_rule = policy_result.rule
+        self._policy_rules_lost = [name for name in policy_result.rules_matched if name != policy_result.rule]
 
     def _phrase(self, key: str, fallback: str, seed: str | None = None) -> str:
         phrasebook = getattr(self, "_phrasebook", {})
@@ -1353,6 +1361,8 @@ class ChatService:
             session=session_id[:8],
             action=response.action.value,
             reason=session.last_intent if session else None,
+            rule=self._policy_rule,
+            **({"rule_lost": ",".join(self._policy_rules_lost)} if self._policy_rules_lost else {}),
             answer_chars=len(response.answer or ""),
             ms=None if duration_ms is None else int(duration_ms),
         )
@@ -1483,6 +1493,7 @@ class ChatService:
                 knowledge_base,
                 local_classification,
             )
+            self._remember_rule(waiting_policy_result)
             contact = waiting_policy_result.safe_context.get("contact")
             if waiting_policy_result.action == PolicyAction.ASK_CONTACT and contact:
                 unresolved_metadata = self._current_unresolved_lead_metadata(
@@ -1613,6 +1624,7 @@ class ChatService:
                 knowledge_base,
                 classification,
             )
+        self._remember_rule(policy_result)
 
         await analytics_service.track_policy_result(
             company_id=session.company_id,

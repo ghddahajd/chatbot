@@ -352,3 +352,14 @@ def test_startup_survives_a_failing_startup_summary(managed_env, monkeypatch: py
 
     assert response.status_code in (200, 207)  # приложение поднялось и отвечает
     assert any("startup_summary failed error=RuntimeError" in r.getMessage() for r in caplog.records)
+
+
+def test_chat_turn_names_the_rule(test_client, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="app"):
+        _chat(test_client, "не хочу больше жить")
+        _chat(test_client, "привет")
+
+    turns = [record.getMessage() for record in caplog.records if record.getMessage().startswith("chat_turn ")]
+    assert "rule=crisis" in turns[0]
+    assert "rule=-" in turns[1]  # ветка ещё не вынесена в правило
+    assert all("rule_lost=" not in turn for turn in turns)

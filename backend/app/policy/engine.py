@@ -69,6 +69,19 @@ class RuleOutcome:
     matched: list[str] = field(default_factory=list)
 
 
+@dataclass
+class Decision:
+    """итог хода по всем спискам правил: кто решил и кто совпадал."""
+
+    rule: Optional[str] = None
+    matched: list[str] = field(default_factory=list)
+
+    def note(self, outcome: RuleOutcome) -> None:
+        self.matched.extend(outcome.matched)
+        if outcome.result is not None:
+            self.rule = outcome.rule
+
+
 def run_rules(rules: Sequence[Rule[Context]], context: Context) -> RuleOutcome:
     """решение — первое по порядку совпавшее правило, у которого нашёлся ответ."""
 

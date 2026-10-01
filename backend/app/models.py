@@ -232,6 +232,10 @@ class PolicyResult(BaseModel):
     confidence: float = 0.0
     safe_context: dict[str, Any] = Field(default_factory=dict)
     quick_actions: list[Any] = Field(default_factory=list)
+    # какое правило решило (None — ветка, ещё не вынесенная в правило) и все совпавшие правила хода;
+    # только для отладки и логов — в ответ и в контекст LLM не попадает
+    rule: Optional[str] = None
+    rules_matched: list[str] = Field(default_factory=list)
 
 
 class ChatMessageRequest(BaseModel):

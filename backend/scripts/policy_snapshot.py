@@ -440,6 +440,9 @@ def run_version(
                             message_to_user=context.get("message_to_user"),
                             context_hash=_context_hash(context),
                             llm_input_hash=_llm_input_hash(llm_client_cls, context),
+                            # не сравниваются: у версий до каркаса правил этих полей нет
+                            rule=getattr(result, "rule", None),
+                            rules_matched=list(getattr(result, "rules_matched", None) or []),
                             error=None,
                         )
                     except Exception as error:  # noqa: BLE001 — падение на одном сообщении — тоже результат
@@ -689,6 +692,46 @@ def render_report(diff: dict[str, Any], expected: set[str], meta: dict[str, Any]
     return "\n".join(lines)
 
 
+def rule_conflicts(results: list[dict[str, Any]], messages: dict[str, str], limit: int = 3) -> list[dict[str, Any]]:
+    """споры правил: на одном ходе совпало несколько правил — кто выиграл, кто проиграл, на чём."""
+
+    groups: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(list)
+    for record in results:
+        matched = record.get("rules_matched") or []
+        if len(matched) < 2:
+            continue
+        winner = record.get("rule") or "старая ветка"
+        groups[(winner, tuple(name for name in matched if name != record.get("rule")))].append(record)
+    rows = []
+    for (winner, losers), items in sorted(groups.items(), key=lambda item: -len(item[1])):
+        ids = list(dict.fromkeys(item["id"] for item in items))
+        rows.append(
+            {
+                "winner": winner,
+                "losers": list(losers),
+                "messages": len(ids),
+                "runs": len(items),
+                "examples": [messages.get(case_id, case_id) for case_id in ids[:limit]],
+            }
+        )
+    return rows
+
+
+def render_conflicts(rows: list[dict[str, Any]]) -> str:
+    lines = ["## Споры правил", ""]
+    if not rows:
+        return "\n".join(lines + ["Споров нет: ни на одном ходе не совпало больше одного правила.", ""])
+    lines.append("Совпало несколько правил сразу; ответило первое по порядку.")
+    lines.append("")
+    for row in rows:
+        examples = "; ".join(f"«{text[:70]}»" for text in row["examples"])
+        lines.append(
+            f"- `{row['winner']}` выиграло у `{', '.join(row['losers'])}` — сообщений {row['messages']} "
+            f"(прогонов {row['runs']}): {examples}"
+        )
+    return "\n".join(lines + [""])
+
+
 # ---------------------------------------------------------------- оркестровка
 
 
@@ -856,7 +899,10 @@ def command_compare(args: argparse.Namespace) -> int:
         "base_seconds": seconds["base"],
         "head_seconds": seconds["head"],
     }
-    report = render_report(diff, expected, meta)
+    messages = {case_id: case["message"] for case_id, case in corpus.items()}
+    report = render_report(diff, expected, meta) + "\n" + render_conflicts(
+        rule_conflicts(_read_jsonl(out_dir / "results_head.jsonl"), messages)
+    )
     (out_dir / "report.md").write_text(report, encoding="utf-8")
     (out_dir / "diff.json").write_text(json.dumps({"meta": meta, **diff}, ensure_ascii=False, indent=1), encoding="utf-8")
     print(report)
@@ -896,6 +942,9 @@ def command_coverage(args: argparse.Namespace) -> int:
     print(f"Исходы правил: задето {report['returns_hit']} из {report['returns_total']}")
     for item in missing:
         print(f"  не задет: {item['line']} — {item['hint']}")
+    messages = {case["id"]: case["message"] for case in _read_jsonl(out_dir / "corpus.jsonl")}
+    results = [record for path in sorted(out_dir.glob("results.part*.jsonl")) for record in _read_jsonl(path)]
+    print(render_conflicts(rule_conflicts(results, messages)))
     print(f"Файлы: {out_dir}")
     return 0
 

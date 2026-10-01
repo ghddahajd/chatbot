@@ -261,3 +261,22 @@ def test_coverage_sees_rule_outcomes_and_skips_pass_through_returns() -> None:
     source = (BACKEND_DIR / "app" / "policy" / "__init__.py").read_text(encoding="utf-8").splitlines()
     pass_through = [f"__init__.py:{number}" for number, line in enumerate(source, 1) if line.strip().endswith(".result") and line.strip().startswith("return ")]
     assert pass_through and not set(pass_through) & set(coverage.returns)
+
+
+def test_rule_conflicts_group_by_winner_and_losers() -> None:
+    results = [
+        {"id": "m1", "rule": "medical", "rules_matched": ["medical", "complaint"]},
+        {"id": "m1", "rule": "medical", "rules_matched": ["medical", "complaint"]},  # то же сообщение ночью
+        {"id": "m2", "rule": "medical", "rules_matched": ["medical", "complaint"]},
+        {"id": "m3", "rule": "crisis", "rules_matched": ["crisis"]},
+        {"id": "m4", "rule": None, "rules_matched": []},
+    ]
+
+    rows = snap.rule_conflicts(results, {"m1": "хочу пожаловаться на врача", "m2": "недовольна результатом"})
+
+    assert rows == [{
+        "winner": "medical", "losers": ["complaint"], "messages": 2, "runs": 3,
+        "examples": ["хочу пожаловаться на врача", "недовольна результатом"],
+    }]
+    assert "`medical` выиграло у `complaint` — сообщений 2 (прогонов 3)" in snap.render_conflicts(rows)
+    assert "Споров нет" in snap.render_conflicts([])

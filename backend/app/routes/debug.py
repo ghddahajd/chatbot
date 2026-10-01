@@ -353,6 +353,8 @@ async def debug_trace(
                 "confidence": policy_result.confidence,
                 "quick_actions": policy_result.quick_actions,
                 "safe_context_keys": sorted(policy_result.safe_context.keys()),
+                "rule": policy_result.rule,
+                "rules_matched": policy_result.rules_matched,
             },
         }
     )

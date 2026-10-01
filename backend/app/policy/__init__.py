@@ -101,7 +101,7 @@ from .extractors import (
     lemmatize_known_name,
     lemmatize_tokens,
 )
-from .engine import Incoming, Rule, Signals, run_rules
+from .engine import Decision, Incoming, Rule, Signals, run_rules
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
 from .restricted import is_restricted_question
@@ -2509,9 +2509,11 @@ def _analyze_message_core(
     session: Session,
     knowledge_base: KnowledgeBase,
     classification: Optional[dict[str, object]] = None,
+    decision: Optional[Decision] = None,
 ) -> PolicyResult:
     """классифицирует сообщение до любого взаимодействия с llm."""
 
+    decision = decision if decision is not None else Decision()
     classification = normalize_classification(classification or {})
     intent = str(classification["intent"])
     classifier_confidence = float(classification["confidence"])
@@ -2526,6 +2528,7 @@ def _analyze_message_core(
         confidence=classifier_confidence,
     )
     first = run_rules(FIRST_RULES, incoming)
+    decision.note(first)
     if first.result is not None:
         return first.result
 
@@ -2654,6 +2657,7 @@ def _analyze_message_core(
         sensitive_topic=sensitive_topic,
     )
     safety = run_rules(SAFETY_RULES, signals)
+    decision.note(safety)
     if safety.result is not None:
         return safety.result
 
@@ -3836,8 +3840,11 @@ def analyze_message(
     """классифицирует сообщение до любого взаимодействия с llm.
 
     Тонкая обёртка вокруг _analyze_message_core: применяет общий пост-чек поверх ЛЮБОЙ ветки
-    (см. _augment_dropped_booking_intent) вместо точечных правок внутри каждой из них.
+    (см. _augment_dropped_booking_intent) вместо точечных правок внутри каждой из них и подписывает,
+    какое правило решило.
     """
 
-    result = _analyze_message_core(message, session, knowledge_base, classification)
-    return _augment_dropped_booking_intent(result, message, knowledge_base)
+    decision = Decision()
+    result = _analyze_message_core(message, session, knowledge_base, classification, decision)
+    result = _augment_dropped_booking_intent(result, message, knowledge_base)
+    return result.model_copy(update={"rule": decision.rule, "rules_matched": list(decision.matched)})

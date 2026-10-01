@@ -257,6 +257,9 @@ def build_corpus(repo_dir: Path, clients_dir: Path, eval_dir: Path, company_id: 
     for entry in kb.article_service_map.values():
         builder.add(entry.title, "client:articles")
         builder.add_many(entry.trigger_phrases, "client:articles")
+    for phrase in getattr(kb, "symptom_service_map", {}):
+        builder.add(phrase, "client:symptoms")
+        builder.add(KEYWORD_CARRIER.format(phrase), "client:symptoms")
     for keyword in _strings_under_keys(kb.config_payload, ("keyword", "trigger")):
         builder.add(keyword, "client:config")
         builder.add(TOPIC_CARRIER.format(keyword), "client:config")
@@ -689,6 +692,8 @@ def _child_env(clients_dir: Path) -> dict[str, str]:
             "DEV_MODE": "true",
             "CLIENTS_DATA_DIR": str(clients_dir),
             "RAG_CHUNKS_FILE": os.environ.get("RAG_CHUNKS_FILE", str(DEFAULT_RAG_FILE)),
+            # версии до шага 5 читают RAG_CHUNKS_FILE, после — rag.corpus клиента от этой папки
+            "RAG_CORPUS_DIR": os.environ.get("RAG_CORPUS_DIR", str(REPO_DIR / "client-input")),
             "LOG_LEVEL": "ERROR",
             "TELEGRAM_BOT_TOKEN": "",
             # pymorphy2 шумит DeprecationWarning про pkg_resources в каждом процессе

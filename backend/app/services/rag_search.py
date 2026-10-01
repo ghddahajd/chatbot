@@ -72,10 +72,20 @@ MIN_ARTICLE_SCORE = 6.0
 
 
 def default_rag_chunks_path() -> Path:
-    """Return configured chunks path, falling back to local staging corpus."""
+    """Return configured chunks path, falling back to local staging corpus.
+
+    Только для скриптов и прямых вызовов поиска — чат берёт корпус из конфига клиента
+    (KnowledgeBase.rag_corpus_path), иначе один клиент увидел бы статьи другого."""
 
     configured = os.getenv("RAG_CHUNKS_FILE")
     return Path(configured).expanduser() if configured else DEFAULT_CHUNKS_PATH
+
+
+def rag_corpus_dir() -> Path:
+    """папка корпусов статей: rag.corpus в конфиге клиента указывается относительно неё."""
+
+    configured = os.getenv("RAG_CORPUS_DIR")
+    return Path(configured).expanduser() if configured else REPO_ROOT / "client-input"
 
 
 def normalize_text(value: str) -> str:
@@ -351,10 +361,11 @@ def retrieve_article_context(
     query: str,
     top_k: int = 3,
     min_score: float = MIN_ARTICLE_SCORE,
+    path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Return confident article matches for safe_context."""
 
-    results = search_rag_chunks(query=query, top_k=top_k)
+    results = search_rag_chunks(query=query, top_k=top_k, path=path)
     matches = []
     for match in results.get("matches", []):
         if float(match.get("score") or 0.0) < min_score:

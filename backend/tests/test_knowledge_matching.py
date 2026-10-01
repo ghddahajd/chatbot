@@ -188,7 +188,7 @@ def test_cosmetic_concern_can_use_approved_article_service_mapping(
     monkeypatch.setattr(
         policy_module,
         "_retrieve_article_context_safe",
-        lambda message: [
+        lambda message, knowledge_base: [
             {
                 "title": "Второй подбородок: причины появления",
                 "url": (
@@ -243,7 +243,7 @@ def test_unknown_service_asks_followup_on_first_message(
     )
     knowledge_base = resolver.get("rosh_import_demo", fallback=False)
     monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
 
     result = analyze_message(
         "темные круги под глазами, что посоветуете?",
@@ -278,7 +278,7 @@ def test_unknown_service_uses_article_trigger_phrase_on_later_message(
     )
     knowledge_base = resolver.get("rosh_import_demo", fallback=False)
     monkeypatch.setattr(policy_module, "similar_services_result", lambda *args, **kwargs: None)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
     monkeypatch.setattr(policy_module, "get_opening_excerpt_for_url", lambda *args, **kwargs: None)
     policy_session.messages.append(Message(role=MessageRole.ASSISTANT, text="Добрый день! Чем могу помочь?"))
 
@@ -321,7 +321,7 @@ def test_faq_question_ignores_curated_mapping_that_disagrees_with_known_service(
     monkeypatch.setattr(
         policy_module,
         "_retrieve_article_context_safe",
-        lambda message: [
+        lambda message, knowledge_base: [
             {
                 "title": "Белые угри",
                 "url": unrelated_article_url,
@@ -370,7 +370,7 @@ def test_medical_advice_branch_also_ignores_disagreeing_curated_mapping(
     monkeypatch.setattr(
         policy_module,
         "_retrieve_article_context_safe",
-        lambda message: [
+        lambda message, knowledge_base: [
             {
                 "title": "Можно ли забеременеть во время кормления грудью",
                 "url": unrelated_article_url,
@@ -405,7 +405,7 @@ def test_faq_question_prefers_approved_article_mapping_over_free_answer(
     import app.policy as policy_module
 
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
 
     result = analyze_message(
         "темные круги под глазами, что посоветуете?",
@@ -428,7 +428,7 @@ def test_faq_question_without_approved_mapping_keeps_old_behavior(
     import app.policy as policy_module
 
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
 
     result = analyze_message(
         "что нельзя делать после чистки лица?",
@@ -464,7 +464,7 @@ def test_faq_question_ignores_weak_rag_article_overlap(
             "score": 6.1,
         }
     ]
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: weak_match)
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: weak_match)
 
     result = analyze_message(
         "напомните пожалуйста время работы",
@@ -489,7 +489,7 @@ def test_regulated_without_hard_signal_asks_followup_on_first_message(
     import app.policy as policy_module
 
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
 
     result = analyze_message(
         "выпадают волосы, что можно сделать?",
@@ -514,7 +514,7 @@ def test_regulated_without_hard_signal_uses_article_trigger_phrase_on_later_mess
     import app.policy as policy_module
 
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
     policy_session.messages.append(Message(role=MessageRole.ASSISTANT, text="Добрый день! Чем могу помочь?"))
 
     result = analyze_message(
@@ -579,7 +579,7 @@ def test_regulated_with_hard_signal_does_not_use_article_trigger_phrase(
     import app.policy as policy_module
 
     knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
-    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message: [])
+    monkeypatch.setattr(policy_module, "_retrieve_article_context_safe", lambda message, knowledge_base: [])
 
     result = analyze_message(
         "выпадают волосы, но еще температура",
@@ -604,7 +604,7 @@ def test_cosmetic_concern_ignores_unapproved_article_mapping(
     monkeypatch.setattr(
         policy_module,
         "_retrieve_article_context_safe",
-        lambda message: [
+        lambda message, knowledge_base: [
             {
                 "title": "Непромодерированная статья",
                 "url": "https://www.medcenterrosh.ru/blog/not-reviewed",

@@ -34,7 +34,8 @@ services:
     env_file:
       - .env
     environment:
-      RAG_CHUNKS_FILE: /client-input/normalized/rosh_articles/crawl/chunks.corpus.jsonl
+      # корпуса статей: rag.corpus в config.yaml клиента указывается относительно этой папки
+      RAG_CORPUS_DIR: /client-input
       # /app/data — уже смонтирован из ./backend/data (см. volumes ниже), переживает
       # рестарт контейнера. Задаём именно тут (не в .env), потому что "/app/..." — это
       # путь ВНУТРИ контейнера и ломает native-запуски (скрипты/тесты вне docker), которые

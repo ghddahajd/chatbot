@@ -8,7 +8,7 @@
     python3 backend/scripts/policy_snapshot.py compare                  # feat/multiclient против рабочей копии
     python3 backend/scripts/policy_snapshot.py compare --base main
     python3 backend/scripts/policy_snapshot.py compare --expect ожидания.json
-    python3 backend/scripts/policy_snapshot.py coverage                 # какие исходы _analyze_message_core задеты
+    python3 backend/scripts/policy_snapshot.py coverage                 # какие исходы правил задеты
     python3 backend/scripts/policy_snapshot.py import-live tasks/chats_all_*.json
 
 Детерминизм: фиксированный session_id на случай, random.choice всегда берёт первый вариант (не
@@ -532,29 +532,42 @@ def contexts_for(message: str) -> tuple[str, ...]:
 
 
 class _CoreCoverage:
-    """какие return внутри _analyze_message_core выполнились (sys.settrace только вокруг analyze_message)."""
+    """какие исходы правил выполнились: return внутри _analyze_message_core и в ответах правил
+    (_rule_* в app/policy). Сквозное `return x.result` — передача решения правила, не отдельный исход.
+    sys.settrace только вокруг analyze_message."""
 
     def __init__(self, app_dir: Path) -> None:
-        self.path = (app_dir / "app" / "policy" / "__init__.py").resolve()
-        source = self.path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        core = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_analyze_message_core")
-        self.returns: dict[int, str] = {}
-        for node in ast.walk(core):
-            if isinstance(node, ast.Return):
-                segment = ast.get_source_segment(source, node) or ""
-                reason = re.search(r"PolicyReason\.(\w+)", segment)
-                self.returns[node.lineno] = reason.group(1) if reason else _enclosing_hint(core, node)
-        self.hits: set[int] = set()
-        self._target = str(self.path)
+        self.returns: dict[str, str] = {}
+        self._targets: set[tuple[str, str]] = set()
+        for path in sorted((app_dir / "app" / "policy").glob("*.py")):
+            path = path.resolve()
+            source = path.read_text(encoding="utf-8")
+            for func in ast.walk(ast.parse(source)):
+                if not isinstance(func, ast.FunctionDef):
+                    continue
+                if func.name != "_analyze_message_core" and not func.name.startswith("_rule_"):
+                    continue
+                self._targets.add((str(path), func.name))
+                prefix = "" if func.name == "_analyze_message_core" else f"{func.name}: "
+                for node in ast.walk(func):
+                    if not isinstance(node, ast.Return):
+                        continue
+                    if isinstance(node.value, ast.Attribute) and node.value.attr == "result":
+                        continue
+                    segment = ast.get_source_segment(source, node) or ""
+                    reason = re.search(r"PolicyReason\.(\w+)", segment)
+                    hint = reason.group(1) if reason else _enclosing_hint(func, node)
+                    self.returns[f"{path.name}:{node.lineno}"] = prefix + hint
+        self.returns = dict(sorted(self.returns.items(), key=lambda item: (item[0].split(":")[0], int(item[0].split(":")[1]))))
+        self.hits: set[str] = set()
 
     def _local(self, frame, event, arg):
         if event == "line":
-            self.hits.add(frame.f_lineno)
+            self.hits.add(f"{Path(frame.f_code.co_filename).name}:{frame.f_lineno}")
         return self._local
 
     def _global(self, frame, event, arg):
-        if frame.f_code.co_filename == self._target and frame.f_code.co_name == "_analyze_message_core":
+        if (frame.f_code.co_filename, frame.f_code.co_name) in self._targets:
             return self._local
         return None
 
@@ -565,13 +578,13 @@ class _CoreCoverage:
         sys.settrace(None)
 
     def report(self) -> dict[str, Any]:
-        missing = {line: hint for line, hint in sorted(self.returns.items()) if line not in self.hits}
+        missing = {key: hint for key, hint in self.returns.items() if key not in self.hits}
         return {
             "returns_total": len(self.returns),
             "returns_hit": len(self.returns) - len(missing),
-            "missing": [{"line": line, "hint": hint} for line, hint in missing.items()],
-            "returns": {str(line): hint for line, hint in sorted(self.returns.items())},
-            "hit_lines": sorted(line for line in self.hits if line in self.returns),
+            "missing": [{"line": key, "hint": hint} for key, hint in missing.items()],
+            "returns": dict(self.returns),
+            "hit_lines": sorted(key for key in self.hits if key in self.returns),
         }
 
 
@@ -854,7 +867,7 @@ def command_compare(args: argparse.Namespace) -> int:
 
 
 def command_coverage(args: argparse.Namespace) -> int:
-    """корпус через рабочую копию с трассировкой _analyze_message_core, частями параллельно; попадания складываются."""
+    """корпус через рабочую копию с трассировкой исходов правил, частями параллельно; попадания складываются."""
 
     clients_dir = Path(args.clients_dir).resolve()
     out_dir = Path(args.out_dir) / f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}_coverage"
@@ -875,14 +888,14 @@ def command_coverage(args: argparse.Namespace) -> int:
         print("прогон упал", file=sys.stderr)
         return 2
     parts = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(out_dir.glob("coverage.part*.json"))]
-    returns = {int(line): hint for line, hint in parts[0]["returns"].items()}
+    returns = dict(parts[0]["returns"])
     hit = set().union(*(set(part["hit_lines"]) for part in parts))
-    missing = [{"line": line, "hint": hint} for line, hint in sorted(returns.items()) if line not in hit]
+    missing = [{"line": line, "hint": hint} for line, hint in returns.items() if line not in hit]
     report = {"returns_total": len(returns), "returns_hit": len(returns) - len(missing), "missing": missing}
     (out_dir / "coverage.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"Исходы _analyze_message_core: задето {report['returns_hit']} из {report['returns_total']}")
+    print(f"Исходы правил: задето {report['returns_hit']} из {report['returns_total']}")
     for item in missing:
-        print(f"  не задет: строка {item['line']} — {item['hint']}")
+        print(f"  не задет: {item['line']} — {item['hint']}")
     print(f"Файлы: {out_dir}")
     return 0
 
@@ -992,7 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
         "--pause", type=float, default=DEFAULT_PAUSE_RATIO, help="доля отдыха от времени работы (0 — без пауз, 0.5 по умолчанию)"
     )
 
-    coverage = sub.add_parser("coverage", help="покрытие исходов _analyze_message_core корпусом")
+    coverage = sub.add_parser("coverage", help="покрытие исходов правил корпусом")
     common(coverage)
     coverage.add_argument("--times", nargs="+", default=list(FIXED_TIMES), choices=list(FIXED_TIMES))
     coverage.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))

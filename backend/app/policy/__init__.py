@@ -101,6 +101,7 @@ from .extractors import (
     lemmatize_known_name,
     lemmatize_tokens,
 )
+from .engine import Incoming, Rule, Signals, run_rules
 from .intent import classify_and_extract, normalize_classification
 from .quick_actions import all_services_context, service_name_quick_actions, services_summary
 from .restricted import is_restricted_question
@@ -2369,6 +2370,140 @@ def _fact_guard_known_values_result(
     return None
 
 
+# ---------------------------------------------------------------- правила безопасности
+# Ответы правил названы _rule_<имя>: по этому префиксу отчёт покрытия (policy_snapshot.py coverage)
+# находит их исходы — не переименовывать без него.
+
+
+def _is_crisis(m: Incoming) -> bool:
+    return contains_keyword(m.normalized, SELF_HARM_KEYWORDS) and not contains_keyword(
+        m.normalized, SELF_HARM_BENIGN_CONTEXT_EXCLUDE
+    )
+
+
+def _rule_crisis(m: Incoming) -> PolicyResult:
+    return PolicyResult(
+        action=PolicyAction.TRANSFER_OPERATOR,
+        reason=PolicyReason.SELF_HARM_CRISIS,
+        confidence=0.98,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": _phrase(m.knowledge_base, "self_harm_crisis"),
+            "handoff_message": _phrase(m.knowledge_base, "self_harm_crisis"),
+        },
+        quick_actions=[],
+    )
+
+
+def _rule_ambulance_fact(s: Signals) -> Optional[PolicyResult]:
+    return _clinic_info_result(
+        s.message,
+        s.normalized,
+        s.knowledge_base,
+        s.session,
+        str(s.classification.get("context_topic") or "") or None,
+        booking_requested=s.booking_requested,
+    )
+
+
+def _rule_sensitive_topic(s: Signals) -> PolicyResult:
+    return _sensitive_topic_result(
+        s.sensitive_topic,
+        s.normalized,
+        s.knowledge_base,
+        s.session,
+        s.service,
+        s.restricted_category,
+    )
+
+
+def _rule_medical(s: Signals) -> PolicyResult:
+    if not _has_hard_restricted_signal(s.normalized):
+        article_matches = _retrieve_article_context_safe(s.message, s.knowledge_base)
+        guidance_result = _cosmetic_article_guidance_result(
+            s.knowledge_base,
+            article_matches,
+            s.normalized,
+            known_service_id=s.service.id if s.service is not None else None,
+        )
+        # статья подсказывает, только если пересекается с сообщением по-настоящему: одно общее
+        # слово («процедуры») не должно перебивать эскалацию на «лицо распухло, тяжело дышать»
+        if guidance_result is not None and _has_strong_article_overlap(s.normalized, guidance_result):
+            # симптом на первой реплике, услуга не названа («выпадают волосы, не знаю к кому») —
+            # сначала короткий уточняющий вопрос, а не сразу услуга
+            if _is_first_substantive_message(s.session) and not _curated_match_is_explicit_service_mention(
+                guidance_result, s.knowledge_base
+            ):
+                return _symptom_followup_result(guidance_result, s.knowledge_base, s.session)
+            return guidance_result
+    return _medical_referral_result(
+        s.message,
+        s.normalized,
+        s.knowledge_base,
+        s.session,
+        s.service,
+        s.restricted_category,
+        s.phone,
+    )
+
+
+def _rule_complaint(s: Signals) -> PolicyResult:
+    return PolicyResult(
+        action=PolicyAction.TRANSFER_OPERATOR,
+        reason=PolicyReason.COMPLAINT,
+        service_id=s.service.id if s.service else None,
+        confidence=0.92,
+        safe_context={
+            "force_direct_answer": True,
+            "message_to_user": _phrase(s.knowledge_base, "complaint_escalation"),
+            "handoff_message": _phrase(s.knowledge_base, "complaint_escalation"),
+        },
+        quick_actions=["Написать в Telegram", "Открыть сайт"],
+    )
+
+
+def _rule_booking_change(s: Signals) -> PolicyResult:
+    # во время оформления новой записи в чате «отмените запись» относится к ней самой
+    if s.session.pending_action == PendingAction.BOOKING_CONTACT.value and is_booking_cancel_only(s.normalized):
+        return _booking_cancelled_result(s.knowledge_base)
+    return _booking_change_result(s.message, s.phone, s.knowledge_base, s.session.lead_phone)
+
+
+# Функции правил вызываются через lambda: так подмена в тестах (monkeypatch на модуль) продолжает
+# работать — ссылка, сохранённая прямо в кортеже, подмену бы не увидела.
+
+# Раньше всего, до разбора сообщения и до решения классификатора: самая опасная категория не должна
+# зависеть ни от модели, ни от остальных веток. Идиомы («не хочу жить в этом районе», «умереть со
+# стыда») отсекает SELF_HARM_BENIGN_CONTEXT_EXCLUDE.
+FIRST_RULES: tuple[Rule[Incoming], ...] = (
+    Rule("crisis", when=lambda m: _is_crisis(m), answer=lambda m: _rule_crisis(m)),
+)
+
+# Сразу после разбора, раньше записи, цены и всего остального. Порядок = приоритет: кто выше, тот
+# и отвечает (test_policy_rules.py сторожит порядок — переставлять осознанно).
+SAFETY_RULES: tuple[Rule[Signals], ...] = (
+    # «как вызвать скорую», «есть ли у вас скорая» — справка о клинике; при срочных симптомах
+    # правило не совпадает, и сообщение уходит в медицину
+    Rule(
+        "ambulance_fact",
+        when=lambda s: _is_ambulance_fact_question(s.normalized) and not _has_urgent_symptom(s.normalized),
+        answer=lambda s: _rule_ambulance_fact(s),
+    ),
+    # у чувствительных тем клиента своё решение (ответить, отказать, передать) — оно точнее общей медицины
+    Rule("sensitive_topic", when=lambda s: s.sensitive_topic is not None, answer=lambda s: _rule_sensitive_topic(s)),
+    Rule("medical", when=lambda s: s.medical_requested, answer=lambda s: _rule_medical(s)),
+    # жалоба, возврат денег, угроза отзывом — сразу администратору; выше записи, цены и «не по теме»,
+    # иначе они перехватывают такие сообщения
+    Rule(
+        "complaint",
+        when=lambda s: contains_keyword(s.normalized, COMPLAINT_ESCALATION_KEYWORDS),
+        answer=lambda s: _rule_complaint(s),
+    ),
+    # «отменить / перенести запись» — про существующую запись, её ведёт администратор; выше новой записи
+    Rule("booking_change", when=lambda s: is_booking_change_request(s.normalized), answer=lambda s: _rule_booking_change(s)),
+)
+
+
 def _analyze_message_core(
     message: str,
     session: Session,
@@ -2381,35 +2516,18 @@ def _analyze_message_core(
     intent = str(classification["intent"])
     classifier_confidence = float(classification["confidence"])
     normalized_message = normalize_text(message)
-
-    # Живой баг (демо-тестирование, 2026-08-24): domain_profile.hard_block_topics содержит
-    # "self_harm", но это было чисто декларативное поле — ни одного детерминированного
-    # ключевого слова про суицид/самоповреждение нигде в коде, только упоминание в промпте
-    # настоящему LLM как подсказка. "Я не хочу больше жить"/"думаю о суициде" получали ОБЩИЙ
-    # шаблон regulated_advice ("подключить менеджера?"), неотличимый от рутинного медицинского
-    # вопроса — самая критичная по безопасности категория целиком зависела от суждения LLM без
-    # гарантированного бэкапа. Проверяем ПЕРВЫМ, до вообще любой другой классификации/веток —
-    # не зависит от того, что решил классификатор (local ИЛИ модель).
-    #
-    # Живой баг #2 (ручное демо-тестирование, тот же день): "не хочу жить в этом районе,
-    # шумно" и "лучше бы я умерла со стыда, так неудобно вышло" ложно ловились — фразы
-    # SELF_HARM_KEYWORDS не проверяют, чем продолжается сообщение. SELF_HARM_BENIGN_CONTEXT_
-    # EXCLUDE — конкретные продолжения (предлог места после "жить", идиомы "умереть со
-    # стыда/смеху/скуки"), которые превращают формальное совпадение в безобидный контекст.
-    if contains_keyword(normalized_message, SELF_HARM_KEYWORDS) and not contains_keyword(
-        normalized_message, SELF_HARM_BENIGN_CONTEXT_EXCLUDE
-    ):
-        return PolicyResult(
-            action=PolicyAction.TRANSFER_OPERATOR,
-            reason=PolicyReason.SELF_HARM_CRISIS,
-            confidence=0.98,
-            safe_context={
-                "force_direct_answer": True,
-                "message_to_user": _phrase(knowledge_base, "self_harm_crisis"),
-                "handoff_message": _phrase(knowledge_base, "self_harm_crisis"),
-            },
-            quick_actions=[],
-        )
+    incoming = Incoming(
+        message=message,
+        normalized=normalized_message,
+        session=session,
+        knowledge_base=knowledge_base,
+        classification=classification,
+        intent=intent,
+        confidence=classifier_confidence,
+    )
+    first = run_rules(FIRST_RULES, incoming)
+    if first.result is not None:
+        return first.result
 
     service = knowledge_base.find_service_by_id(classification.get("service_id"))
     if intent == "price_question" and normalized_message in GENERIC_PRICE_MESSAGES:
@@ -2509,88 +2627,35 @@ def _analyze_message_core(
     city_in_text = city_prepositional(knowledge_base.company.city)
     sensitive_topic = _sensitive_topic_match(normalized_message, knowledge_base)
 
-    if _is_ambulance_fact_question(normalized_message) and not _has_urgent_symptom(normalized_message):
-        clinic_info_result = _clinic_info_result(
-            message,
-            normalized_message,
-            knowledge_base,
-            session,
-            str(classification.get("context_topic") or "") or None,
-            booking_requested=booking_requested,
-        )
-        if clinic_info_result is not None:
-            return clinic_info_result
-
-    if sensitive_topic is not None:
-        return _sensitive_topic_result(
-            sensitive_topic,
-            normalized_message,
-            knowledge_base,
-            session,
-            service,
-            restricted_category,
-        )
-
-    if medical_requested:
-        if not _has_hard_restricted_signal(normalized_message):
-            article_matches = _retrieve_article_context_safe(message, knowledge_base)
-            guidance_result = _cosmetic_article_guidance_result(
-                knowledge_base,
-                article_matches,
-                normalized_message,
-                known_service_id=service.id if service is not None else None,
-            )
-            # Живой баг (research.md #1): в отличие от unknown_service/off_topic/list_services,
-            # эта ветка возвращала RAG-подсказку БЕЗ проверки _has_strong_article_overlap — одно
-            # случайное общее слово ("процедуры") со статьёй про восстановление волос перекрывало
-            # эскалацию на сообщении "лицо распухло, тяжело дышать". Тот же гейт, что и везде.
-            if guidance_result is not None and _has_strong_article_overlap(
-                normalized_message, guidance_result
-            ):
-                # Живой баг (research.md #4, третий аудит): каноничный пример §3.2 скрипта
-                # ("выпадают волосы, не знаю к кому обращаться") сразу получал предложение
-                # услуги — скрипт ожидает сначала короткий уточняющий вопрос, когда человек
-                # описал СИМПТОМ (не назвал услугу) на первой реплике диалога.
-                if _is_first_substantive_message(session) and not _curated_match_is_explicit_service_mention(
-                    guidance_result, knowledge_base
-                ):
-                    return _symptom_followup_result(guidance_result, knowledge_base, session)
-                return guidance_result
-        return _medical_referral_result(
-            message,
-            normalized_message,
-            knowledge_base,
-            session,
-            service,
-            restricted_category,
-            phone,
-        )
-
-    if contains_keyword(normalized_message, COMPLAINT_ESCALATION_KEYWORDS):
-        # Живой баг (research.md #2, третий аудит): §5 скрипта требует немедленной передачи
-        # оператору на жалобу/возврат денег/юридику/угрозу отзывом — раньше эти сообщения
-        # перехватывались booking_request/price_question/off_topic ниже и не эскалировали
-        # вообще. Приоритет — сразу после медицинской безопасности, до остальной классификации.
-        return PolicyResult(
-            action=PolicyAction.TRANSFER_OPERATOR,
-            reason=PolicyReason.COMPLAINT,
-            service_id=service.id if service else None,
-            confidence=0.92,
-            safe_context={
-                "force_direct_answer": True,
-                "message_to_user": _phrase(knowledge_base, "complaint_escalation"),
-                "handoff_message": _phrase(knowledge_base, "complaint_escalation"),
-            },
-            quick_actions=["Написать в Telegram", "Открыть сайт"],
-        )
-
-    if is_booking_change_request(normalized_message):
-        # во время оформления новой записи в чате «отмените запись» относится к ней самой
-        if session.pending_action == PendingAction.BOOKING_CONTACT.value and is_booking_cancel_only(
-            normalized_message
-        ):
-            return _booking_cancelled_result(knowledge_base)
-        return _booking_change_result(message, phone, knowledge_base, session.lead_phone)
+    signals = Signals(
+        message=message,
+        normalized=normalized_message,
+        session=session,
+        knowledge_base=knowledge_base,
+        classification=classification,
+        intent=intent,
+        confidence=classifier_confidence,
+        service=service,
+        phone=phone,
+        operator_requested=operator_requested,
+        operator_consent_given=operator_consent_given,
+        duration_requested=duration_requested,
+        explanation_requested=explanation_requested,
+        price_requested=price_requested,
+        booking_requested=booking_requested,
+        lead_requested=lead_requested,
+        booking_mentions_clinic_doctor=booking_mentions_clinic_doctor,
+        is_restricted=is_restricted,
+        restricted_category=restricted_category,
+        medical_requested=medical_requested,
+        known_service_text=known_service_text,
+        unsupported_city=unsupported_city,
+        city_in_text=city_in_text,
+        sensitive_topic=sensitive_topic,
+    )
+    safety = run_rules(SAFETY_RULES, signals)
+    if safety.result is not None:
+        return safety.result
 
     # Живой баг (аудит §2026-08-06): "хотя нет забудьте, а сколько стоит биоревитализация
     # губ?" — классификация уже верно распознала price_question (0.86), но бывшая голая

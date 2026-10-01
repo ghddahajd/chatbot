@@ -247,3 +247,17 @@ def test_llm_input_hash_uses_the_versions_own_context_builder() -> None:
     assert first == same_model_input and first != other
     assert snap._llm_input_hash(BrokenClient, {}) == "error:TypeError"
     assert snap._llm_input_hash(None, {}) is None
+
+
+# ---------------------------------------------------------------- покрытие исходов
+
+
+def test_coverage_sees_rule_outcomes_and_skips_pass_through_returns() -> None:
+    coverage = snap._CoreCoverage(BACKEND_DIR)
+    hints = list(coverage.returns.values())
+
+    assert "_rule_complaint: COMPLAINT" in hints
+    assert "_rule_crisis: SELF_HARM_CRISIS" in hints
+    source = (BACKEND_DIR / "app" / "policy" / "__init__.py").read_text(encoding="utf-8").splitlines()
+    pass_through = [f"__init__.py:{number}" for number, line in enumerate(source, 1) if line.strip().endswith(".result") and line.strip().startswith("return ")]
+    assert pass_through and not set(pass_through) & set(coverage.returns)

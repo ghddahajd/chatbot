@@ -231,16 +231,23 @@ def build_corpus(repo_dir: Path, clients_dir: Path, eval_dir: Path, company_id: 
     builder.add_many(_messages_from_tests(backend_dir / "tests"), "tests")
     builder.add_many(_list_literal(backend_dir / "scripts" / "debug_trace_batch.py", "DEFAULT_CASES"), "tests:debug_trace")
 
-    for name in sorted(vars(constants)):
-        value = getattr(constants, name)
-        if not name.isupper() or not isinstance(value, (set, frozenset, list, tuple, dict)) or not value:
-            continue
-        keywords = sorted(key for key in value if isinstance(key, str))
-        if not keywords or len(keywords) != len(value):
-            continue
-        for keyword in keywords:
-            builder.add(keyword, f"keywords:{name}")
-            builder.add(KEYWORD_CARRIER.format(keyword), f"keywords:{name}")
+    try:
+        from app.policy import detectors
+    except ImportError:  # версии до датчиков
+        detectors = None
+    for module in (constants, detectors):
+        for name in sorted(vars(module) if module is not None else ()):
+            value = getattr(module, name)
+            if not name.isupper() or not isinstance(value, (set, frozenset, list, tuple, dict)) or not value:
+                continue
+            keywords = sorted(key for key in value if isinstance(key, str))
+            if not keywords or len(keywords) != len(value):
+                continue
+            for keyword in keywords:
+                builder.add(keyword, f"keywords:{name}")
+                builder.add(KEYWORD_CARRIER.format(keyword), f"keywords:{name}")
+    for detector in getattr(detectors, "DETECTORS", ()):
+        builder.add_many([*detector.examples_yes, *detector.examples_no], f"detectors:{detector.name}")
 
     resolver = KnowledgeBaseResolver(
         data_dir=backend_dir / "data",

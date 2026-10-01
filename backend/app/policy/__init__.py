@@ -24,26 +24,15 @@ from ..services.rag_search import (
 from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
-    BOOKING_ABSENCE_PHRASES,
-    BOOKING_CANCEL_PREFIX,
-    BOOKING_CHANGE_OBJECT_PREFIXES,
-    BOOKING_CHANGE_TOKENS,
-    BOOKING_EXISTING_MARKERS,
     BOOKING_KEYWORDS,
-    BOOKING_REBOOK_TOKENS,
-    BOOKING_RESCHEDULE_EXTRA_OBJECTS,
-    BOOKING_RESCHEDULE_TOKENS,
     BOOKING_TIME_MENTION_PATTERN,
     BOOKING_WHEN_TILES,
     PROMPT_INJECTION_KEYWORDS,
-    COMPLAINT_ESCALATION_KEYWORDS,
     FRUSTRATION_LEAVING_KEYWORDS,
     OPERATOR_CONSENT_EXTRA_TOKENS,
     OPERATOR_CONSENT_WORDS,
     OWN_CONTACT_STEMS,
     REPRODUCTIVE_HEALTH_KEYWORDS,
-    AMBULANCE_ACTION_KEYWORDS,
-    AMBULANCE_SUBJECT_KEYWORDS,
     CLINIC_HOURS_EXTRA_KEYWORDS,
     CLINIC_LOCATION_KEYWORDS,
     CLINIC_PHONE_EXACT_MESSAGES,
@@ -65,11 +54,6 @@ from .constants import (
     LAB_TEST_KEYWORDS,
     LEAD_REQUEST_KEYWORDS,
     LEAD_FOLLOWUP_SHORT_KEYWORDS,
-    ACUTE_ALLERGY_KEYWORDS,
-    ACUTE_BLEEDING_KEYWORDS,
-    ACUTE_DETERIORATION_KEYWORDS,
-    PAIN_INTENSITY_KEYWORDS,
-    PAIN_WORDS,
     MEDICAL_KEYWORDS,
     MEDICAL_REFERRAL_KEYWORDS,
     NEGATIVE_MESSAGES,
@@ -79,8 +63,6 @@ from .constants import (
     PRICE_FUZZY_EXCLUDE_TOKENS,
     PRICE_KEYWORDS,
     PRODUCTS_FACT_KEYWORDS,
-    SELF_HARM_BENIGN_CONTEXT_EXCLUDE,
-    SELF_HARM_KEYWORDS,
     TELEGRAM_KEYWORDS,
     VISIT_KEYWORDS,
     WEBSITE_KEYWORDS,
@@ -100,6 +82,17 @@ from .extractors import (
     last_service_from_history,
     lemmatize_known_name,
     lemmatize_tokens,
+)
+from .detectors import (
+    ACUTE_DANGER,
+    AMBULANCE_QUESTION,
+    BOOKING_CANCEL_ONLY,
+    BOOKING_CHANGE,
+    COMPLAINT,
+    CRISIS,
+    SYMPTOM_MENTION,
+    is_booking_cancel_only,
+    is_booking_change_request,
 )
 from .engine import Decision, Incoming, Rule, Signals, run_rules
 from .intent import classify_and_extract, normalize_classification
@@ -1409,34 +1402,6 @@ def _looks_like_placeholder_address(address: str) -> bool:
     return not normalized or "уточняется" in normalized or "уточнит" in normalized
 
 
-URGENT_SYMPTOM_KEYWORDS = {
-    "кров",
-    "болит",
-    "больно",
-    "гной",
-    "температура",
-    "тошнит",
-    "головокруж",
-    "немеет",
-    "онем",
-    "отек",
-    "отёк",
-    "аллерг",
-    "зуд",
-    "жжение",
-    "воспален",
-}
-
-
-def _is_ambulance_fact_question(normalized_message: str) -> bool:
-    return contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS) and contains_keyword(
-        normalized_message,
-        AMBULANCE_ACTION_KEYWORDS,
-    )
-
-
-def _has_urgent_symptom(normalized_message: str) -> bool:
-    return contains_keyword(normalized_message, URGENT_SYMPTOM_KEYWORDS)
 
 
 def _without_contact_fillers(normalized_message: str) -> str:
@@ -1673,9 +1638,7 @@ def _clinic_info_result(
     elif contains_keyword(normalized_message, DMS_FACT_KEYWORDS):
         fact_value = facts.get("dms")
         fact_key = "fact_dms_yes" if fact_value is True else "fact_dms_no" if fact_value is False else ""
-    elif contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS) and contains_keyword(
-        normalized_message, AMBULANCE_ACTION_KEYWORDS
-    ):
+    elif AMBULANCE_QUESTION(normalized_message):
         fact_value = facts.get("ambulance_brings")
         fact_key = (
             "fact_ambulance_yes"
@@ -1697,10 +1660,7 @@ def _clinic_info_result(
     if fact_key or fact_value is None and (
         contains_keyword(normalized_message, OMS_FACT_KEYWORDS)
         or contains_keyword(normalized_message, DMS_FACT_KEYWORDS)
-        or (
-            contains_keyword(normalized_message, AMBULANCE_SUBJECT_KEYWORDS)
-            and contains_keyword(normalized_message, AMBULANCE_ACTION_KEYWORDS)
-        )
+        or AMBULANCE_QUESTION(normalized_message)
         or contains_keyword(normalized_message, PRODUCTS_FACT_KEYWORDS)
     ):
         message_to_user = (
@@ -2073,61 +2033,10 @@ def escalation_urgency_for(message: str) -> str:
     вызывающих пути не могли разойтись снова тем же образом.
     """
 
-    return "urgent" if _has_acute_danger_signal(normalize_text(message)) else "calm"
-
-
-def _has_acute_danger_signal(normalized_message: str) -> bool:
-    """Раздел 5 скрипта резервирует "скорую" буквально для 4 категорий — сильная боль,
-    кровотечение, аллергическая реакция, резкое ухудшение. Второй слой того же Топ-1
-    (после фикса межходовой утечки): прежняя _is_benign_medical_signal требовала явного
-    "смягчающего" слова, чтобы НЕ дать urgent — а MEDICAL_KEYWORDS широкий (там и "родинка",
-    и "рецепт"), так что почти любое мед-окрашенное сообщение дефолтилось в urgent без
-    единого признака реальной срочности: живые репро — голый ценовой вопрос "сколько стоит
-    удаление родинки" и даже шутка "а вы умеете готовить рецепты? лол" ("рецепт" совпал с
-    мед.термином) получали "скорая (103)". Теперь наоборот: urgent требует явного сигнала
-    ИЗ ЭТИХ 4 категорий, а не "не доказано, что безобидно"."""
-
-    if contains_keyword(normalized_message, ACUTE_BLEEDING_KEYWORDS):
-        return True
-    if contains_keyword(normalized_message, ACUTE_ALLERGY_KEYWORDS):
-        return True
-    if contains_keyword(normalized_message, ACUTE_DETERIORATION_KEYWORDS):
-        return True
-    return contains_keyword(normalized_message, PAIN_INTENSITY_KEYWORDS) and contains_keyword(
-        normalized_message, PAIN_WORDS
-    )
+    return "urgent" if ACUTE_DANGER(normalize_text(message)) else "calm"
 
 
 _NEGATIVE_RHETORICAL_PREFIXES = {"или", "либо"}
-
-
-def is_booking_change_request(normalized_message: str) -> bool:
-    """просьба отменить или перенести уже существующую запись, а не записаться заново."""
-
-    tokens = normalized_message.split()
-    if any(token in BOOKING_REBOOK_TOKENS for token in tokens):
-        return True
-    existing = any(token in BOOKING_EXISTING_MARKERS or token.startswith("записан") for token in tokens)
-    has_object = existing or any(token.startswith(BOOKING_CHANGE_OBJECT_PREFIXES) for token in tokens)
-    reschedule = any(token in BOOKING_RESCHEDULE_TOKENS for token in tokens)
-    cancel = any(token.startswith(BOOKING_CANCEL_PREFIX) for token in tokens)
-    if (reschedule or cancel) and has_object:
-        return True
-    if reschedule and any(token.startswith(BOOKING_RESCHEDULE_EXTRA_OBJECTS) for token in tokens):
-        return True
-    if existing and any(token in BOOKING_CHANGE_TOKENS for token in tokens):
-        return True
-    return contains_keyword(normalized_message, BOOKING_ABSENCE_PHRASES) and (existing or reschedule or cancel)
-
-
-def is_booking_cancel_only(normalized_message: str) -> bool:
-    """«отмените запись» без переноса — во время оформления новой записи это отказ от неё самой."""
-
-    tokens = set(normalized_message.split())
-    return (
-        is_booking_change_request(normalized_message)
-        and not tokens & (BOOKING_RESCHEDULE_TOKENS | BOOKING_REBOOK_TOKENS | BOOKING_CHANGE_TOKENS)
-    )
 
 
 def _has_bare_negative_signal(normalized_message: str) -> bool:
@@ -2375,12 +2284,6 @@ def _fact_guard_known_values_result(
 # находит их исходы — не переименовывать без него.
 
 
-def _is_crisis(m: Incoming) -> bool:
-    return contains_keyword(m.normalized, SELF_HARM_KEYWORDS) and not contains_keyword(
-        m.normalized, SELF_HARM_BENIGN_CONTEXT_EXCLUDE
-    )
-
-
 def _rule_crisis(m: Incoming) -> PolicyResult:
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
@@ -2464,7 +2367,7 @@ def _rule_complaint(s: Signals) -> PolicyResult:
 
 def _rule_booking_change(s: Signals) -> PolicyResult:
     # во время оформления новой записи в чате «отмените запись» относится к ней самой
-    if s.session.pending_action == PendingAction.BOOKING_CONTACT.value and is_booking_cancel_only(s.normalized):
+    if s.session.pending_action == PendingAction.BOOKING_CONTACT.value and BOOKING_CANCEL_ONLY(s.normalized):
         return _booking_cancelled_result(s.knowledge_base)
     return _booking_change_result(s.message, s.phone, s.knowledge_base, s.session.lead_phone)
 
@@ -2473,10 +2376,9 @@ def _rule_booking_change(s: Signals) -> PolicyResult:
 # работать — ссылка, сохранённая прямо в кортеже, подмену бы не увидела.
 
 # Раньше всего, до разбора сообщения и до решения классификатора: самая опасная категория не должна
-# зависеть ни от модели, ни от остальных веток. Идиомы («не хочу жить в этом районе», «умереть со
-# стыда») отсекает SELF_HARM_BENIGN_CONTEXT_EXCLUDE.
+# зависеть ни от модели, ни от остальных веток.
 FIRST_RULES: tuple[Rule[Incoming], ...] = (
-    Rule("crisis", when=lambda m: _is_crisis(m), answer=lambda m: _rule_crisis(m)),
+    Rule("crisis", when=lambda m: CRISIS(m.normalized), answer=lambda m: _rule_crisis(m)),
 )
 
 # Сразу после разбора, раньше записи, цены и всего остального. Порядок = приоритет: кто выше, тот
@@ -2486,7 +2388,7 @@ SAFETY_RULES: tuple[Rule[Signals], ...] = (
     # правило не совпадает, и сообщение уходит в медицину
     Rule(
         "ambulance_fact",
-        when=lambda s: _is_ambulance_fact_question(s.normalized) and not _has_urgent_symptom(s.normalized),
+        when=lambda s: AMBULANCE_QUESTION(s.normalized) and not SYMPTOM_MENTION(s.normalized),
         answer=lambda s: _rule_ambulance_fact(s),
     ),
     # у чувствительных тем клиента своё решение (ответить, отказать, передать) — оно точнее общей медицины
@@ -2496,11 +2398,11 @@ SAFETY_RULES: tuple[Rule[Signals], ...] = (
     # иначе они перехватывают такие сообщения
     Rule(
         "complaint",
-        when=lambda s: contains_keyword(s.normalized, COMPLAINT_ESCALATION_KEYWORDS),
+        when=lambda s: COMPLAINT(s.normalized),
         answer=lambda s: _rule_complaint(s),
     ),
     # «отменить / перенести запись» — про существующую запись, её ведёт администратор; выше новой записи
-    Rule("booking_change", when=lambda s: is_booking_change_request(s.normalized), answer=lambda s: _rule_booking_change(s)),
+    Rule("booking_change", when=lambda s: BOOKING_CHANGE(s.normalized), answer=lambda s: _rule_booking_change(s)),
 )
 
 

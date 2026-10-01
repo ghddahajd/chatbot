@@ -5,11 +5,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-from app.knowledge import normalize_text
 from app.models import DaySchedule
-from app.policy import is_booking_cancel_only, is_booking_change_request
 
 HEADERS = {"x-operator-token": "demo-operator-token"}
 ALWAYS_OPEN = {day: {"open": "00:00", "close": "23:59"} for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
@@ -48,49 +44,8 @@ class _CardBridge:
 # ---------------------------------------------------------------- что считаем отменой / переносом
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "отмените запись",
-        "хочу отменить запись",
-        "хочу перенести запись",
-        "можно перенести приём на другой день",
-        "не смогу прийти, перенесите",
-        "перенесите меня на пятницу",
-        "я записана на завтра, но не смогу прийти",
-        "как отменить запись?",
-        "отменить визит",
-        "можно перезаписаться на другое время",
-        "нужно сдвинуть запись на час",
-        "хочу поменять время записи",
-    ],
-)
-def test_cancel_or_reschedule_is_recognised(message: str) -> None:
-    assert is_booking_change_request(normalize_text(message))
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "хочу записаться",
-        "запишите на пятницу",
-        "можно записаться на другой день?",
-        "отмена",
-        "перенос",
-        "как переносится процедура?",  # про самочувствие, не про запись
-        "я перенесла операцию, можно на пилинг?",
-        "не смогу прийти лично, есть онлайн-консультация?",
-        "хочу записаться на пилинг, а если что можно будет перенести?",
-        "а если я опоздаю?",
-    ],
-)
-def test_new_booking_and_lookalikes_are_not_a_change(message: str) -> None:
-    assert not is_booking_change_request(normalize_text(message))
-
-
-def test_only_plain_cancel_counts_as_dropping_the_booking_in_progress() -> None:
-    assert is_booking_cancel_only(normalize_text("отмените запись"))
-    assert not is_booking_cancel_only(normalize_text("хочу перенести запись"))
+# что считаем отменой / переносом, а что нет — примеры датчиков BOOKING_CHANGE и BOOKING_CANCEL_ONLY
+# в app/policy/detectors.py (проверяет test_detectors.py)
 
 
 # ---------------------------------------------------------------- ответ и заявка

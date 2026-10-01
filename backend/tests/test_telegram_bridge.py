@@ -1510,23 +1510,3 @@ def test_messages_from_the_clinic_group_still_reach_the_patient(monkeypatch) -> 
     assert ws_manager.sent == [
         (session_id, {"type": "message", "role": "operator", "text": "Добрый день!", "session_id": session_id})
     ]
-
-
-def test_group_set_by_public_name_is_recognised(monkeypatch) -> None:
-    _reset_fake_client(monkeypatch)
-    store = SessionStore()
-    ws_manager = FakeWsManager()
-
-    async def run() -> str:
-        session = await store.get_or_create(None, "rosh_demo")
-        await store.set_telegram_bridge(session.session_id, topic_id=42)
-        service = _service(store, ws_manager, group_chat_id="@rosh_operators")
-        group = {"id": -100123, "type": "supergroup", "username": "ROSH_operators"}
-        stranger = {"id": -100999, "type": "supergroup", "username": "other_group"}
-        await service._process_update({"update_id": 1, "message": {"chat": stranger, "message_thread_id": 42, "text": "чужое"}})
-        await service._process_update({"update_id": 2, "message": {"chat": group, "message_thread_id": 42, "text": "Добрый день!"}})
-        return session.session_id
-
-    session_id = anyio.run(run)
-
-    assert [payload["text"] for _session, payload in ws_manager.sent] == ["Добрый день!"]

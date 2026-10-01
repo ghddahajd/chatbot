@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_operators_group_id: str = ""
+    # группа операторов на клиента (2026-09-23): JSON {"company_id": {"group": "-100…", "topic": "5"}}.
+    # Пусто — как раньше, одна общая группа выше. См. app/telegram_routing.py.
+    telegram_client_groups: str = ""
     # thread_id темы "Клиенты" в группе операторов (создаётся вручную один раз в Telegram) —
     # сюда падают лиды/записи без живой необходимости в операторе, простой карточкой без клейма.
     telegram_clients_topic_id: str = ""

@@ -1453,6 +1453,7 @@ def _clinic_info_result(
     session: Session,
     context_topic: str | None = None,
     booking_requested: bool = False,
+    price_requested: bool = False,
 ) -> PolicyResult | None:
     company = knowledge_base.company
     doctors = _clinic_doctors(knowledge_base)
@@ -1589,7 +1590,9 @@ def _clinic_info_result(
             quick_actions=base_quick_actions,
         )
 
-    doctor_info_requested = (
+    # «сколько стоит консультация гинеколога» — вопрос о цене, а не о врачах: специальность в тексте
+    # не должна уводить в список врачей без цены
+    doctor_info_requested = not price_requested and (
         context_topic == "doctors"
         or contains_keyword(normalized_message, DOCTOR_INFO_KEYWORDS)
         or contains_keyword(normalized_message, _doctor_specialty_info_keywords(doctors))
@@ -2157,11 +2160,30 @@ def _has_bare_negative_signal(normalized_message: str) -> bool:
     return False
 
 
+def _without_service_terms(normalized_message: str, service) -> str:
+    """сообщение без слов из названия и синонимов услуги — что человек сказал сверх самой услуги."""
+
+    terms = [service.name, *(getattr(service, "synonyms", None) or [])]
+    term_tokens = [token for term in terms for token in normalize_text(str(term)).split() if len(token) > 2]
+    return " ".join(
+        token for token in normalized_message.split()
+        if not any(_token_prefix_match(token, term_token) for term_token in term_tokens)
+    )
+
+
 def _looks_like_safe_known_service_request(intent: str, normalized_message: str, service) -> bool:
     if service is None or intent not in SAFE_SERVICE_REQUEST_INTENTS:
         return False
     if _has_hard_restricted_signal(normalized_message):
-        return False
+        # «сколько стоит удаление родинки»: медицинское слово — часть названия самой услуги, это вопрос
+        # о цене. Остаток сообщения проверяем как обычно: «…а она кровит» — по-прежнему медицина
+        rest = _without_service_terms(normalized_message, service)
+        return (
+            intent == "price_question"
+            and not _has_hard_restricted_signal(rest)
+            and not SYMPTOM_MENTION(rest)
+            and not ACUTE_DANGER(normalized_message)
+        )
     if intent in _MEDICAL_INTENT_SAFE_OVERRIDE_INTENTS:
         return contains_keyword(normalized_message, FAQ_QUESTION_KEYWORDS)
     return True
@@ -2918,6 +2940,9 @@ def _analyze_message_core(
         session,
         str(classification.get("context_topic") or "") or None,
         booking_requested=booking_requested,
+        # уступаем цене, только когда её есть что назвать: без услуги («хочу к гинекологу, цена?»)
+        # ответ о врачах полезнее, чем «такой услуги не нашла»
+        price_requested=price_requested and service is not None,
     )
     if clinic_info_result is not None:
         return clinic_info_result

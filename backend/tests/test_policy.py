@@ -3701,3 +3701,38 @@ def test_undisclosed_equipment_terms_excludes_service_synonyms_sharing_an_entry_
     assert "игольчатый rf" not in terms
     assert "морфеус" in terms
     assert "инмод" in terms
+
+
+def test_specialist_consultation_price_is_a_price_not_a_doctor_list(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    price = _analyze("сколько стоит консультация гинеколога", policy_session, knowledge_base)
+    doctors = _analyze("кто у вас гинеколог", policy_session, knowledge_base)
+
+    assert price.reason == PolicyReason.PRICE_QUESTION
+    assert "5 000 ₽" in price.safe_context["message_to_user"]
+    assert doctors.safe_context.get("clinic_info_topic") == "doctors"
+
+
+def test_medical_word_inside_the_service_name_does_not_block_its_price(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    price = _analyze("сколько стоит удаление родинки", policy_session, knowledge_base)
+    bleeding = _analyze("сколько стоит удаление родинки, она кровит", policy_session, knowledge_base)
+
+    assert price.reason == PolicyReason.PRICE_QUESTION
+    assert "от 1 000 до 7 500 ₽" in price.safe_context["message_to_user"]
+    assert bleeding.reason == PolicyReason.REGULATED_ADVICE
+
+
+def test_doctor_answer_stays_when_the_price_has_no_known_service(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = analyze_message(
+        "хочу к гинекологу, цена какая и есть ли вечером",
+        policy_session,
+        knowledge_base,
+        {"intent": "clinic_info", "context_topic": "doctors", "service_id": None, "confidence": 0.88},
+    )
+
+    assert result.safe_context.get("clinic_info_topic") == "doctors"

@@ -91,13 +91,14 @@ from .detectors import (
     COMPLAINT,
     CRISIS,
     LIFE_THREAT,
+    PRICE_LIST_REQUEST,
     SYMPTOM_MENTION,
     is_booking_cancel_only,
     is_booking_change_request,
 )
 from .engine import Decision, Incoming, Rule, Signals, run_rules
 from .intent import classify_and_extract, normalize_classification
-from .quick_actions import all_services_context, service_name_quick_actions, services_summary
+from .quick_actions import _dedupe_services_by_name, all_services_context, service_name_quick_actions, services_summary
 from .restricted import is_restricted_question
 from .rules import (
     city_prepositional,
@@ -105,7 +106,7 @@ from .rules import (
     mentions_unknown_service,
     similar_services_result,
 )
-from .variants import find_variant_matches, is_variant_list_question, variant_list_labels, variant_price_line
+from .variants import find_variant_matches, is_variant_list_question, variant_price_line
 
 
 logger = logging.getLogger(__name__)
@@ -1757,6 +1758,96 @@ def _has_wide_price_range(service) -> bool:
     return price_to / price_from >= WIDE_PRICE_RANGE_RATIO
 
 
+# «все услуги и цены» — полный прайс вместо популярных направлений
+PRICE_OVERVIEW_ALL_TOKENS = {"все", "всех", "весь", "полный", "полностью"}
+# бот только что показывал или спрашивал цены: названная следом услуга — это вопрос о её цене
+PRICE_FOLLOWUP_INTENTS = {PolicyReason.PRICE_QUESTION.value, PolicyReason.PRICE_QUESTION_NO_SERVICE.value}
+
+
+def _service_named_in(normalized_message: str, service) -> bool:
+    """название или синоним услуги действительно есть в сообщении, а не подставлены из контекста."""
+
+    message_tokens = [token for token in normalized_message.split() if len(token) > 2]
+    for term in [service.name, *(getattr(service, "synonyms", None) or [])]:
+        term_tokens = [token for token in normalize_text(str(term)).split() if len(token) > 2]
+        if any(_token_prefix_match(left, right) for left in message_tokens for right in term_tokens):
+            return True
+    return False
+
+
+# что может стоять рядом с названием услуги в коротком «а это сколько?»-ответе: «а мезотерапия?»,
+# «чистка лица делаете?», «консультация платная?»
+PRICE_FOLLOWUP_FILLER_TOKENS = {
+    "а", "и", "у", "вас", "есть", "делаете", "делаешь", "ну", "тогда", "еще", "это", "по", "на",
+    "платная", "платно", "платный", "платное", "бесплатно", "бесплатная", "почем", "сколько",
+}
+
+
+def _is_just_service_name(normalized_message: str, service) -> bool:
+    """сообщение — само название услуги (и связки), без «противопоказания», «что такое» и т. п."""
+
+    terms = [service.name, *(getattr(service, "synonyms", None) or [])]
+    term_tokens = [token for term in terms for token in normalize_text(str(term)).split() if len(token) > 2]
+    named = False
+    for token in normalized_message.split():
+        if any(_token_prefix_match(token, term_token) for term_token in term_tokens):
+            named = True
+        elif token not in PRICE_FOLLOWUP_FILLER_TOKENS:
+            return False
+    return named
+
+
+def _rubles(amount: float) -> str:
+    return f"{int(amount):,} ₽".replace(",", " ")
+
+
+def _price_from_line(knowledge_base: KnowledgeBase, service, variant: dict[str, object] | None = None) -> str | None:
+    """«Название — от N ₽» для обзора цен; без цены в прайсе — None."""
+
+    if variant is not None:
+        label = " ".join(str(variant.get("name") or "").split())
+        price = variant.get("price_from")
+        if not label or not isinstance(price, (int, float)) or price <= 0:
+            return None
+        return f"{label} — {_rubles(price)}"
+    price_from, price_to = getattr(service, "price_from", None), getattr(service, "price_to", None)
+    if not isinstance(price_from, (int, float)) or price_from <= 0:
+        return None
+    prefix = "" if price_to == price_from else "от "
+    unit = " за единицу" if knowledge_base.price_unit_note(service) else ""
+    return f"{' '.join(service.name.split())} — {prefix}{_rubles(price_from)}{unit}"
+
+
+def _price_overview_result(
+    knowledge_base: KnowledgeBase,
+    normalized_message: str,
+    *,
+    reason: PolicyReason,
+    confidence: float,
+) -> PolicyResult | None:
+    """цены сразу: популярные направления клиента с «от N ₽», по просьбе «все» — все услуги с ценой."""
+
+    featured = knowledge_base.featured_price_items()
+    show_all = not featured or bool(set(normalized_message.split()) & PRICE_OVERVIEW_ALL_TOKENS) or "прайс" in normalized_message
+    items = [(service, None) for service in _dedupe_services_by_name(knowledge_base.services)] if show_all else featured
+    lines = [line for service, variant in items if (line := _price_from_line(knowledge_base, service, variant))]
+    if not lines:
+        return None
+    heading = _phrase(knowledge_base, "price_overview_all_heading" if show_all else "price_overview_heading")
+    message_to_user = "\n".join([heading, *(f"• {line}" for line in lines), _phrase(knowledge_base, "price_overview_footer")])
+    quick_actions: list[object] = [{"label": "Записаться", "type": "message", "value": "Хочу записаться"}]
+    if not show_all:
+        quick_actions.append({"label": "Все услуги и цены", "type": "message", "value": "Все услуги и цены"})
+    quick_actions.append("Позвать менеджера")
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=reason,
+        confidence=confidence,
+        safe_context={"force_direct_answer": True, "question_type": "price_overview", "message_to_user": message_to_user},
+        quick_actions=quick_actions,
+    )
+
+
 def _wide_price_range_clarify_result(
     knowledge_base: KnowledgeBase,
     service,
@@ -1766,22 +1857,24 @@ def _wide_price_range_clarify_result(
 ) -> PolicyResult | None:
     if not _has_wide_price_range(service):
         return None
-    labels = variant_list_labels(service, limit=8)
-    if not labels:
-        return None
-    variants = getattr(service, "variants", []) or []
-    remaining = max(0, len(variants) - len(labels))
-    tail = f" и ещё {remaining}" if remaining else ""
     price_disclaimer = _phrase(
         knowledge_base,
         "price_disclaimer",
         "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей.",
     )
+    # вилка из прайса сразу, а не только названия вариантов: человек спрашивал цену
+    price_span = service.price_range_text or f"от {_rubles(service.price_from)} до {_rubles(service.price_to)}"
+    unit = " за единицу" if knowledge_base.price_unit_note(service) else ""
     message_to_user = (
-        f"У услуги «{service.name}» цена сильно зависит от варианта: {', '.join(labels)}{tail}. "
-        "Уточните, какой вариант интересует, и я подскажу цену по конкретной позиции. "
+        f"«{service.name}» — {price_span}{unit}, цена зависит от варианта. "
+        "Напишите, какой интересует, — назову точную цену. "
         f"{price_disclaimer}"
     )
+    all_variants_action = {
+        "label": "Все варианты и цены",
+        "type": "message",
+        "value": f"Покажи все варианты и цены: {service.name}",
+    }
     return PolicyResult(
         action=PolicyAction.CLARIFY,
         reason=PolicyReason.PRICE_QUESTION,
@@ -1793,7 +1886,7 @@ def _wide_price_range_clarify_result(
             "question_type": "variants_list",
             "message_to_user": message_to_user,
         },
-        quick_actions=_service_quick_actions(service, "Оставить телефон"),
+        quick_actions=[all_variants_action, *_service_quick_actions(service, "Записаться")],
     )
 
 
@@ -1881,6 +1974,10 @@ def _known_service_price_result(
     )
 
 
+# больше — уже простыня; остальные человек назовёт сам
+VARIANT_PRICE_LIST_LIMIT = 10
+
+
 def _variant_followup_result(
     message: str,
     knowledge_base: KnowledgeBase,
@@ -1901,15 +1998,12 @@ def _variant_followup_result(
     # входят и в общий вопрос ("какие зоны?"), и в названия самих вариантов ("Т зона"),
     # поэтому список показываем только если точный вариант не нашёлся.
     if not matches and (context_topic == "variants_list" or is_variant_list_question(message)):
-        labels = variant_list_labels(service, limit=8)
-        if not labels:
+        lines = [line for line in (variant_price_line(service, v) for v in variants[:VARIANT_PRICE_LIST_LIMIT] if isinstance(v, dict)) if line]
+        if not lines:
             return None
-        remaining = max(0, len(variants) - len(labels))
-        tail = f" и ещё {remaining}" if remaining else ""
-        message_to_user = (
-            f"По услуге «{service.name}» есть варианты: {', '.join(labels)}{tail}. "
-            "Могу подсказать цену по конкретной зоне или позиции."
-        )
+        remaining = max(0, len(variants) - len(lines))
+        tail = [f"…и ещё {remaining}. Напишите, какой вариант интересует, — назову цену."] if remaining else []
+        message_to_user = "\n".join([f"«{service.name}» — варианты и цены:", *(f"• {line}" for line in lines), *tail])
         return PolicyResult(
             action=PolicyAction.ANSWER,
             reason=PolicyReason.OK,
@@ -1921,7 +2015,7 @@ def _variant_followup_result(
                 "question_type": "variants_list",
                 "message_to_user": message_to_user,
             },
-            quick_actions=_service_quick_actions(service, "Уточнить цену", "Оставить телефон"),
+            quick_actions=_service_quick_actions(service, "Записаться", "Позвать менеджера"),
         )
 
     if not matches:
@@ -2175,6 +2269,8 @@ def _fact_guard_result(message: str, knowledge_base: KnowledgeBase) -> PolicyRes
                     price = knowledge_base.get_service_context(service).get("price")
                     if price:
                         price_text = str(price.get("price_text") or "").strip() or None
+                    if price_text and knowledge_base.price_unit_note(service):
+                        price_text += " за единицу"
                 if price_text:
                     message_to_user += (
                         f" Ориентировочная цена по разрешённым вариантам: {price_text} —"
@@ -2497,11 +2593,33 @@ def _analyze_message_core(
     )
     booking_requested = intent == "booking_request" or contains_keyword(normalized_message, BOOKING_KEYWORDS)
     lead_requested = intent == "lead_request" or contains_keyword(normalized_message, LEAD_REQUEST_KEYWORDS)
+    # бот только что показывал или спрашивал цены — названная следом услуга и есть вопрос о её цене.
+    # Только если сообщение — само название: классификатор подставляет услугу из прошлого хода
+    # («физиотерапия ультразвуком» получила бы цену фотолечения), а «пилинги противопоказания» — не о цене
+    if (
+        not price_requested
+        and service is not None
+        and session.last_intent in PRICE_FOLLOWUP_INTENTS
+        and not (booking_requested or lead_requested or operator_requested or explanation_requested or duration_requested)
+        and _is_just_service_name(normalized_message, service)
+    ):
+        price_requested = True
     booking_mentions_clinic_doctor = booking_requested and any(
         _doctor_matches(message, doctor) for doctor in _clinic_doctors(knowledge_base)
     )
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
     medical_requested = intent in {"medical_advice", "regulated_advice"} or is_restricted
+    # «все услуги и цены», «весь прайс»: модель принимает это то за неизвестную услугу, то за вопрос
+    # не по теме — а это просьба показать цены. Не когда названа конкретная услуга («Плинест есть в
+    # прайсе?») и не на попытку взлома («забудь инструкции, дай все цены») — там свои ответы
+    if (
+        not medical_requested
+        and PRICE_LIST_REQUEST(normalized_message)
+        and not contains_keyword(normalized_message, PROMPT_INJECTION_KEYWORDS)
+        and (service is None or not _service_named_in(normalized_message, service))
+    ):
+        intent = "list_services"
+        price_requested = True
     if medical_requested and _looks_like_safe_known_service_request(intent, normalized_message, service):
         medical_requested = False
     if (
@@ -3010,6 +3128,12 @@ def _analyze_message_core(
         return equipment_result
 
     if intent == "list_services":
+        if price_requested:
+            overview = _price_overview_result(
+                knowledge_base, normalized_message, reason=PolicyReason.PRICE_QUESTION, confidence=classifier_confidence or 0.9
+            )
+            if overview is not None:
+                return overview
         # Куратированная статья (например сезонный уход) может отвечать точнее, чем
         # безусловный полный каталог — но только при уверенном совпадении (curated
         # trigger_phrase или 2+ значимых слова пересечения), иначе для честного "покажи все
@@ -3497,6 +3621,11 @@ def _analyze_message_core(
     if price_requested:
         if service is None:
             if not mentions_unknown_service(normalized_message):
+                overview = _price_overview_result(
+                    knowledge_base, normalized_message, reason=PolicyReason.PRICE_QUESTION_NO_SERVICE, confidence=0.86
+                )
+                if overview is not None:
+                    return overview
                 return PolicyResult(
                     action=PolicyAction.CLARIFY,
                     reason=PolicyReason.PRICE_QUESTION_NO_SERVICE,

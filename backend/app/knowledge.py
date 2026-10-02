@@ -9,7 +9,7 @@ import random
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import yaml
@@ -269,6 +269,10 @@ DEFAULT_PHRASEBOOK = {
     # часов — "могу подключить сейчас" не говорим, когда физически некому ответить (та же
     # честность, что и operator_after_hours). 103 остаётся в urgent-варианте: это реальная
     # круглосуточная линия, не зависит от часов работы клиники.
+    # ответ «какие услуги и сколько стоят»: заголовок списка, заголовок полного прайса и строка после
+    "price_overview_heading": "Популярные направления и цены:",
+    "price_overview_all_heading": "Цены на услуги:",
+    "price_overview_footer": "Итоговая сумма зависит от деталей. Напишите, какая услуга интересует, — подскажу подробнее.",
     # угроза жизни (одышка, отёк горла, потеря сознания): скорая — первой фразой, днём и ночью
     "regulated_soft_offer_emergency": (
         "Это может быть опасно — пожалуйста, не ждите ответа в чате: прямо сейчас звоните в скорую, "
@@ -737,6 +741,33 @@ class KnowledgeBase:
         value = str(rag.get("corpus") or "").strip()
         return value if value and value.lower() != RAG_CORPUS_NONE else RAG_CORPUS_NONE
 
+    def featured_price_items(self) -> list[tuple[Service, Optional[dict[str, Any]]]]:
+        """«популярные направления» для ответа про цены: prices.featured в config.yaml.
+
+        Пункт — id услуги или {service: id, variant: id варианта}, чтобы показать конкретную позицию
+        («Консультация гинеколога»). Неизвестные id пропускаются; пусто — показываем все услуги."""
+
+        prices = self.config_payload.get("prices")
+        raw = prices.get("featured") if isinstance(prices, dict) else None
+        items: list[tuple[Service, Optional[dict[str, Any]]]] = []
+        for entry in raw if isinstance(raw, list) else []:
+            service_id, variant_id = (entry, None) if isinstance(entry, str) else (
+                (entry.get("service"), entry.get("variant")) if isinstance(entry, dict) else (None, None)
+            )
+            service = self.find_service_by_id(str(service_id or ""))
+            if service is None:
+                continue
+            if not variant_id:
+                items.append((service, None))
+                continue
+            variant = next(
+                (v for v in service.variants if isinstance(v, dict) and v.get("source_service_id") == variant_id),
+                None,
+            )
+            if variant is not None:
+                items.append((service, variant))
+        return items
+
     def rag_corpus_path(self) -> Optional[Path]:
         """файл корпуса статей этого клиента; None — статей нет, чужой корпус не подставляется."""
 
@@ -929,7 +960,7 @@ class KnowledgeBase:
         scored_services.sort(key=lambda item: item[0], reverse=True)
         return [service for _, service in scored_services[:3]]
 
-    def _price_unit_note(self, service: Service) -> str:
+    def price_unit_note(self, service: Service) -> str:
         variants = service.variants
         if not variants:
             return ""
@@ -960,7 +991,7 @@ class KnowledgeBase:
 
         price = self.find_price_by_service_id(service.id)
         service_payload = service.model_dump()
-        price_unit_note = self._price_unit_note(service)
+        price_unit_note = self.price_unit_note(service)
         return {
             "company": {
                 "company_name": self.company.company_name,

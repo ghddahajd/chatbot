@@ -969,9 +969,10 @@ def test_wide_price_range_clarifies_with_variants(policy_session, resolver, mana
     assert result.safe_context["force_direct_answer"] is True
     assert result.safe_context["question_type"] == "variants_list"
     message_to_user = result.safe_context["message_to_user"]
-    assert "цена сильно зависит от варианта" in message_to_user
-    assert "и ещё" in message_to_user
-    assert "от 2 300 до 31 600 ₽" not in message_to_user
+    # вилка из прайса сразу, без простыни названий: человек спрашивал цену
+    assert "от 2 300 до 31 600 ₽" in message_to_user
+    assert "Напишите, какой интересует" in message_to_user
+    assert "Bellarti" not in message_to_user
 
 
 def test_narrow_price_range_still_answers_price(policy_session, resolver, managed_env) -> None:
@@ -1364,11 +1365,12 @@ def test_skolko_duration_does_not_become_price(policy_session, knowledge_base) -
     assert result.service_id == "facial_cleansing"
 
 
-def test_price_without_service_asks_clarification(policy_session, knowledge_base) -> None:
+def test_price_without_service_shows_price_overview(policy_session, knowledge_base) -> None:
     result = _analyze("сколько стоит?", policy_session, knowledge_base)
 
-    assert result.action == PolicyAction.CLARIFY
+    assert result.action == PolicyAction.ANSWER
     assert result.reason == PolicyReason.PRICE_QUESTION_NO_SERVICE
+    assert result.safe_context["question_type"] == "price_overview"
     assert result.quick_actions
 
 
@@ -1387,8 +1389,8 @@ def test_generic_price_question_with_question_words_asks_clarification_not_unkno
         {"intent": "price_question", "service_id": None, "confidence": 0.86},
     )
 
-    assert result.action == PolicyAction.CLARIFY
-    assert result.reason == PolicyReason.PRICE_QUESTION_NO_SERVICE
+    assert result.reason != PolicyReason.UNKNOWN_SERVICE
+    assert result.safe_context["question_type"] == "price_overview"
 
 
 def test_unknown_service_suggests_similar(policy_session, knowledge_base) -> None:
@@ -2180,7 +2182,7 @@ def test_wide_price_range_compound_booking_question_is_not_dropped(
     assert result.action == PolicyAction.CLARIFY
     assert result.safe_context["force_direct_answer"] is True
     message_to_user = result.safe_context["message_to_user"]
-    assert "цена сильно зависит от варианта" in message_to_user
+    assert "от 1 800 до 24 000 ₽" in message_to_user
     assert "запис" in message_to_user.lower()
     assert "Оставить телефон" in result.quick_actions
     assert result.quick_actions.count("Оставить телефон") == 1

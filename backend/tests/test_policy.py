@@ -3736,3 +3736,25 @@ def test_doctor_answer_stays_when_the_price_has_no_known_service(policy_session,
     )
 
     assert result.safe_context.get("clinic_info_topic") == "doctors"
+
+
+def test_consultation_price_has_no_procedure_disclaimer(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    gynecologist = _analyze("сколько стоит консультация гинеколога", policy_session, knowledge_base).safe_context["message_to_user"]
+    consultations = _analyze("сколько стоят консультации", policy_session, knowledge_base).safe_context["message_to_user"]
+    procedure = _analyze("сколько стоит удаление родинки", policy_session, knowledge_base).safe_context["message_to_user"]
+
+    assert gynecologist.startswith("Консультация гинеколога — 5 000 ₽")
+    assert "процедуру не проводим" not in gynecologist and "По услуге" not in gynecologist
+    assert "от 3 000 до 10 000 ₽, цена зависит от специалиста" in consultations
+    assert "процедуру не проводим" not in consultations
+    assert "процедуру не проводим" in procedure  # у процедур оговорка остаётся
+
+
+def test_consultation_price_has_no_link_to_a_single_specialists_page(policy_session, resolver, managed_env) -> None:
+    knowledge_base = _copy_rosh_import_kb(resolver, managed_env)
+
+    result = _analyze("сколько стоит консультация гинеколога", policy_session, knowledge_base)
+
+    assert result.quick_actions == ["Записаться"]

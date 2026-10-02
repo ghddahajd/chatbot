@@ -1869,11 +1869,18 @@ def _wide_price_range_clarify_result(
     # вилка из прайса сразу, а не только названия вариантов: человек спрашивал цену
     price_span = service.price_range_text or f"от {_rubles(service.price_from)} до {_rubles(service.price_to)}"
     unit = " за единицу" if knowledge_base.price_unit_note(service) else ""
-    message_to_user = (
-        f"«{service.name}» — {price_span}{unit}, цена зависит от варианта. "
-        "Напишите, какой интересует, — назову точную цену. "
-        f"{price_disclaimer}"
-    )
+    if is_consultation_only_service(service):
+        # у консультаций варианты — это врачи; оговорка «определит врач на консультации» тут не к месту
+        message_to_user = (
+            f"«{service.name}» — {price_span}, цена зависит от специалиста. "
+            "Напишите, к какому врачу, — назову точную цену."
+        )
+    else:
+        message_to_user = (
+            f"«{service.name}» — {price_span}{unit}, цена зависит от варианта. "
+            "Напишите, какой интересует, — назову точную цену. "
+            f"{price_disclaimer}"
+        )
     all_variants_action = {
         "label": "Все варианты и цены",
         "type": "message",
@@ -1890,7 +1897,9 @@ def _wide_price_range_clarify_result(
             "question_type": "variants_list",
             "message_to_user": message_to_user,
         },
-        quick_actions=[all_variants_action, *_service_quick_actions(service, "Записаться")],
+        quick_actions=[all_variants_action, "Записаться"]
+        if is_consultation_only_service(service)
+        else [all_variants_action, *_service_quick_actions(service, "Записаться")],
     )
 
 
@@ -1902,15 +1911,20 @@ def _variant_price_answer(
     confidence: float,
 ) -> PolicyResult:
     lines = [variant_price_line(service, variant) for variant in matches]
-    price_disclaimer = _phrase(
-        knowledge_base,
-        "price_disclaimer",
-        "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей.",
-    )
-    message_to_user = (
-        f"По услуге «{service.name}»: {'; '.join(line for line in lines if line)}. "
-        f"{price_disclaimer}"
-    )
+    if is_consultation_only_service(service):
+        # «Консультация гинеколога — 5 000 ₽.» — без «По услуге «Консультации»:» и без оговорки
+        # про процедуру после консультации: о самой консультации она звучит как масло масляное
+        message_to_user = f"{'; '.join(line for line in lines if line)}."
+    else:
+        price_disclaimer = _phrase(
+            knowledge_base,
+            "price_disclaimer",
+            "Это предварительная стоимость. Точную сумму подтвердит менеджер после уточнения деталей.",
+        )
+        message_to_user = (
+            f"По услуге «{service.name}»: {'; '.join(line for line in lines if line)}. "
+            f"{price_disclaimer}"
+        )
     return PolicyResult(
         action=PolicyAction.ANSWER,
         reason=PolicyReason.PRICE_QUESTION,
@@ -1923,7 +1937,8 @@ def _variant_price_answer(
             "message_to_user": message_to_user,
             "variant_matches": matches,
         },
-        quick_actions=_service_quick_actions(service, "Оставить телефон"),
+        # у консультаций одна страница на всех врачей (в данных РОШ — страница косметолога): ссылка увела бы не туда
+        quick_actions=["Записаться"] if is_consultation_only_service(service) else _service_quick_actions(service, "Оставить телефон"),
     )
 
 

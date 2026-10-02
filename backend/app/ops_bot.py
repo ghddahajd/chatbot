@@ -200,8 +200,10 @@ class OpsBot:
             counts = [stage["count"] for stage in funnel["stages"]]
             if not any(counts):
                 continue
+            clicks = funnel.get("contact_clicks") or {}
+            contact = f" · позвонили {clicks.get('call', 0)} · в Telegram {clicks.get('telegram', 0)}" if any(clicks.values()) else ""
             lines.append(
-                f"{company}: посетители {counts[0]} · открыли чат {counts[1]} · переписка {counts[2]} · заявки {counts[3]}"
+                f"{company}: посетители {counts[0]} · открыли чат {counts[1]} · переписка {counts[2]} · заявки {counts[3]}{contact}"
             )
             for row in (funnel.get("pages") or [])[:TOP_PAGES]:
                 lines.append(f"    {row['page']} — загрузок {row['loads']}, открытий {row['opens']}, диалогов {row['dialogs']}")

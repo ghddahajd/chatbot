@@ -1122,6 +1122,12 @@ class AnalyticsService:
         )
         lead_count = len(leads)
 
+        # не ступень воронки: человек ушёл записываться звонком или в Telegram — тоже результат чата
+        contact_clicks = {
+            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+            for kind, event_type in (("call", "contact_call_clicked"), ("telegram", "contact_telegram_clicked"))
+        }
+
         stages = [
             {"label": "Посетители с виджетом", "count": impressions, "page_loads": len(impression_events)},
             {"label": "Открыли чат", "count": chat_opened},
@@ -1167,6 +1173,7 @@ class AnalyticsService:
             "company_id": company_id,
             "days": effective_days,
             "stages": stages,
+            "contact_clicks": contact_clicks,
             "pages": _widget_pages(
                 impression_events,
                 opened_events,

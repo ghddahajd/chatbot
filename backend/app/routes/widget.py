@@ -17,7 +17,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/widget", tags=["widget"])
 
 
-WIDGET_EVENT_TYPES = {"impression": "widget_impression", "chat-opened": "chat_opened"}
+WIDGET_EVENT_TYPES = {
+    "impression": "widget_impression",
+    "chat-opened": "chat_opened",
+    # записались сами, мимо чата: нажали «Позвонить в клинику» или «Написать в Telegram»
+    "contact-call": "contact_call_clicked",
+    "contact-telegram": "contact_telegram_clicked",
+}
 VISITOR_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 # поисковые и служебные роботы тоже выполняют скрипты и накручивали бы «посетителей»
 BOT_USER_AGENT_PATTERN = re.compile(r"bot|crawl|spider|slurp|headless|lighthouse", re.IGNORECASE)

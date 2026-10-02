@@ -1949,7 +1949,13 @@
         btn.type = "button";
         btn.textContent = norm.label;
         btn.addEventListener("click", () => {
-          if (norm.type === "link") { window.open(norm.value, "_blank", "noopener,noreferrer"); return; }
+          if (norm.type === "link") {
+            // звонок — переходом, не новой вкладкой: иначе часть телефонов открывает пустую страницу
+            if (String(norm.value).startsWith("tel:")) { this.trackEvent("contact-call"); window.location.href = norm.value; return; }
+            if (/^https:\/\/t\.me\//.test(String(norm.value))) this.trackEvent("contact-telegram");
+            window.open(norm.value, "_blank", "noopener,noreferrer");
+            return;
+          }
           this.sendText(norm.value);
         });
         wrap.appendChild(btn);

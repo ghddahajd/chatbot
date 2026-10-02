@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.models import DaySchedule
+from app.policy.constants import BOOKING_CONTACT_ALTERNATIVES
 
 TILES = ["Сегодня", "Завтра", "На этой неделе", "Другое"]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -76,7 +77,7 @@ def test_each_tile_gets_its_text_and_asks_only_phone(tile: str, expected_start: 
     assert payload["answer"].startswith(expected_start)
     assert "номер телефона" in payload["answer"]
     assert "имя" not in payload["answer"].lower()
-    assert payload["quick_actions"] == []
+    assert set(_labels(payload)) <= set(BOOKING_CONTACT_ALTERNATIVES)  # плиток больше нет, только «записаться самим»
 
 
 @pytest.mark.parametrize(("is_open", "expected_start"), [(True, "Проверим возможность записи сегодня."), (False, "Сейчас мы не работаем.")])
@@ -105,7 +106,7 @@ def test_time_named_in_request_skips_tiles(message: str, preferred: str, test_cl
     first = _chat(test_client, message)
 
     assert "номер телефона" in first["answer"]
-    assert first["quick_actions"] == []
+    assert set(_labels(first)) <= set(BOOKING_CONTACT_ALTERNATIVES)
     assert _chat(test_client, "89991234567", first["session_id"])["lead_created"] is True
     assert _last_lead(managed_env)["preferred_time"] == preferred
 
@@ -146,7 +147,7 @@ def test_rosh_booking_texts_in_real_data() -> None:
 
     assert phrasebook["booking_when_prompt"] == "Когда вам удобно?"
     for key in ("booking_when_today", "booking_when_today_closed", "booking_when_tomorrow", "booking_when_later"):
-        assert "номер телефона" in phrasebook[key] and "имя" not in phrasebook[key].lower()
+        assert "номер телефона" in phrasebook[key] and "перезвонит" in phrasebook[key] and "имя" not in phrasebook[key].lower()
     assert phrasebook["booking_success_no_consultation"].startswith("Спасибо, ваша заявка принята!")
     assert "консультация врача" in phrasebook["booking_success"][0]  # напоминание — только для процедур
 
@@ -234,3 +235,51 @@ def test_lead_card_has_time_field_and_no_page_line(test_client, managed_env) -> 
     assert "Страница" not in card and "/uslugi" not in card
     lead = _last_lead(managed_env)
     assert (lead["preferred_time"], lead["page"]) == ("завтра", "/uslugi/chistka")
+
+
+# ---------------------------------------------------------------- записаться самим, мимо чата
+
+
+def _actions(payload: dict) -> dict[str, str]:
+    return {item["label"]: item["value"] for item in payload["quick_actions"]}
+
+
+def test_phone_request_after_a_tile_offers_to_call_or_write(test_client) -> None:
+    _set_open(test_client, True)
+    first = _chat(test_client, "Хочу записаться")
+
+    actions = _actions(_chat(test_client, "Сегодня", first["session_id"]))
+
+    assert actions["Позвонить в клинику"] == "tel:+74950000000"
+    assert actions["Написать в Telegram"] == "https://t.me/rosh_demo"
+
+
+def test_no_call_button_while_the_clinic_is_closed(test_client) -> None:
+    _set_open(test_client, False)
+    first = _chat(test_client, "Хочу записаться")
+
+    actions = _actions(_chat(test_client, "Завтра", first["session_id"]))
+
+    assert "Позвонить в клинику" not in actions
+    assert "Написать в Telegram" in actions
+
+
+def test_booking_with_time_already_named_also_offers_to_call(test_client) -> None:
+    _set_open(test_client, True)
+
+    actions = _actions(_chat(test_client, "запишите меня на завтра в 15:00"))
+
+    assert "Позвонить в клинику" in actions
+
+
+def test_call_and_telegram_clicks_reach_the_funnel(test_client) -> None:
+    for kind in ("contact-call", "contact-call", "contact-telegram"):
+        response = test_client.post(
+            "/api/widget/event",
+            json={"company_id": "rosh_demo", "session_id": "", "visitor_id": f"v-{kind}", "kind": kind, "page": "/"},
+        )
+        assert response.status_code == 200
+
+    funnel = test_client.app.state.analytics_service.conversion_funnel(company_id="rosh_demo", days=7)
+
+    assert funnel["contact_clicks"] == {"call": 1, "telegram": 1}  # уникальные посетители, не клики

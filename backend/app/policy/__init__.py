@@ -25,6 +25,7 @@ from .constants import (
     AFFIRMATIVE_MESSAGES,
     BODY_TOPIC_SIGNAL_KEYWORDS,
     BOOKING_KEYWORDS,
+    BOOKING_CONTACT_ALTERNATIVES,
     BOOKING_TIME_MENTION_PATTERN,
     BOOKING_WHEN_TILES,
     PROMPT_INJECTION_KEYWORDS,
@@ -3600,7 +3601,7 @@ def _analyze_message_core(
                     "preferred_time": re.sub(r"(\d{1,2}) (\d{2})\b", r"\1:\2", " ".join(time_mentions)),
                     "message_to_user": _phrase(knowledge_base, "booking_phone_prompt"),
                 },
-                quick_actions=[],
+                quick_actions=list(BOOKING_CONTACT_ALTERNATIVES),
             )
         return PolicyResult(
             action=PolicyAction.CLARIFY,

@@ -158,7 +158,10 @@ EDITABLE_TEXTS: dict[str, EditableText] = {item.key: item for _, items in GROUPS
 
 # кнопки в ответах бота, которые клиника может переименовать; меняется только подпись —
 # нажатие отправляет то же сообщение, бот понимает его как раньше
-RENAMABLE_BUTTONS = ("Позвать менеджера", "Посмотреть услуги", "Оставить телефон", "Уточнить цену", "Написать в Telegram", "Открыть сайт")
+RENAMABLE_BUTTONS = (
+    "Позвать менеджера", "Посмотреть услуги", "Оставить телефон", "Уточнить цену", "Написать в Telegram", "Открыть сайт",
+    "Позвонить в клинику",
+)
 MAX_BUTTON_LABEL_LENGTH = 30
 DEFAULT_OPERATOR_WAIT_OFFER_MINUTES = 5
 OPERATOR_WAIT_OFFER_MINUTES_RANGE = (1, 60)

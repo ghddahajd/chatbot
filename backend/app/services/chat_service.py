@@ -33,6 +33,7 @@ from ..policy import (
     undisclosed_equipment_terms,
 )
 from ..policy.constants import (
+    BOOKING_CONTACT_ALTERNATIVES,
     BOOKING_DAY_CHOICES,
     BOOKING_WHEN_TILES,
     CLINIC_LOCATION_KEYWORDS,
@@ -684,7 +685,7 @@ class ChatService:
         )
         if str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip():
             answer = self._phrase("booking_phone_prompt", "Оставьте, пожалуйста, номер телефона.")
-            tiles: list[str] = []
+            tiles: list[str] = list(BOOKING_CONTACT_ALTERNATIVES)
         else:
             answer = self._phrase("booking_when_prompt", "Когда вам удобно?")
             tiles = list(BOOKING_WHEN_TILES)
@@ -772,7 +773,7 @@ class ChatService:
                 action=PolicyAction.CLARIFY,
                 answer=answer,
                 lead_created=False,
-                quick_actions=[],
+                quick_actions=format_quick_actions(list(BOOKING_CONTACT_ALTERNATIVES), self.request, knowledge_base),
             )
         if not phone:
             booking_service_response = await self._handle_booking_service_selection(

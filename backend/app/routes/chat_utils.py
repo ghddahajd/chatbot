@@ -101,6 +101,8 @@ def format_quick_actions(
         "Уточнить цену": ("message", "Хочу уточнить цену"),
         "Написать в Telegram": ("link", company.telegram_url or ""),
         "Открыть сайт": ("link", company.website_url or ""),
+        # с телефона — набор номера в одно касание; без телефона в данных кнопки просто нет
+        "Позвонить в клинику": ("link", f"tel:{re.sub(r'[^0-9+]', '', company.phone or '')}" if company.phone else ""),
     }
     normalized_values = {label.casefold(): value for label, value in values_by_label.items()}
     # Все известные подписи кнопки "соединить с живым человеком СЕЙЧАС" — см. комментарий ниже.
@@ -135,6 +137,9 @@ def format_quick_actions(
 
         if not is_open and label in live_operator_now_labels:
             label = "Оставить телефон"
+        # ночью трубку никто не возьмёт — звонок не предлагаем, Telegram прочитают утром
+        if not is_open and label == "Позвонить в клинику":
+            continue
 
         # Дедуп по итоговому лейблу — не спецкейс под конкретную пару кнопок, а общая защита:
         # если после подмены выше (или по любой другой причине) в одном ответе оказались две

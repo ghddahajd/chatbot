@@ -120,6 +120,17 @@ async def analytics_operators(
     return request.app.state.analytics_service.operator_summary(company_id=company_id)
 
 
+def _company_timezone(request: Request, company_id: Optional[str]) -> str:
+    """по какому времени считать «активность по часам»: по времени клиники, не по UTC сервера."""
+
+    if company_id:
+        try:
+            return request.app.state.knowledge_base_resolver.get(company_id, fallback=False).company.timezone
+        except KeyError:
+            pass
+    return "Europe/Moscow"
+
+
 def _resolve_service_name(request: Request, company_id: Optional[str], service_id: str) -> str:
     if not company_id:
         return service_id
@@ -264,6 +275,7 @@ async def analytics_dashboard(
     else:
         funnel_start = funnel_end = trend_start = trend_end = None
 
+    timezone_name = _company_timezone(request, company_id)
     top_services = [
         {
             "service_id": entry["service_id"],
@@ -305,11 +317,12 @@ async def analytics_dashboard(
             company_id=company_id, days=days, start=start, end=end
         ),
         "activity_by_hour": analytics_service.activity_by_hour(
-            company_id=company_id, days=days, start=start, end=end
+            company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
         ),
         "activity_by_weekday": analytics_service.activity_by_weekday(
-            company_id=company_id, days=days, start=start, end=end
+            company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
         ),
+        "timezone": timezone_name,
         "queue_wait": analytics_service.queue_wait_stats(
             company_id=company_id, days=days, start=start, end=end
         ),

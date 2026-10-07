@@ -73,12 +73,6 @@ def render_analytics_panel(
       --radius: 24px;
       --radius-sm: 16px;
       --shadow: 0 16px 40px rgba(8,14,13,.08), 0 4px 12px rgba(8,14,13,.04);
-      /* категориальная палитра dataviz-скилла (валидирована, порядок фиксирован) */
-      --series-1: #2a78d6;
-      --series-2: #eb6834;
-      --series-3: #1baf7a;
-      --series-4: #eda100;
-      --series-5: #e87ba4;
     }
     * { box-sizing: border-box; }
     body {
@@ -134,10 +128,12 @@ def render_analytics_panel(
 
     .tiles {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 20px;
     }
+    @media (max-width: 860px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .tile-caption { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
     .tile {
       background: var(--card);
       border-radius: var(--radius-sm);
@@ -170,6 +166,10 @@ def render_analytics_panel(
       gap: 16px;
       margin-bottom: 16px;
     }
+    /* иначе широкая таблица или график распирают колонку и вылезают за край на телефоне */
+    .grid-2 > * { min-width: 0; }
+    .grid-2.even { grid-template-columns: 1fr 1fr; }
+    @media (max-width: 860px) { .grid-2.even { grid-template-columns: 1fr; } }
     @media (max-width: 860px) {
       .grid-2 { grid-template-columns: 1fr; }
       .chats-layout { flex-direction: column; }
@@ -203,13 +203,15 @@ def render_analytics_panel(
     .month-bar {
       width: 60%;
       max-width: 34px;
-      background: var(--border);
+      background: color-mix(in srgb, var(--accent-soft) 60%, var(--border));
       border-radius: 4px 4px 0 0;
       position: relative;
       transition: background .15s;
       min-height: 3px;
     }
-    .month-bar.current { background: var(--accent-soft); }
+    .month-bar.current { background: var(--accent-deep); }
+    .month-chart.labeled { padding-top: 22px; }
+    .month-chart.labeled .month-bar-value { opacity: 1; }
     .month-bar:hover { background: var(--accent-deep); }
     .month-bar:hover .month-bar-value { opacity: 1; }
     .month-bar-value {
@@ -241,6 +243,9 @@ def render_analytics_panel(
     tbody td { padding: 12px 10px; border-bottom: 1px solid var(--border-soft); }
     tbody tr:last-child td { border-bottom: 0; }
     .operator-name { font-weight: 700; }
+    /* пять колонок в половине экрана: компактная шапка без капса, иначе таблица уезжает вбок */
+    .operators-table thead th { text-transform: none; letter-spacing: 0; font-size: 12px; padding: 0 6px 10px; }
+    .operators-table tbody td { padding: 12px 6px; }
     .empty-state { color: var(--text-muted); font-size: 13.5px; padding: 12px 2px; }
     .bot-banner {
       display: flex; align-items: center; gap: 10px; padding: 12px 16px; margin-bottom: 14px;
@@ -255,7 +260,7 @@ def render_analytics_panel(
     .service-row:last-child { margin-bottom: 0; }
     .service-name { flex: 0 0 42%; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .service-bar-track { flex: 1; background: var(--border-soft); border-radius: 4px; height: 10px; overflow: hidden; }
-    .service-bar-fill { height: 100%; border-radius: 4px; }
+    .service-bar-fill { height: 100%; border-radius: 4px; background: var(--accent-deep); }
     .service-count { flex: 0 0 26px; text-align: right; font-size: 12.5px; font-weight: 700; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
     /* ── воронка конверсии ── */
@@ -286,14 +291,8 @@ def render_analytics_panel(
     .page-path { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
     .funnel-fill-label { font-size: 11.5px; font-weight: 700; color: #fff; white-space: nowrap; }
 
-    /* ── donut: лиды по типу ── */
-    .donut-wrap { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
-    .donut { width: 148px; height: 148px; border-radius: 50%; flex-shrink: 0; }
-    .donut-legend { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 160px; }
-    .legend-row { display: flex; align-items: center; gap: 9px; font-size: 13px; }
-    .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-    .legend-label { flex: 1; font-weight: 600; }
-    .legend-value { font-weight: 700; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .service-share { flex: 0 0 40px; text-align: right; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .funnel-tier-note { font-size: 12px; color: var(--text-muted); margin: 4px 0 14px; }
 
     /* ── лента нераспознанных вопросов ── */
     .feed-item { padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
@@ -717,10 +716,6 @@ def render_analytics_panel(
                   <input type="text" id="settingsHeaderTitle" />
                 </div>
                 <div class="settings-field">
-                  <label for="settingsHeaderSubtitle">Подсказка под заголовком</label>
-                  <input type="text" id="settingsHeaderSubtitle" />
-                </div>
-                <div class="settings-field">
                   <label for="settingsPrimaryColor">Основной цвет</label>
                   <div class="color-field">
                     <input type="color" class="color-swatch" data-for="settingsPrimaryColor" aria-label="Выбрать основной цвет" />
@@ -860,7 +855,6 @@ def render_analytics_panel(
   </main>
 
   <script>
-    const seriesColors = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -868,6 +862,25 @@ def render_analytics_panel(
 
     function fmt(n) {
       return new Intl.NumberFormat("ru-RU").format(n ?? 0);
+    }
+
+    // «1760.9 мин» не читается — переводим в часы и дни
+    function formatMinutes(minutes) {
+      if (minutes == null) return "—";
+      if (minutes < 1) return "меньше минуты";
+      if (minutes < 60) return Math.round(minutes) + " мин";
+      if (minutes < 60 * 24) {
+        const hours = Math.floor(minutes / 60);
+        const rest = Math.round(minutes - hours * 60);
+        return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
+      }
+      return "≈ " + Math.round(minutes / 60 / 24) + " дн";
+    }
+
+    // подписи карточек: данные считаются за выбранный сверху период, а не «за всё время»
+    function periodHint(data) {
+      const label = data.range_label || "";
+      return label === "всё время" ? "За всё время" : "За " + label;
     }
 
     function monthLabel(key) {
@@ -986,63 +999,42 @@ def render_analytics_panel(
 
     function renderTiles(data) {
       const totalLeads = data.summary.leads.total;
-      const thisMonth = data.leads_by_month[data.leads_by_month.length - 1];
-      const operatorsCount = Object.keys(data.operators).length;
-
-      // "Диалогов"/"Конверсия" И их дельты — всё из period_comparison (current и previous
-      // одним расчётом, одно и то же окно по обе стороны). Живой баг (код-ревью,
-      // 2026-08-27): раньше "текущее" брали из воронки (окно до 55 дней), а "предыдущее" —
-      // отдельно из period_comparison (безопасно зажато до 30 дней ретеншном) — два разных
-      // окна сравнивались друг с другом как одно, дельта могла быть технически неверной.
-      //
-      // Кастомный период (2026-08-30): period_comparison тут null — "N дней vs предыдущие N
-      // дней от сегодня" не имеет смысла для произвольного диапазона, backend его сознательно
-      // не считает (см. routes/analytics.py). Показываем тайлы без числа/дельты, а не врём.
+      // «Диалогов», «Лидов» и «Конверсия» с дельтами — из period_comparison: текущее и прошлое
+      // окно посчитаны одним способом. Для своего периода его нет — честнее прочерк, чем сравнение
+      // «N дней от сегодня» с произвольными датами.
       const pc = data.period_comparison;
-      let conversationsTile, conversionTile;
+      const tile = (label, value, caption) =>
+        `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${caption ? `<div class="tile-caption">${caption}</div>` : ""}</div>`;
+      let tiles;
       if (pc) {
         const windowDays = pc.conversations_days != null ? pc.conversations_days : pc.days;
-        const conversations = pc.conversations.current;
-        const conversationsDelta = deltaBadge(pc.conversations.current, pc.conversations.previous);
+        const versus = `к прошлым ${windowDays} дн.`;
         const conversion = pc.conversations.current > 0
           ? Math.round((pc.leads.current / pc.conversations.current) * 1000) / 10
           : 0;
         const prevConversion = pc.conversations.previous > 0 ? (pc.leads.previous / pc.conversations.previous) * 100 : 0;
-        const conversionDelta = deltaBadge(conversion, prevConversion);
-        conversationsTile = `<div class="tile"><div class="tile-label">Диалогов (${windowDays} дн.)</div><div class="tile-value">${fmt(conversations)}${conversationsDelta}</div></div>`;
-        conversionTile = `<div class="tile"><div class="tile-label">Конверсия (${windowDays} дн.)</div><div class="tile-value">${conversion}%${conversionDelta}</div></div>`;
+        tiles = [
+          tile(`Диалогов за ${windowDays} дн.`, fmt(pc.conversations.current) + deltaBadge(pc.conversations.current, pc.conversations.previous), pc.conversations.previous ? versus : ""),
+          tile(`Лидов за ${windowDays} дн.`, fmt(pc.leads.current) + deltaBadge(pc.leads.current, pc.leads.previous), `всего за всё время: ${fmt(totalLeads)}`),
+          tile("Диалог → лид", conversion + "%" + deltaBadge(conversion, prevConversion), prevConversion ? versus : "сколько диалогов стали лидами"),
+        ];
       } else {
-        conversationsTile = `<div class="tile"><div class="tile-label">Диалогов</div><div class="tile-value">—</div></div>`;
-        conversionTile = `<div class="tile"><div class="tile-label">Конверсия</div><div class="tile-value">—</div></div>`;
+        tiles = [
+          tile("Диалогов", "—", "для своего периода не считаем"),
+          tile("Лидов", "—", `всего за всё время: ${fmt(totalLeads)}`),
+          tile("Диалог → лид", "—", ""),
+        ];
       }
-
-      const waitMinutes = data.queue_wait.avg_wait_minutes;
-
-      return `
-        <div class="tiles">
-          <div class="tile"><div class="tile-label">Всего лидов</div><div class="tile-value">${fmt(totalLeads)}</div></div>
-          <div class="tile"><div class="tile-label">Лидов за месяц</div><div class="tile-value accent">${fmt(thisMonth ? thisMonth.count : 0)}</div></div>
-          ${conversationsTile}
-          ${conversionTile}
-          <div class="tile"><div class="tile-label">Ожидание оператора</div><div class="tile-value">${waitMinutes != null ? waitMinutes + " мин" : "—"}</div></div>
-          <div class="tile"><div class="tile-label">Операторов</div><div class="tile-value">${fmt(operatorsCount)}</div></div>
-        </div>
-      `;
+      tiles.push(tile("Ожидание администратора", formatMinutes(data.queue_wait.avg_wait_minutes), "в среднем от просьбы до «Взять»"));
+      return `<div class="tiles">${tiles.join("")}</div>`;
     }
 
     function renderFunnel(funnel) {
+      // Две пары стадий считаются по-разному: посетителей и открытия видит браузер (часть режут
+      // блокировщики рекламы), переписки и лиды — сервер. Ширину полос считаем внутри каждой пары,
+      // иначе «переписок» больше, чем «открытий», и полоса упирается в 100% — выглядит как ошибка.
       const stages = funnel.stages;
-      // Ширина бара — относительно САМОЙ БОЛЬШОЙ стадии, не обязательно первой. В норме
-      // "виджет загружен" и есть максимум (воронка сужается), но пока impression/chat_opened
-      // только начали считаться (мало истории), а "есть переписка"/"лид" копились уже давно —
-      // с relative-to-stage[0] всё клампилось в 100% и таяло различие. Само выправится, когда
-      // обе метрики накопят сопоставимую историю.
-      const top = Math.max(...stages.map((s) => s.count), 1);
-      const rows = stages.map((stage) => {
-        // clamp на 100 — ранние дни жизни воронки (виджет только начал считать импрешны)
-        // могут дать "переписок" больше, чем "загрузок виджета", пока обе метрики не
-        // накопят сопоставимую историю; честное число остаётся в тексте (percent_of_previous),
-        // клампим только ВИЗУАЛЬНУЮ ширину, чтобы бар не вылезал за карточку
+      const stageRow = (stage, top) => {
         const widthPct = Math.min(Math.max(Math.round((stage.count / top) * 100), stage.count > 0 ? 4 : 0), 100);
         const percentText = stage.percent_of_previous != null
           ? `<span class="funnel-percent">(${stage.percent_of_previous}%)</span>` : "";
@@ -1061,7 +1053,11 @@ def render_analytics_panel(
             </div>
           </div>
         `;
-      }).join("");
+      };
+      const tier = (items) => {
+        const top = Math.max(...items.map((stage) => stage.count), 1);
+        return items.map((stage) => stageRow(stage, top)).join("");
+      };
       const teaser = funnel.teaser || {};
       const teaserLine = teaser.shown
         ? `<p class="card-hint funnel-teaser">Приглашение у кнопки чата: показали ${fmt(teaser.shown)} · «Узнать цену» ${fmt(teaser.price)} · «Записаться» ${fmt(teaser.booking)}</p>`
@@ -1069,8 +1065,10 @@ def render_analytics_panel(
       return `
         <div class="card">
           <h2>Воронка конверсии</h2>
-          <p class="card-hint">За последние ${funnel.days} дней · посетитель считается один раз за период · % — от предыдущей стадии</p>
-          ${rows}
+          <p class="card-hint">За последние ${funnel.days} дн. · посетитель считается один раз за период · % — от предыдущей строки</p>
+          ${tier(stages.slice(0, 2))}
+          <p class="funnel-tier-note">Посетителей и открытия чата считает браузер — часть из них прячут блокировщики рекламы. Переписки и лиды ниже считает сервер, их может оказаться больше, чем открытий.</p>
+          ${tier(stages.slice(2))}
           ${teaserLine}
         </div>
       `;
@@ -1112,34 +1110,27 @@ def render_analytics_panel(
       booking_change: "Перенос / отмена",
     };
 
-    function renderReasonDonut(items) {
+    function renderLeadReasons(items, hint) {
       if (!items.length) {
-        return `<div class="card"><h2>Лиды по типу</h2><p class="card-hint">За всё время</p><div class="empty-state">Пока нет лидов</div></div>`;
+        return `<div class="card"><h2>Лиды по типу</h2><p class="card-hint">${hint}</p><div class="empty-state">Пока нет лидов</div></div>`;
       }
       const total = items.reduce((sum, i) => sum + i.count, 0);
-      let cumulative = 0;
-      const segments = items.map((item, i) => {
-        const color = seriesColors[i % seriesColors.length];
-        const startPct = (cumulative / total) * 100;
-        cumulative += item.count;
-        const endPct = (cumulative / total) * 100;
-        return `${color} ${startPct.toFixed(2)}% ${endPct.toFixed(2)}%`;
-      }).join(", ");
-      const legend = items.map((item, i) => `
-        <div class="legend-row">
-          <span class="legend-dot" style="background:${seriesColors[i % seriesColors.length]}"></span>
-          <span class="legend-label">${escapeHtml(REASON_LABELS[item.reason] || item.reason)}</span>
-          <span class="legend-value">${fmt(item.count)} · ${Math.round((item.count / total) * 100)}%</span>
+      const max = Math.max(...items.map((i) => i.count));
+      const rows = items.map((item) => `
+        <div class="service-row">
+          <div class="service-name">${escapeHtml(REASON_LABELS[item.reason] || item.reason)}</div>
+          <div class="service-bar-track">
+            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%"></div>
+          </div>
+          <div class="service-count">${fmt(item.count)}</div>
+          <div class="service-share">${Math.round((item.count / total) * 100)}%</div>
         </div>
       `).join("");
       return `
         <div class="card">
           <h2>Лиды по типу</h2>
-          <p class="card-hint">За всё время</p>
-          <div class="donut-wrap">
-            <div class="donut" style="background: conic-gradient(${segments})"></div>
-            <div class="donut-legend">${legend}</div>
-          </div>
+          <p class="card-hint">${hint}</p>
+          ${rows}
         </div>
       `;
     }
@@ -1164,8 +1155,8 @@ def render_analytics_panel(
       return `
         <div class="card">
           <h2>Лиды по месяцам</h2>
-          <p class="card-hint">Последние ${months.length} месяцев</p>
-          <div class="month-chart">${bars}</div>
+          <p class="card-hint">Последние ${months.length} месяцев · текущий выделен</p>
+          <div class="month-chart labeled">${bars}</div>
         </div>
       `;
     }
@@ -1178,7 +1169,7 @@ def render_analytics_panel(
       return many;
     }
 
-    function renderOperators(operators) {
+    function renderOperators(operators, hint) {
       // "Бот" — синтетическая запись (см. analytics.py:operator_summary), не человек-оператор:
       // claimed/closed/avg_dialog_minutes для него всегда пустые, только leads осмысленный.
       // Раньше сидел строкой в общей таблице вперемешку с людьми — 0/0/"—" в трёх колонках
@@ -1194,7 +1185,7 @@ def render_analytics_panel(
             <span class="bot-banner-icon">🤖</span>
             <span class="bot-banner-text">
               Бот — <strong>${fmt(botStats.leads)}</strong> ${pluralRu(botStats.leads, "лид", "лида", "лидов")}
-              самостоятельно, без оператора
+              сам, без администратора
             </span>
           </div>
         `
@@ -1203,8 +1194,8 @@ def render_analytics_panel(
       if (!humanEntries.length) {
         return `
           <div class="card">
-            <h2>Операторы</h2>
-            <p class="card-hint">За всё время</p>
+            <h2>Администраторы</h2>
+            <p class="card-hint">${hint}</p>
             ${botBanner}
             <div class="empty-state">Пока нет ни одного взятого в работу диалога</div>
           </div>
@@ -1216,32 +1207,34 @@ def render_analytics_panel(
           <td class="num">${fmt(stats.claimed)}</td>
           <td class="num">${fmt(stats.closed)}</td>
           <td class="num">${fmt(stats.leads)}</td>
-          <td class="num">${stats.avg_dialog_minutes != null ? stats.avg_dialog_minutes + " мин" : "—"}</td>
+          <td class="num">${formatMinutes(stats.avg_dialog_minutes)}</td>
         </tr>
       `).join("");
       return `
         <div class="card">
-          <h2>Операторы</h2>
-          <p class="card-hint">За всё время</p>
+          <h2>Администраторы</h2>
+          <p class="card-hint">${hint} · длительность — от «Взять» до закрытия диалога</p>
           ${botBanner}
-          <table>
-            <thead><tr><th>Оператор</th><th class="num">Взято</th><th class="num">Закрыто</th><th class="num">Лидов</th><th class="num">Ср. время</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
+          <div class="table-scroll">
+            <table class="operators-table">
+              <thead><tr><th>Администратор</th><th class="num">Взято</th><th class="num">Закрыто</th><th class="num">Лидов</th><th class="num" title="Средняя длительность диалога">Ср. длит.</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
         </div>
       `;
     }
 
-    function renderTopServices(services) {
+    function renderTopServices(services, hint) {
       if (!services.length) {
-        return `<div class="card"><h2>Топ услуг</h2><p class="card-hint">По числу лидов</p><div class="empty-state">Пока нет лидов с привязкой к услуге</div></div>`;
+        return `<div class="card"><h2>Топ услуг</h2><p class="card-hint">${hint} · по числу лидов</p><div class="empty-state">Пока нет лидов с привязкой к услуге</div></div>`;
       }
       const max = Math.max(...services.map((s) => s.count));
-      const rows = services.map((s, i) => `
+      const rows = services.map((s) => `
         <div class="service-row">
           <div class="service-name" title="${escapeHtml(s.service_name)}">${escapeHtml(s.service_name)}</div>
           <div class="service-bar-track">
-            <div class="service-bar-fill" style="width:${Math.round((s.count / max) * 100)}%; background:${seriesColors[i % seriesColors.length]}"></div>
+            <div class="service-bar-fill" style="width:${Math.round((s.count / max) * 100)}%"></div>
           </div>
           <div class="service-count">${fmt(s.count)}</div>
         </div>
@@ -1249,50 +1242,47 @@ def render_analytics_panel(
       return `
         <div class="card">
           <h2>Топ услуг</h2>
-          <p class="card-hint">По числу лидов</p>
+          <p class="card-hint">${hint} · по числу лидов</p>
           ${rows}
         </div>
       `;
     }
 
     const INTENT_LABELS = {
-      ok: "Обычный ответ", price_question: "Цена", price_question_no_service: "Цена (без услуги)",
-      list_services: "Список услуг", small_talk: "Смолток", off_topic: "Офтоп",
-      off_topic_body_redirect: "Офтоп (про тело)", operator_requested: "Просьба оператора",
-      booking_request: "Запись", booking_change: "Перенос / отмена", contact_provided: "Контакт получен", lead_request: "Лид",
-      cosmetic_concern: "Косметический вопрос", medical_advice: "Мед. вопрос",
-      regulated_advice: "Регулируемый мед. вопрос", unknown_service: "Неизвестная услуга",
-      similar_services_found: "Похожие услуги", contact_link: "Ссылка/контакт",
-      location_mismatch: "Несовпадение города", unsupported_city: "Город не обслуживаем",
-      service_mention: "Упоминание услуги", service_explanation: "Объяснение услуги",
-      duration_question: "Вопрос про сроки", faq_question: "Частый вопрос", quick_faq: "Быстрый ответ (FAQ)",
-      objection_handled: "Возражение", objection_backoff: "Возражение (повтор)",
-      // self_harm_crisis: нейтральная подпись в чарте намеренно — "Кризис (самоповреждение)"
-      // рядом со "Смолток"/"Цена" в общем bar-чарте читалось как ещё одна маркетинговая
-      // метрика, резало глаз (обсуждено с пользователем 2026-08-29). Сам intent-ключ и вся
-      // обработка в policy/ не менялись, только отображаемая строка на дашборде.
-      complaint: "Жалоба", self_harm_crisis: "Особое внимание", out_of_scope: "Вне зоны ответственности",
-      unknown: "Неизвестно",
+      ok: "Ответил по базе знаний", price_question: "Цена услуги", price_question_no_service: "Цены в целом",
+      list_services: "Какие есть услуги", small_talk: "Приветствие, благодарность", off_topic: "Не по теме клиники",
+      off_topic_body_redirect: "Не по теме, про здоровье", operator_requested: "Позвали администратора",
+      booking_request: "Запись", booking_change: "Перенос / отмена", contact_provided: "Оставили телефон", lead_request: "Заявка",
+      cosmetic_concern: "Косметическая проблема", medical_advice: "Медицинский вопрос",
+      regulated_advice: "Медицинский вопрос — к врачу", unknown_service: "Услуги нет в базе",
+      similar_services_found: "Предложил похожие услуги", contact_link: "Спросили контакты",
+      location_mismatch: "Другой город", unsupported_city: "Город не обслуживаем",
+      service_mention: "Назвали услугу", service_explanation: "Что это за услуга",
+      duration_question: "Сколько длится", faq_question: "Частый вопрос", quick_faq: "Частый вопрос (кнопка)",
+      objection_handled: "Сомнение, возражение", objection_backoff: "Сомнение, повторно",
+      // нейтрально намеренно: рядом с «Цена» и «Запись» прямое название читалось бы как ещё одна метрика
+      complaint: "Жалоба", self_harm_crisis: "Особое внимание", out_of_scope: "Не по профилю клиники",
+      unknown: "Не распознано",
     };
 
-    function renderIntentBreakdown(items) {
+    function renderIntentBreakdown(items, hint) {
       if (!items.length) {
-        return `<div class="card"><h2>Разбивка по темам</h2><p class="card-hint">За период</p><div class="empty-state">Пока нет данных</div></div>`;
+        return `<div class="card"><h2>О чём спрашивают</h2><p class="card-hint">${hint}</p><div class="empty-state">Пока нет данных</div></div>`;
       }
       const max = Math.max(...items.map((i) => i.count));
-      const rows = items.map((item, i) => `
+      const rows = items.map((item) => `
         <div class="service-row">
-          <div class="service-name" title="${escapeHtml(item.reason)}">${escapeHtml(INTENT_LABELS[item.reason] || item.reason)}</div>
+          <div class="service-name" title="${escapeHtml(INTENT_LABELS[item.reason] || item.reason)}">${escapeHtml(INTENT_LABELS[item.reason] || item.reason)}</div>
           <div class="service-bar-track">
-            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%; background:${seriesColors[i % seriesColors.length]}"></div>
+            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%"></div>
           </div>
           <div class="service-count">${fmt(item.count)}</div>
         </div>
       `).join("");
       return `
         <div class="card">
-          <h2>Разбивка по темам</h2>
-          <p class="card-hint">О чём чаще всего спрашивают</p>
+          <h2>О чём спрашивают</h2>
+          <p class="card-hint">${hint} · как бот понял сообщение</p>
           ${rows}
         </div>
       `;
@@ -1303,24 +1293,23 @@ def render_analytics_panel(
       guarantee: "Вопрос про гарантию", pain_fear: "Страх боли / побочек", unknown: "Неизвестно",
     };
 
-    function renderObjectionBreakdown(items) {
-      if (!items.length) {
-        return `<div class="card"><h2>Возражения по теме</h2><p class="card-hint">За период</p><div class="empty-state">Пока нет данных</div></div>`;
-      }
+    function renderObjectionBreakdown(items, hint) {
+      // пустая карточка только занимает место — появится, когда будут данные
+      if (!items.length) return "";
       const max = Math.max(...items.map((i) => i.count));
-      const rows = items.map((item, i) => `
+      const rows = items.map((item) => `
         <div class="service-row">
           <div class="service-name" title="${escapeHtml(item.topic)}">${escapeHtml(OBJECTION_TOPIC_LABELS[item.topic] || item.topic)}</div>
           <div class="service-bar-track">
-            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%; background:${seriesColors[i % seriesColors.length]}"></div>
+            <div class="service-bar-fill" style="width:${Math.round((item.count / max) * 100)}%"></div>
           </div>
           <div class="service-count">${fmt(item.count)}</div>
         </div>
       `).join("");
       return `
         <div class="card">
-          <h2>Возражения по теме</h2>
-          <p class="card-hint">С чем чаще всего спорят/сомневаются</p>
+          <h2>Сомнения и возражения</h2>
+          <p class="card-hint">${hint} · в чём чаще сомневаются</p>
           ${rows}
         </div>
       `;
@@ -1352,7 +1341,7 @@ def render_analytics_panel(
       `;
     }
 
-    function renderActivityByHour(hours) {
+    function renderActivityByHour(hours, timezone) {
       const max = Math.max(1, ...hours.map((h) => h.count));
       const bars = hours.map((h) => `
         <div class="month-col">
@@ -1367,7 +1356,7 @@ def render_analytics_panel(
       return `
         <div class="card">
           <h2>Активность по часам</h2>
-          <p class="card-hint">Сообщений по часу суток (UTC)</p>
+          <p class="card-hint">Сообщений по часу суток, ${timezone === "Europe/Moscow" ? "по Москве" : "по времени клиники"}</p>
           <div class="month-chart">${bars}</div>
         </div>
       `;
@@ -1389,7 +1378,7 @@ def render_analytics_panel(
         <div class="card">
           <h2>Активность по дням недели</h2>
           <p class="card-hint">Сообщений по дню недели</p>
-          <div class="month-chart">${bars}</div>
+          <div class="month-chart labeled">${bars}</div>
         </div>
       `;
     }
@@ -1424,7 +1413,7 @@ def render_analytics_panel(
 
     function renderUnanswered(items) {
       if (!items.length) {
-        return `<div class="card"><h2>Нераспознанные вопросы</h2><p class="card-hint">Последние ${items.length}</p><div class="empty-state">Ничего нет — база знаний покрывает все вопросы</div></div>`;
+        return `<div class="card"><h2>Последние непонятые вопросы</h2><p class="card-hint">Что добавить в базу знаний</p><div class="empty-state">Ничего нет — база знаний покрывает все вопросы</div></div>`;
       }
       const rows = items.slice(0, 10).map((item) => `
         <div class="feed-item">
@@ -1434,8 +1423,8 @@ def render_analytics_panel(
       `).join("");
       return `
         <div class="card">
-          <h2>Нераспознанные вопросы</h2>
-          <p class="card-hint">Последние ${Math.min(items.length, 10)}</p>
+          <h2>Последние непонятые вопросы</h2>
+          <p class="card-hint">Последние ${Math.min(items.length, 10)} — что добавить в базу знаний</p>
           ${rows}
         </div>
       `;
@@ -1726,7 +1715,6 @@ def render_analytics_panel(
         document.getElementById("settingsTelegram").value = data.telegram_url || "";
         document.getElementById("settingsWebsite").value = data.website_url || "";
         document.getElementById("settingsHeaderTitle").value = data.widget.header_title || "";
-        document.getElementById("settingsHeaderSubtitle").value = data.widget.header_subtitle || "";
         document.getElementById("settingsPrimaryColor").value = data.widget.primary_color || "";
         document.getElementById("settingsButtonColor").value = data.widget.button_color || "";
         document.getElementById("settingsPosition").value = data.widget.position || "bottom-right";
@@ -1778,7 +1766,6 @@ def render_analytics_panel(
           primary_color: document.getElementById("settingsPrimaryColor").value,
           button_color: document.getElementById("settingsButtonColor").value,
           header_title: document.getElementById("settingsHeaderTitle").value,
-          header_subtitle: document.getElementById("settingsHeaderSubtitle").value,
           position: document.getElementById("settingsPosition").value,
           avatar_emoji: document.getElementById("settingsAvatarEmoji").value,
           assistant_label: document.getElementById("settingsAssistantLabel").value.trim() || "Ассистент",
@@ -2024,27 +2011,28 @@ def render_analytics_panel(
       content.innerHTML = '<div class="loading">Загрузка…</div>';
       try {
         const data = await fetchDashboard(companyId, rangeParams);
+        const hint = periodHint(data);
         content.innerHTML = `
           ${renderTiles(data)}
           ${renderFunnel(data.funnel)}
           ${renderWidgetPages(data.funnel.pages)}
-          <div class="grid-2">
+          <div class="grid-2 even">
             ${renderMonthChart(data.leads_by_month)}
-            ${renderOperators(data.operators)}
+            ${renderOperators(data.operators, hint)}
           </div>
           <div class="grid-2">
-            ${renderTopServices(data.top_services)}
-            ${renderReasonDonut(data.leads_by_reason)}
+            ${renderTopServices(data.top_services, hint)}
+            ${renderLeadReasons(data.leads_by_reason, hint)}
           </div>
           <div class="grid-2">
-            ${renderActivityByHour(data.activity_by_hour)}
+            ${renderActivityByHour(data.activity_by_hour, data.timezone)}
             ${renderActivityByWeekday(data.activity_by_weekday)}
           </div>
-          ${renderIntentBreakdown(data.intent_breakdown)}
-          ${renderObjectionBreakdown(data.objection_breakdown)}
+          ${renderIntentBreakdown(data.intent_breakdown, hint)}
+          ${renderObjectionBreakdown(data.objection_breakdown, hint)}
           <div class="grid-2">
-            ${renderTopQuestions("Топ непонятых вопросов", "По частоте точного текста", data.top_unanswered_questions)}
-            ${renderTopQuestions("Топ частых вопросов", "По частоте точного текста", data.top_answered_questions)}
+            ${renderTopQuestions("Чаще всего не понял", hint + " · одинаковые сообщения считаются вместе", data.top_unanswered_questions)}
+            ${renderTopQuestions("Чаще всего спрашивают", hint + " · одинаковые сообщения считаются вместе", data.top_answered_questions)}
           </div>
           <!-- Тренд нераспознанных вопросов сознательно скрыт с публичной страницы
                (2026-08-27) — данные остаются в /api/analytics/dashboard (unanswered_trend),

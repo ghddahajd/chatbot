@@ -596,6 +596,27 @@ def test_activity_by_weekday_labels_and_counts(tmp_path) -> None:
     assert by_label["Вт"] == 0
 
 
+def test_activity_counts_in_the_clinic_timezone(tmp_path) -> None:
+    # 21:15 UTC понедельника — это 00:15 вторника в Москве: клиника смотрит по своему времени
+    analytics_file = tmp_path / "analytics.jsonl"
+    rollup_file = tmp_path / "rollup.jsonl"
+    append_jsonl(analytics_file, _event(event_type="message_answered", timestamp=datetime(2026, 1, 5, 21, 15, 0)))
+    append_jsonl(
+        rollup_file,
+        {
+            "date": "2026-01-05", "hour": "22", "company_id": "rosh_import_demo",
+            "event_type": "message_answered", "action": "answer", "count": 3,
+        },
+    )
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl", rollup_file=rollup_file)
+
+    by_hour = {entry["hour"]: entry["count"] for entry in service.activity_by_hour(days=3650, timezone_name="Europe/Moscow")}
+    by_day = {entry["label"]: entry["count"] for entry in service.activity_by_weekday(days=3650, timezone_name="Europe/Moscow")}
+
+    assert (by_hour[0], by_hour[1], by_hour[21], by_hour[22]) == (1, 3, 0, 0)
+    assert (by_day["Вт"], by_day["Пн"]) == (4, 0)
+
+
 def test_archive_rollup_rows_carry_hour_and_event_type(tmp_path) -> None:
     """2026-08-27: rollup раньше терял час навсегда и не различал event_type от action —
     без этого activity_by_hour/weekday не смогли бы честно продолжить тренд за ретеншном."""

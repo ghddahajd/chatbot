@@ -6,10 +6,12 @@ import json
 import logging
 import os
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
+from .hours import _resolve_timezone
 from .logging_setup import redact_phones
 from .models import PolicyAction, PolicyReason, PolicyResult, Session
 from .utils.jsonl import read_jsonl
@@ -908,6 +910,7 @@ class AnalyticsService:
         *,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        timezone_name: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Сколько сообщений приходит в каждый час суток (UTC) — для планирования смен
         операторов. Сырые message_answered (недавние) + rollup (то, что уже сжато под
@@ -915,12 +918,13 @@ class AnalyticsService:
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
         events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        zone = _resolve_timezone(timezone_name) if timezone_name else None
         counts: Counter[int] = Counter()
         for event in events:
             if event.get("event_type") != "message_answered":
                 continue
             try:
-                hour = datetime.fromisoformat(str(event.get("timestamp"))).hour
+                hour = _in_zone(datetime.fromisoformat(str(event.get("timestamp"))), zone).hour
             except (TypeError, ValueError):
                 continue
             counts[hour] += 1
@@ -932,7 +936,10 @@ class AnalyticsService:
                 # /api/analytics/dashboard, а не просто пропускало одну плохую строку.
                 hour = int(str(row.get("hour") or ""))
                 count = int(row.get("count") or 0)
-            except ValueError:
+                if zone is not None:
+                    moment = datetime.strptime(str(row.get("date")), "%Y-%m-%d").replace(hour=hour)
+                    hour = _in_zone(moment, zone).hour
+            except (TypeError, ValueError):
                 continue
             counts[hour] += count
         return [{"hour": hour, "count": counts.get(hour, 0)} for hour in range(24)]
@@ -944,6 +951,7 @@ class AnalyticsService:
         *,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        timezone_name: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Та же идея, но по дню недели (0=Пн ... 6=Вс) — на пару с activity_by_hour. День
         недели не хранится отдельно ни в сырых событиях, ни в rollup — всегда вычисляется из
@@ -951,12 +959,13 @@ class AnalyticsService:
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
         events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        zone = _resolve_timezone(timezone_name) if timezone_name else None
         counts: Counter[int] = Counter()
         for event in events:
             if event.get("event_type") != "message_answered":
                 continue
             try:
-                weekday = datetime.fromisoformat(str(event.get("timestamp"))).weekday()
+                weekday = _in_zone(datetime.fromisoformat(str(event.get("timestamp"))), zone).weekday()
             except (TypeError, ValueError):
                 continue
             counts[weekday] += 1
@@ -964,7 +973,10 @@ class AnalyticsService:
             try:
                 # Живой баг (код-ревью, 2026-08-27): та же дыра, что в activity_by_hour —
                 # int(count) вне try/except мог уронить весь дашборд на одной плохой строке.
-                weekday = datetime.strptime(str(row.get("date")), "%Y-%m-%d").weekday()
+                moment = datetime.strptime(str(row.get("date")), "%Y-%m-%d")
+                if zone is not None:
+                    moment = _in_zone(moment.replace(hour=int(str(row.get("hour") or 0))), zone)
+                weekday = moment.weekday()
                 count = int(row.get("count") or 0)
             except (TypeError, ValueError):
                 continue
@@ -1191,6 +1203,16 @@ class AnalyticsService:
                 [event for event in events if event.get("event_type") == "message_answered"],
             ),
         }
+
+
+def _in_zone(moment: datetime, zone: Optional[ZoneInfo]) -> datetime:
+    """события пишутся в UTC без пометки зоны — часы и дни недели клинике нужны по её времени."""
+
+    if zone is None:
+        return moment
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(zone)
 
 
 def _visitor_id(event: dict[str, Any]) -> str:

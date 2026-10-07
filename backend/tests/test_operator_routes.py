@@ -330,8 +330,9 @@ def test_analytics_dashboard_resolves_service_name_and_shape(test_client) -> Non
         "company_id", "days", "range_label", "summary", "operators", "leads_by_month", "leads_by_reason",
         "top_services", "funnel", "unanswered_trend", "intent_breakdown", "objection_breakdown",
         "top_unanswered_questions", "top_answered_questions", "activity_by_hour", "activity_by_weekday",
-        "queue_wait", "period_comparison",
+        "queue_wait", "period_comparison", "timezone",
     }
+    assert result["timezone"] == "Europe/Moscow"  # часы активности — по времени клиники
     assert result["summary"]["leads"]["total"] >= 1
     assert len(result["leads_by_month"]) == 6
     assert len(result["activity_by_hour"]) == 24

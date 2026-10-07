@@ -164,6 +164,8 @@ def test_analytics_chats_lists_live_session_and_supports_scope_filter(test_clien
     assert all_response.status_code == 200
     all_ids = {item["session_id"] for item in all_response.json()["conversations"]}
     assert bot_only["session_id"] in all_ids
+    by_id = {item["session_id"]: item for item in all_response.json()["conversations"]}
+    assert by_id[bot_only["session_id"]]["first_message"] == "привет"  # первая фраза посетителя, не ответ бота
     assert operator_payload["session_id"] in all_ids
 
     operator_scope = test_client.get(

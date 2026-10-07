@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from .hours import _resolve_timezone
 from .logging_setup import redact_phones
-from .models import PolicyAction, PolicyReason, PolicyResult, Session
+from .models import MessageRole, PolicyAction, PolicyReason, PolicyResult, Session
 from .utils.jsonl import read_jsonl
 
 
@@ -648,6 +648,8 @@ class AnalyticsService:
                     "operator_requested": session.operator_requested,
                     "lead_requested": session.lead_requested,
                     "message_count": len(session.messages),
+                    # в списке чат узнают по тому, с чего человек начал, а не по коду сессии
+                    "first_message": next((m.text for m in session.messages if m.role == MessageRole.USER), ""),
                     "last_message": session.messages[-1].text if session.messages else "",
                     "updated_at": session.updated_at.isoformat(),
                     "source": "live",
@@ -668,6 +670,7 @@ class AnalyticsService:
                     "operator_requested": bool(record.get("operator_requested")),
                     "lead_requested": bool(record.get("lead_requested")),
                     "message_count": len(messages),
+                    "first_message": next((m.get("text") for m in messages if m.get("role") == MessageRole.USER.value), ""),
                     "last_message": messages[-1].get("text") if messages else "",
                     "updated_at": record.get("closed_at"),
                     "source": "archive",

@@ -552,7 +552,10 @@ def render_analytics_panel(
     .chat-row + .chat-row { margin-top: 2px; }
     .chat-row:hover { background: var(--border-soft); }
     .chat-row.active { background: color-mix(in srgb, var(--accent-soft) 32%, var(--card)); }
-    .chat-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+    .chat-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .chat-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .chat-row-meta .chat-preview { flex: 1; min-width: 0; }
     .chat-id { font-size: 12px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
     .chat-badge {
       font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
@@ -561,7 +564,7 @@ def render_analytics_panel(
     .chat-badge.operator { background: #fdf0e5; color: #a65a1f; }
     .chat-badge.lead { background: #eaf4e0; color: var(--accent-deep); }
     .chat-time { font-size: 11.5px; color: var(--text-muted); margin-left: auto; }
-    .chat-preview { font-size: 13.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-preview { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .chat-detail-header {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -569,6 +572,14 @@ def render_analytics_panel(
     }
     .t-msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; margin-bottom: 8px; font-size: 13.5px; line-height: 1.4; }
     .t-msg-role { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .6; margin-bottom: 2px; }
+    /* переносы как в виджете: иначе список цен «• … • …» слипается в одну строку */
+    .t-msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .lead-chat-link {
+      font: inherit; font-size: 12.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+      border: 1px solid var(--border); background: transparent; color: var(--accent-deep); cursor: pointer; white-space: nowrap;
+    }
+    .lead-chat-link:hover { background: var(--border-soft); }
+    .leads-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
     .t-msg.user { background: var(--border-soft); margin-right: auto; }
     .t-msg.assistant { background: var(--card); border: 1px solid var(--border); margin-right: auto; }
     .t-msg.operator { background: var(--accent-soft); margin-left: auto; }
@@ -618,8 +629,8 @@ def render_analytics_panel(
       <div class="chat-filters">
         <button type="button" class="filter-btn active" data-scope="all">Все</button>
         <button type="button" class="filter-btn" data-scope="bot_only">Только бот</button>
-        <button type="button" class="filter-btn" data-scope="operator">С оператором</button>
-        <button type="button" class="filter-btn" data-scope="lead">Успешные лиды</button>
+        <button type="button" class="filter-btn" data-scope="operator">С администратором</button>
+        <button type="button" class="filter-btn" data-scope="lead">С лидом</button>
         __CHAT_EXPORT_HTML__
       </div>
       <div class="chats-layout">
@@ -636,7 +647,7 @@ def render_analytics_panel(
       <div class="card">
         <h2>Лиды</h2>
         <p class="card-hint">
-          Без персональных данных — имя и телефон видны в Telegram-теме диалога, тут только метаданные заявки.
+          Без персональных данных — имя и телефон видны в Telegram-теме диалога, тут только метаданные заявки. «Переписка» открывает сам диалог.
         </p>
         <div class="leads-filters">
           <select class="company-select" id="leadsReasonFilter">
@@ -864,6 +875,23 @@ def render_analytics_panel(
       return new Intl.NumberFormat("ru-RU").format(n ?? 0);
     }
 
+    // сервер пишет время в UTC без пометки — показываем по часам клиники, иначе всё на 3 часа раньше
+    let clinicTimezone = "Europe/Moscow";
+    function clinicTime(iso) {
+      if (!iso) return "";
+      const raw = String(iso);
+      const moment = new Date(/[zZ]$|[+-][0-9][0-9]:?[0-9][0-9]$/.test(raw) ? raw : raw + "Z");
+      if (isNaN(moment.getTime())) return raw.replace("T", " ").slice(0, 16);
+      try {
+        const part = (opts, value) => new Intl.DateTimeFormat("ru-RU", { timeZone: clinicTimezone, ...opts }).format(value);
+        const sameYear = part({ year: "numeric" }, moment) === part({ year: "numeric" }, new Date());
+        const date = part(sameYear ? { day: "2-digit", month: "2-digit" } : { day: "2-digit", month: "2-digit", year: "2-digit" }, moment);
+        return date + " " + part({ hour: "2-digit", minute: "2-digit" }, moment);
+      } catch (_) {
+        return raw.replace("T", " ").slice(0, 16);
+      }
+    }
+
     // «1760.9 мин» не читается — переводим в часы и дни
     function formatMinutes(minutes) {
       if (minutes == null) return "—";
@@ -931,7 +959,7 @@ def render_analytics_panel(
     };
     const LEAD_TRIGGER_LABELS = {
       ask_contact: "Оставил контакт", booking_request: "Запись",
-      regulated_advice: "Мед. вопрос", operator_handoff: "Передано оператору",
+      regulated_advice: "Мед. вопрос", operator_handoff: "Передано администратору",
     };
 
     async function fetchLeads(companyId, rangeParams) {
@@ -949,23 +977,25 @@ def render_analytics_panel(
       if (!leads.length) return '<div class="leads-table-empty">Лидов за этот период не найдено</div>';
       const rows = leads.map((lead) => `
         <tr>
-          <td>${escapeHtml((lead.timestamp || "").replace("T", " ").slice(0, 16))}</td>
+          <td class="leads-date">${escapeHtml(clinicTime(lead.timestamp))}</td>
           <td>${escapeHtml(lead.service_name || "—")}</td>
           <td>${escapeHtml(LEAD_REASON_LABELS[lead.reason] || lead.reason)}</td>
           <td>${escapeHtml(LEAD_TRIGGER_LABELS[lead.lead_trigger] || lead.lead_trigger)}</td>
           <td>${lead.needs_operator ? "да" : "—"}</td>
           <td>${escapeHtml(lead.preferred_time || "—")}</td>
           <td class="page-path" title="${escapeHtml(lead.page || "")}">${escapeHtml(lead.page || "—")}</td>
-          <td class="chat-id">${escapeHtml((lead.session_id || "").slice(0, 8))}</td>
+          <td>${lead.session_id ? `<button type="button" class="lead-chat-link" data-session-id="${escapeHtml(lead.session_id)}">Переписка</button>` : "—"}</td>
         </tr>
       `).join("");
       return `
-        <table>
-          <thead>
-            <tr><th>Дата</th><th>Услуга</th><th>Тип</th><th>Как пришёл</th><th>Нужен оператор</th><th>Когда удобно</th><th>Страница</th><th>Сессия</th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Дата</th><th>Услуга</th><th>Тип</th><th>Как пришёл</th><th>Нужен администратор</th><th>Когда удобно</th><th>Страница</th><th></th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
       `;
     }
 
@@ -1418,7 +1448,7 @@ def render_analytics_panel(
       const rows = items.slice(0, 10).map((item) => `
         <div class="feed-item">
           <div class="feed-text">${escapeHtml(item.message || "—")}</div>
-          <div class="feed-meta">${escapeHtml((item.timestamp || "").replace("T", " ").slice(0, 16))}</div>
+          <div class="feed-meta">${escapeHtml(clinicTime(item.timestamp))}</div>
         </div>
       `).join("");
       return `
@@ -1450,17 +1480,19 @@ def render_analytics_panel(
 
     function chatBadges(item) {
       const badges = [];
-      if (item.operator_requested) badges.push('<span class="chat-badge operator">Оператор</span>');
+      if (item.operator_requested) badges.push('<span class="chat-badge operator">Администратор</span>');
       if (item.lead_requested) badges.push('<span class="chat-badge lead">Лид</span>');
       return badges.join("");
     }
+
+    const ROLE_LABELS = { user: "Посетитель", assistant: "Бот", operator: "Администратор", system: "Событие" };
 
     function renderTranscriptMessages(messages) {
       if (!messages.length) return '<div class="empty-state">Сообщений нет</div>';
       return messages.map((m) => `
         <div class="t-msg ${escapeHtml(m.role)}">
-          <div class="t-msg-role">${escapeHtml(m.role)}</div>
-          <div>${escapeHtml(m.text)}</div>
+          <div class="t-msg-role">${escapeHtml(ROLE_LABELS[m.role] || m.role)}</div>
+          <div class="t-msg-text">${escapeHtml(m.text)}</div>
         </div>
       `).join("");
     }
@@ -1518,16 +1550,20 @@ def render_analytics_panel(
     }
 
     function renderChatRow(item) {
-      const time = (item.updated_at || "").replace("T", " ").slice(0, 16);
+      // чат узнают по первой фразе посетителя; последнее сообщение — второй строкой, если оно другое
+      const title = item.first_message || item.last_message || "Без сообщений";
+      const preview = item.last_message && item.last_message !== title ? item.last_message : "";
       return `
         <div class="chat-row" data-session-id="${escapeHtml(item.session_id)}">
           <div class="chat-row-top">
             ${CHAT_EXPORT_ENABLED ? `<input type="checkbox" class="chat-check" aria-label="Отметить для выгрузки" data-session-id="${escapeHtml(item.session_id)}"${exportSelection.has(item.session_id) ? " checked" : ""}>` : ""}
-            <span class="chat-id">${escapeHtml(item.session_id.slice(0, 8))}</span>
-            ${chatBadges(item)}
-            <span class="chat-time">${escapeHtml(time)}</span>
+            <span class="chat-title">${escapeHtml(truncate(title, 80))}</span>
+            <span class="chat-time">${escapeHtml(clinicTime(item.updated_at))}</span>
           </div>
-          <div class="chat-preview">${escapeHtml(item.last_message || "—")}</div>
+          <div class="chat-row-meta">
+            ${chatBadges(item)}
+            <span class="chat-preview">${escapeHtml(preview)}</span>
+          </div>
         </div>
       `;
     }
@@ -1535,23 +1571,27 @@ def render_analytics_panel(
     function chatDetailHeader(sessionId) {
       const item = chatRowsById[sessionId];
       if (!item) return "";
-      const time = (item.updated_at || "").replace("T", " ").slice(0, 16);
       return `
         <div class="chat-detail-header">
-          <span class="chat-id">${escapeHtml(sessionId.slice(0, 8))}</span>
           ${chatBadges(item)}
-          <span class="chat-time">${escapeHtml(time)}</span>
+          <span class="chat-time">${escapeHtml(clinicTime(item.updated_at))}</span>
+          <span class="chat-id" title="Код диалога">#${escapeHtml(sessionId.slice(0, 8))}</span>
         </div>
       `;
     }
 
-    async function selectChat(sessionId) {
+    async function selectChat(sessionId, byClick) {
       activeChatSessionId = sessionId;
       document.querySelectorAll(".chat-row").forEach((row) => {
         row.classList.toggle("active", row.dataset.sessionId === sessionId);
       });
       const detail = document.getElementById("chatDetail");
       const header = chatDetailHeader(sessionId);
+      // на телефоне переписка стоит под списком — после нажатия её иначе не видно; крутим, когда
+      // она уже нарисована, иначе страница ещё короткая и до неё не докручивается
+      const revealDetail = () => {
+        if (byClick && window.matchMedia("(max-width: 860px)").matches) detail.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
       detail.innerHTML = header + '<div class="loading">Загрузка…</div>';
       try {
         const data = chatTranscriptCache[sessionId] || await fetchChatDetail(sessionId);
@@ -1559,13 +1599,20 @@ def render_analytics_panel(
         // пока грузилось — могли кликнуть на другой чат, не перетираем чужой выбор
         if (activeChatSessionId !== sessionId) return;
         detail.innerHTML = header + renderTranscriptMessages(data.messages);
+        revealDetail();
       } catch (error) {
         if (activeChatSessionId !== sessionId) return;
         detail.innerHTML = header + `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
+        revealDetail();
       }
     }
 
+    // из «Лидов»: открыть именно этот диалог, а не первый в списке после загрузки
+    let pendingChatSessionId = null;
+
     async function loadChats() {
+      const preferredSessionId = pendingChatSessionId;
+      pendingChatSessionId = null;
       const list = document.getElementById("chatsList");
       const companyId = document.getElementById("companySelect").value;
       list.innerHTML = '<div class="loading">Загрузка…</div>';
@@ -1580,7 +1627,8 @@ def render_analytics_panel(
         list.innerHTML = data.conversations.length
           ? data.conversations.map(renderChatRow).join("")
           : '<div class="empty-state">Диалогов не найдено</div>';
-        if (data.conversations.length) selectChat(data.conversations[0].session_id);
+        if (preferredSessionId) selectChat(preferredSessionId);
+        else if (data.conversations.length) selectChat(data.conversations[0].session_id);
       } catch (error) {
         list.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
       }
@@ -2011,6 +2059,7 @@ def render_analytics_panel(
       content.innerHTML = '<div class="loading">Загрузка…</div>';
       try {
         const data = await fetchDashboard(companyId, rangeParams);
+        if (data.timezone) clinicTimezone = data.timezone;
         const hint = periodHint(data);
         content.innerHTML = `
           ${renderTiles(data)}
@@ -2065,6 +2114,12 @@ def render_analytics_panel(
     document.getElementById("rangeStart").addEventListener("change", reloadForActiveRangeTab);
     document.getElementById("rangeEnd").addEventListener("change", reloadForActiveRangeTab);
     document.getElementById("leadsReasonFilter").addEventListener("change", loadLeads);
+    document.getElementById("leadsTableWrap").addEventListener("click", (event) => {
+      const link = event.target.closest(".lead-chat-link");
+      if (!link) return;
+      pendingChatSessionId = link.dataset.sessionId;
+      switchTab("chats");
+    });
 
     document.getElementById("tabDashboardBtn").addEventListener("click", () => switchTab("dashboard"));
     document.getElementById("tabChatsBtn").addEventListener("click", () => switchTab("chats"));
@@ -2131,7 +2186,7 @@ def render_analytics_panel(
       // клик по галочке только отмечает чат для выгрузки, а не открывает его
       if (event.target.closest(".chat-check")) return;
       const row = event.target.closest(".chat-row");
-      if (row) selectChat(row.dataset.sessionId);
+      if (row) selectChat(row.dataset.sessionId, true);
     });
     document.getElementById("chatsList").addEventListener("change", (event) => {
       const box = event.target.closest(".chat-check");

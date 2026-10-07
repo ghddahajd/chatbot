@@ -23,6 +23,10 @@ WIDGET_EVENT_TYPES = {
     # записались сами, мимо чата: нажали «Позвонить в клинику» или «Написать в Telegram»
     "contact-call": "contact_call_clicked",
     "contact-telegram": "contact_telegram_clicked",
+    # приглашение у кнопки чата: показали и что нажали — работает ли оно вообще
+    "teaser-shown": "teaser_shown",
+    "teaser-price": "teaser_price_clicked",
+    "teaser-booking": "teaser_booking_clicked",
 }
 VISITOR_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 # поисковые и служебные роботы тоже выполняют скрипты и накручивали бы «посетителей»

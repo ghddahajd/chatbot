@@ -205,6 +205,11 @@ class OpsBot:
             lines.append(
                 f"{company}: посетители {counts[0]} · открыли чат {counts[1]} · переписка {counts[2]} · заявки {counts[3]}{contact}"
             )
+            teaser = funnel.get("teaser") or {}
+            if teaser.get("shown"):
+                lines.append(
+                    f"    приглашение: показали {teaser['shown']} · «Узнать цену» {teaser.get('price', 0)} · «Записаться» {teaser.get('booking', 0)}"
+                )
             for row in (funnel.get("pages") or [])[:TOP_PAGES]:
                 lines.append(f"    {row['page']} — загрузок {row['loads']}, открытий {row['opens']}, диалогов {row['dialogs']}")
         return "\n".join(lines) if len(lines) > 1 else f"🔻 {self.project} — за 7 дней данных нет"

@@ -191,6 +191,7 @@ def render_analytics_panel(
       letter-spacing: -.01em;
     }
     .card .card-hint { font-size: 12.5px; color: var(--text-muted); margin: 0 0 18px; }
+    .card .card-hint.funnel-teaser { margin: 16px 0 0; }
 
     /* ── лиды по месяцам: одна серия, столбцы ── */
     .month-chart { display: flex; align-items: flex-end; gap: 10px; height: 160px; padding-top: 8px; }
@@ -891,11 +892,16 @@ def render_analytics_panel(
           </div>
         `;
       }).join("");
+      const teaser = funnel.teaser || {};
+      const teaserLine = teaser.shown
+        ? `<p class="card-hint funnel-teaser">Приглашение у кнопки чата: показали ${fmt(teaser.shown)} · «Узнать цену» ${fmt(teaser.price)} · «Записаться» ${fmt(teaser.booking)}</p>`
+        : "";
       return `
         <div class="card">
           <h2>Воронка конверсии</h2>
           <p class="card-hint">За последние ${funnel.days} дней · посетитель считается один раз за период · % — от предыдущей стадии</p>
           ${rows}
+          ${teaserLine}
         </div>
       `;
     }

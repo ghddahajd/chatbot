@@ -1127,6 +1127,14 @@ class AnalyticsService:
             kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
             for kind, event_type in (("call", "contact_call_clicked"), ("telegram", "contact_telegram_clicked"))
         }
+        teaser = {
+            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+            for kind, event_type in (
+                ("shown", "teaser_shown"),
+                ("price", "teaser_price_clicked"),
+                ("booking", "teaser_booking_clicked"),
+            )
+        }
 
         stages = [
             {"label": "Посетители с виджетом", "count": impressions, "page_loads": len(impression_events)},
@@ -1174,6 +1182,7 @@ class AnalyticsService:
             "days": effective_days,
             "stages": stages,
             "contact_clicks": contact_clicks,
+            "teaser": teaser,
             "pages": _widget_pages(
                 impression_events,
                 opened_events,

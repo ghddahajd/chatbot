@@ -1228,6 +1228,8 @@ class KnowledgeBaseResolver:
         # цвет уходит прямо в стиль виджета на сайте клиента — пропускаем только hex
         if not HEX_COLOR_PATTERN.fullmatch(str(config["booking_highlight_color"])):
             config["booking_highlight_color"] = ""
+        if not HEX_COLOR_PATTERN.fullmatch(str(config["button_color"])):
+            config["button_color"] = config["primary_color"]
         return config
 
     def domain_profile(self, company_id: str) -> dict[str, object]:

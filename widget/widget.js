@@ -25,19 +25,14 @@
   // 10 цифр номера с любыми разделителями, с 8 / 7 / +7 или без
   const PHONE_IN_TEXT = /(?:\+7|8|7)?[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/;
 
-  // Пузырь-приглашение (2026-08-31, запрос клиента — "заметнее, чтобы хотелось тапнуть"):
-  // ротация фраз, не повторяем ту же у одного посетителя два раза подряд (см.
-  // teaserPhraseKey/pickTeaserText). day/evening — время суток берётся у браузера
-  // посетителя, не сервера; "greeting" без time — фразы без обращения по времени дня.
-  const TEASER_PHRASES = [
-    { day: "Добрый день! Подскажу по ценам и записи", evening: "Добрый вечер! Подскажу по ценам и записи" },
-    { text: "Здравствуйте! Чем помочь?" },
-    { text: "Есть вопрос? Помогу разобраться" },
-  ];
-  // Повторный показ, если первый проигнорировали (не открыли чат, не закрыли крестиком) —
-  // отдельная, более короткая фраза, чтобы не выглядело багом/дублем. Один повтор, не больше —
-  // иначе превращается в навязчивый попап, не сочетается со сдержанным тоном клиники.
-  const TEASER_REPROMPT_TEXT = "Если что — я здесь";
+  // Приглашение у кнопки чата: ценность в заголовке и две главные задачи в одно касание.
+  // Показ один раз + один повтор — дальше тишина, иначе навязчиво для клиники.
+  // Вопросы те же, что у карточек стартового экрана, — ответ одинаковый, откуда ни нажми.
+  const PRICE_QUESTION = "Какие услуги у вас есть и сколько стоят?";
+  const BOOKING_QUESTION = "Хочу записаться на консультацию";
+  // закрыл крестиком — сутки не показываем: иначе карточка выскакивает на каждой странице сайта
+  const TEASER_SNOOZE_MS = 24 * 60 * 60 * 1000;
+  const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
   const TEASER_INITIAL_DELAY_MS = 15000;
   const TEASER_AUTO_HIDE_MS = 25000;
   const TEASER_REPROMPT_DELAY_MS = 45000;
@@ -155,8 +150,8 @@
         height: 58px;
         border: 0;
         border-radius: 999px;
-        background: var(--accent);
-        color: var(--bg);
+        background: var(--launcher-bg, var(--accent));
+        color: var(--launcher-fg, var(--bg));
         font-family: inherit;
         cursor: pointer;
         box-shadow: var(--shadow);
@@ -200,8 +195,8 @@
          дубль) — отдельного бейджа тут больше нет. */
       .launcher.pulse { animation: launcher-pulse 2.2s ease-in-out infinite; }
       @keyframes launcher-pulse {
-        0%, 100% { box-shadow: var(--shadow), 0 0 0 0 rgba(8,14,13,.18); }
-        50% { box-shadow: var(--shadow), 0 0 0 9px rgba(8,14,13,0); }
+        0%, 100% { box-shadow: var(--shadow), 0 0 0 0 color-mix(in srgb, var(--launcher-bg, var(--accent)) 35%, transparent); }
+        50% { box-shadow: var(--shadow), 0 0 0 9px color-mix(in srgb, var(--launcher-bg, var(--accent)) 0%, transparent); }
       }
 
       /* ── Unread badge ── */
@@ -226,7 +221,10 @@
       .teaser {
         position: absolute;
         right: 0;
-        bottom: 70px;
+        bottom: 78px;
+        /* по макету 286px, но на шрифте шире подпись не должна рвать строку — растём до 320 */
+        width: max-content;
+        min-width: 286px;
         max-width: 320px;
         opacity: 0;
         transform: translateY(8px) scale(.96);
@@ -235,10 +233,7 @@
         transition: opacity .24s cubic-bezier(.16,1,.3,1), transform .24s cubic-bezier(.16,1,.3,1), visibility 0s linear .24s;
       }
       .shell.pos-left .teaser { right: auto; left: 0; }
-      /* Появление с лёгким перелётом (2026-08-31, переосмыслено) — само движение при
-         появлении и есть основной сигнал внимания, не нужно ничего анимировать ДОПОЛНИТЕЛЬНО
-         поверх. cubic-bezier с Y>1 в середине пути — стандартный "back-out" спрингующий
-         easing, пузырь чуть выскакивает за размер и мягко устаканивается, не плоское появление. */
+      /* появление с лёгким перелётом — само движение и есть сигнал внимания, больше ничего не анимируем */
       .teaser.visible {
         opacity: 1;
         transform: translateY(0) scale(1);
@@ -250,39 +245,68 @@
         0% { opacity: 0; transform: translateY(8px) scale(.9); }
         100% { opacity: 1; transform: translateY(0) scale(1); }
       }
-      .teaser-bubble {
+      .teaser-card {
         position: relative;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        background: var(--bg);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        padding: 12px 34px 12px 14px;
-        box-shadow: var(--shadow);
-        cursor: pointer;
-        font: inherit;
-        font-size: 13px;
-        line-height: 1.4;
+        box-sizing: border-box;
+        background: #fff;
+        border-radius: 18px;
+        padding: 14px 16px;
+        box-shadow: 0 14px 34px -12px rgba(20,30,25,.3), 0 0 0 1px rgba(20,30,25,.06);
         color: var(--text);
+        cursor: pointer;
       }
-      /* "На связи" (2026-08-31 → упрощено в тот же день) — вместо отдельной зелёной точки
-         (лишний третий сигнал рядом с пульсом лаунчера) перекрасили саму звёздочку в зелёный
-         и дали ей мигать/подмигивать — по смыслу иконки ("сверкает") даже уместнее точки. */
-      .teaser-bubble svg {
-        width: 14px; height: 14px; flex-shrink: 0; color: #22c55e;
-        animation: teaser-star-twinkle 2s ease-in-out infinite;
+      .teaser-title { font-size: 18px; font-weight: 700; line-height: 1.15; padding-right: 22px; }
+      /* точка «на связи» — только на телефоне, где нет подзаголовка «Отвечу сразу» */
+      .teaser-live {
+        display: none;
+        position: relative;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        flex-shrink: 0;
       }
-      @keyframes teaser-star-twinkle {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: .5; transform: scale(1.2); }
+      .teaser-live::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: #22c55e;
+        animation: teaser-live-ping 1.8s ease-out infinite;
       }
+      @keyframes teaser-live-ping {
+        0% { transform: scale(1); opacity: .55; }
+        100% { transform: scale(2.6); opacity: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) { .teaser-live::after { animation: none; } }
+      .teaser-sub { margin-top: 3px; font-size: 15px; line-height: 1.3; color: var(--text-secondary); }
+      .teaser-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      .teaser-btn {
+        height: 36px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        box-shadow: inset 0 0 0 1.5px var(--accent-soft);
+        font: inherit;
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1;
+        color: var(--text);
+        cursor: pointer;
+        transition: background .15s, transform .12s;
+      }
+      .teaser-btn.primary { background: var(--accent-soft); box-shadow: none; }
+      .teaser-btn:hover { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
+      .teaser-btn.primary:hover { background: color-mix(in srgb, var(--accent-soft) 88%, var(--text)); }
+      .teaser-btn:active { transform: scale(.97); }
+      /* значок маленький, а зона нажатия — с палец: промах по крестику открывал бы чат */
       .teaser-dismiss {
         position: absolute;
         top: 6px;
         right: 6px;
-        width: 22px;
-        height: 22px;
+        width: 32px;
+        height: 32px;
         border: 0;
         border-radius: 8px;
         background: transparent;
@@ -292,7 +316,8 @@
         align-items: center;
         justify-content: center;
       }
-      .teaser-dismiss svg { width: 12px; height: 12px; }
+      .teaser-dismiss:hover { color: var(--text); }
+      .teaser-dismiss svg { width: 14px; height: 14px; }
 
       /* ── Panel ── */
       .panel {
@@ -1129,8 +1154,16 @@
         .shell { right: 0; bottom: 0; left: 0; top: 0; }
         .launcher { right: 20px; bottom: 20px; }
         .shell.pos-left .launcher { left: 20px; right: auto; }
-        .teaser { right: 20px; bottom: 88px; max-width: calc(100vw - 40px); }
-        .shell.pos-left .teaser { left: 20px; right: auto; }
+        /* телефон: карточка во всю ширину, но низкая — без подзаголовка, вместо него точка «на связи»;
+           иначе вместе с кнопкой чата закрывает до трети экрана */
+        .teaser { left: 20px; right: 20px; bottom: 90px; width: auto; min-width: 0; max-width: none; }
+        .shell.pos-left .teaser { left: 20px; right: 20px; }
+        .teaser-card { padding: 12px 12px 12px 14px; border-radius: 16px; }
+        .teaser-title { display: flex; align-items: center; gap: 8px; font-size: 16px; padding-right: 30px; }
+        .teaser-live { display: block; }
+        .teaser-sub { display: none; }
+        .teaser-actions { flex-wrap: nowrap; margin-top: 10px; }
+        .teaser-btn { flex: 1; height: 38px; padding: 0 10px; font-size: 14.5px; }
         .panel {
           left: 0;
           right: 0;
@@ -1175,12 +1208,16 @@
       </button>
 
       <div class="teaser">
-        <div class="teaser-bubble" role="button" tabindex="0" aria-label="Открыть чат">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
-          <span class="teaser-text"></span>
+        <div class="teaser-card">
           <button class="teaser-dismiss" type="button" aria-label="Скрыть">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
           </button>
+          <div class="teaser-title"><span class="teaser-live" aria-hidden="true"></span>Подскажу цену и запишу</div>
+          <div class="teaser-sub">Отвечу сразу, без ожидания на линии</div>
+          <div class="teaser-actions">
+            <button class="teaser-btn primary teaser-price" type="button">Узнать цену</button>
+            <button class="teaser-btn teaser-booking" type="button">Записаться</button>
+          </div>
         </div>
       </div>
 
@@ -1371,8 +1408,9 @@
         resetModalCancel: this.$(".reset-modal-cancel"),
         resetModalConfirm: this.$(".reset-modal-confirm"),
         teaser: this.$(".teaser"),
-        teaserBubble: this.$(".teaser-bubble"),
-        teaserText: this.$(".teaser-text"),
+        teaserCard: this.$(".teaser-card"),
+        teaserPrice: this.$(".teaser-price"),
+        teaserBooking: this.$(".teaser-booking"),
         teaserDismiss: this.$(".teaser-dismiss"),
       };
     }
@@ -1441,43 +1479,40 @@
       this.el.resetModal.addEventListener("click", (e) => { if (e.target === this.el.resetModal) closeResetModal(); });
       this.el.resetModalConfirm.addEventListener("click", () => { closeResetModal(); this.confirmReset(); });
 
-      const openFromTeaser = () => { this.dismissTeaser(); this.toggle(); };
-      this.el.teaserBubble.addEventListener("click", openFromTeaser);
-      this.el.teaserBubble.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFromTeaser(); }
-      });
-      this.el.teaserDismiss.addEventListener("click", (e) => { e.stopPropagation(); this.dismissTeaser(); });
+      const openFromTeaser = () => { this.dismissTeaser(); if (!this.state.open) this.toggle(); };
+      const askFromTeaser = (kind, text) => (e) => {
+        e.stopPropagation();
+        this.trackEvent(kind);
+        openFromTeaser();
+        if (!this.el.inp.disabled) this.sendText(text);
+      };
+      this.el.teaserCard.addEventListener("click", openFromTeaser);
+      this.el.teaserPrice.addEventListener("click", askFromTeaser("teaser-price", PRICE_QUESTION));
+      this.el.teaserBooking.addEventListener("click", askFromTeaser("teaser-booking", BOOKING_QUESTION));
+      this.el.teaserDismiss.addEventListener("click", (e) => { e.stopPropagation(); this.dismissTeaser(); this.snoozeTeaser(); });
     }
 
-    teaserPhraseKey() {
-      return "ai-widget-teaser-last:" + this.state.companyId;
+    teaserSnoozeKey() {
+      return "ai-widget-teaser-snooze:" + this.state.companyId;
     }
 
-    pickTeaserText() {
-      const hour = new Date().getHours();
-      const isEvening = hour >= 18 || hour < 6;
-      const resolved = TEASER_PHRASES.map((phrase) => phrase.text || (isEvening ? phrase.evening : phrase.day));
-      let lastIndex = -1;
+    snoozeTeaser() {
+      try { window.localStorage.setItem(this.teaserSnoozeKey(), String(Date.now())); } catch (_) {}
+    }
+
+    // только пока отвечает бот: при переписке с администратором «Узнать цену» ушло бы ему, а не боту
+    canShowTeaser() {
+      if (this.state.open || !this.state.companyId || this.state.status !== STATUS.AI_ACTIVE) return false;
       try {
-        // getItem на отсутствующем ключе даёт null, а Number(null) === 0 — совпадает с реальным
-        // индексом 0 и молча вырезает первую фразу из пула у КАЖДОГО нового посетителя. Раньше
-        // отличать "ключа нет" от "сохранён 0" было нечем — отсюда явная проверка на null.
-        const raw = window.localStorage.getItem(this.teaserPhraseKey());
-        lastIndex = raw === null ? -1 : Number(raw);
-      } catch (_) { /* приватный режим/квота — просто не запоминаем, ничего не ломаем */ }
-      const pool = resolved.map((_, i) => i).filter((i) => i !== lastIndex);
-      const choices = pool.length ? pool : resolved.map((_, i) => i);
-      const chosen = choices[Math.floor(Math.random() * choices.length)];
-      try {
-        window.localStorage.setItem(this.teaserPhraseKey(), String(chosen));
+        const snoozedAt = Number(window.localStorage.getItem(this.teaserSnoozeKey()));
+        if (snoozedAt && Date.now() - snoozedAt < TEASER_SNOOZE_MS) return false;
       } catch (_) {}
-      return resolved[chosen];
+      return true;
     }
 
-    showTeaser(text) {
-      this.el.teaserText.textContent = text;
-      this.el.teaserBubble.setAttribute("aria-label", "Открыть чат: " + text);
+    showTeaser() {
       this.el.teaser.classList.add("visible");
+      this.trackEvent("teaser-shown");
       this.el.launcher.classList.add("pulse");
       // Капсула схлопывается ровно тут: дальше объясняет пузырь, две подписи разом не нужны.
       this.el.launcher.classList.add("collapsed");
@@ -1496,19 +1531,18 @@
       // просили именно "аккуратно", постоянный пульс с самой загрузки страницы выглядел бы
       // навязчиво.
       //
-      // Повторный показ (2026-08-31): если первый показ провисел AUTO_HIDE и его не тронули —
-      // прячем, ждём ещё REPROMPT_DELAY, показываем один раз ещё с другой фразой. Дальше —
-      // тишина, не спамим. Любой clearTimeout ниже — через dismissTeaser (открыли чат ИЛИ
+      // Повторный показ: если первый провисел AUTO_HIDE и его не тронули — прячем, ждём ещё
+      // REPROMPT_DELAY и показываем ту же карточку один раз. Дальше — тишина, не спамим. Любой clearTimeout ниже — через dismissTeaser (открыли чат ИЛИ
       // закрыли крестиком), она уже вызывается из toggle() на каждый клик по лаунчеру.
       this._teaserTimer = window.setTimeout(() => {
-        if (this.state.open) return;
-        this.showTeaser(this.pickTeaserText());
+        if (!this.canShowTeaser()) return;
+        this.showTeaser();
         this._teaserHideTimer = window.setTimeout(() => {
           this.el.teaser.classList.remove("visible");
           this.el.launcher.classList.remove("pulse");
           this._teaserRepromptTimer = window.setTimeout(() => {
-            if (this.state.open) return;
-            this.showTeaser(TEASER_REPROMPT_TEXT);
+            if (!this.canShowTeaser()) return;
+            this.showTeaser();
           }, TEASER_REPROMPT_DELAY_MS);
         }, TEASER_AUTO_HIDE_MS);
       }, TEASER_INITIAL_DELAY_MS);
@@ -1580,14 +1614,14 @@
           sub: "Все направления клиники",
           icon: "M11.5 3H19a2 2 0 0 1 2 2v7.5a2 2 0 0 1-.586 1.414l-8 8a2 2 0 0 1-2.828 0l-7.5-7.5a2 2 0 0 1 0-2.828l8-8A2 2 0 0 1 11.5 3Z",
           icon2: "M16.5 7.5h.01",
-          value: "Какие услуги у вас есть и сколько стоят?",
+          value: PRICE_QUESTION,
         },
         {
           title: "Записаться на приём",
           sub: "Подберём удобное время",
           icon: "M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z",
           icon2: "M8 3v4M16 3v4M4 10h16M9 15l2 2 4-4",
-          value: "Хочу записаться на консультацию",
+          value: BOOKING_QUESTION,
           booking: true,
         },
         {
@@ -1896,6 +1930,9 @@
       const root = this.shadow.host;
       root.style.setProperty("--accent", c.primary_color);
       root.style.setProperty("--accent-dark", this.darken(c.primary_color));
+      const launcherBg = HEX_COLOR.test(c.button_color) ? c.button_color : c.primary_color;
+      root.style.setProperty("--launcher-bg", launcherBg);
+      root.style.setProperty("--launcher-fg", this.readableOn(launcherBg));
 
       this.el.headerName.textContent = c.header_title;
       this.el.aiBadge.style.display = c.ai_badge === "show" ? "" : "none";
@@ -1912,6 +1949,15 @@
         card.classList.toggle("is-highlighted", Boolean(color));
         if (color) card.style.setProperty("--highlight", color);
       });
+    }
+
+    // значок на кнопке — тем из двух цветов, что контрастнее на её фоне (светлая кнопка — тёмный значок)
+    readableOn(hex) {
+      if (!HEX_COLOR.test(hex)) return "var(--bg)";
+      const n = parseInt(hex.slice(1).replace(/^(.)(.)(.)$/, "$1$1$2$2$3$3"), 16);
+      const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      const lum = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+      return (lum + 0.05) / 0.054 > 1.05 / (lum + 0.05) ? "var(--text)" : "var(--bg)";
     }
 
     darken(hex) {

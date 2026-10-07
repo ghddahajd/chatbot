@@ -22,6 +22,8 @@
   // (см. connectWS) — так что на кнопку "close" тут попадают только настоящие обрывы связи.
   const WS_RECONNECT_MAX_ATTEMPTS = 4;
   const WS_RECONNECT_BASE_DELAY_MS = 1000;
+  // 10 цифр номера с любыми разделителями, с 8 / 7 / +7 или без
+  const PHONE_IN_TEXT = /(?:\+7|8|7)?[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/;
 
   // Пузырь-приглашение (2026-08-31, запрос клиента — "заметнее, чтобы хотелось тапнуть"):
   // ротация фраз, не повторяем ту же у одного посетителя два раза подряд (см.
@@ -738,15 +740,16 @@
       }
       .msg.system {
         align-self: center;
-        background: var(--bg-warm);
-        color: var(--text-muted);
-        border: 1px solid var(--border-soft);
-        border-radius: 10px;
+        background: var(--bg);
+        color: var(--text-secondary);
+        border: 1px solid var(--border);
+        border-radius: 12px;
         font-size: 12px;
-        font-weight: 600;
-        max-width: 90%;
+        font-weight: 500;
+        line-height: 1.4;
+        max-width: 86%;
         text-align: center;
-        padding: 7px 12px;
+        padding: 6px 12px;
       }
       .msg a {
         color: inherit;
@@ -768,6 +771,85 @@
       }
       .msg.assistant .msg-label { color: var(--text-secondary); }
       .msg.operator .msg-label { color: var(--text-secondary); }
+
+      /* ── Ожидание администратора ── */
+      /* над полем ввода, а не в ленте: видно, что ждут, и что можно уйти — ответ придёт сюда */
+      .presence {
+        margin: 0 12px 8px;
+        padding: 9px 10px 9px 9px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+        border-radius: var(--radius-sm);
+        background: color-mix(in srgb, var(--accent-soft) 16%, var(--bg));
+        border: 1px solid var(--accent-border);
+        flex-shrink: 0;
+        animation: presence-in .22s ease-out;
+      }
+      .presence[hidden] { display: none; }
+      @keyframes presence-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .presence-avatar {
+        position: relative;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--bg);
+        border: 1px solid var(--accent-border);
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .presence-avatar svg { width: 16px; height: 16px; }
+      .presence-avatar .dot {
+        position: absolute;
+        right: -1px;
+        bottom: -1px;
+        width: 9px;
+        height: 9px;
+        box-shadow: 0 0 0 2px var(--bg);
+      }
+      /* узкий экран: кнопка уходит под текст, а не сжимает заголовок в две строки */
+      .presence-body { flex: 1 1 170px; min-width: 0; }
+      .presence-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+        line-height: 1.3;
+      }
+      .presence-dots { display: inline-flex; gap: 3px; }
+      .presence-dots .typing-dot { width: 4px; height: 4px; }
+      .presence-sub {
+        margin-top: 2px;
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--text-secondary);
+      }
+      .presence-phone {
+        flex-shrink: 0;
+        margin-left: auto;
+        background: var(--bg);
+        border: 1px solid var(--accent-border);
+        border-radius: 999px;
+        padding: 6px 11px;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background .15s, border-color .15s;
+      }
+      .presence-phone:hover { background: var(--accent-soft); border-color: var(--accent-soft); }
+      .presence-phone[hidden] { display: none; }
 
       /* ── Typing indicator ── */
       .typing-bubble {
@@ -1163,6 +1245,24 @@
 
         <div class="messages"></div>
 
+        <div class="presence" role="status" hidden>
+          <div class="presence-avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 12.5v-1a8 8 0 0 1 16 0v1"></path>
+              <path d="M2.5 12.5h3.5a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H4a1.5 1.5 0 0 1-1.5-1.5ZM21.5 12.5H18a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h1.5A1.5 1.5 0 0 0 21 17ZM18 18.5V19a2 2 0 0 1-2 2h-2.5"></path>
+            </svg>
+            <span class="dot waiting"></span>
+          </div>
+          <div class="presence-body">
+            <div class="presence-title">
+              <span class="presence-title-text"></span>
+              <span class="presence-dots" aria-hidden="true"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></span>
+            </div>
+            <div class="presence-sub"></div>
+          </div>
+          <button class="presence-phone" type="button">Оставить номер</button>
+        </div>
+
         <div class="voice-hint hidden"></div>
         <div class="consent-banner">
           <p class="consent-text">
@@ -1209,6 +1309,7 @@
         ws: null,
         wsReconnectAttempts: 0,
         wsReconnectTimer: null,
+        leadLeft: false,
         typingNode: null,
         typingStartedAt: 0,
         voiceEnabled: false,
@@ -1242,6 +1343,11 @@
         statusLabel: this.$(".status-label"),
         close: this.$(".close-btn"),
         messages: this.$(".messages"),
+        presence: this.$(".presence"),
+        presenceDot: this.$(".presence .dot"),
+        presenceTitle: this.$(".presence-title-text"),
+        presenceSub: this.$(".presence-sub"),
+        presencePhone: this.$(".presence-phone"),
         inp: this.$(".inp"),
         mic: this.$(".mic-btn"),
         voiceHint: this.$(".voice-hint"),
@@ -1307,6 +1413,13 @@
 
     bindEvents() {
       this.el.launcher.addEventListener("click", () => this.toggle());
+      this.el.presencePhone.addEventListener("click", () => {
+        this.el.inp.placeholder = "Ваш номер телефона";
+        this.el.inp.focus();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && this.state.open) this.restoreTabTitle();
+      });
       this.el.close.addEventListener("click", () => this.toggle());
       this.el.send.addEventListener("click", () => this.submit());
       this.el.reset.addEventListener("click", () => this.startNew());
@@ -1827,13 +1940,16 @@
         const data = await res.json();
         if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); return; }
         this.renderHistory(data.messages || []);
+        this.state.leadLeft = Boolean(data.lead_requested);
         this.setStatus(data.status);
-        if (data.status === STATUS.HUMAN_ACTIVE) this.connectWS();
+        // и пока ждём администратора: иначе после перезагрузки его «Взять» и ответ не дойдут до следующей
+        if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
       } catch (_) { this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); }
     }
 
     renderHistory(msgs) {
       this.el.messages.innerHTML = "";
+      this.state.operatorReplied = msgs.some(m => m.role === "operator");
       if (!msgs.length) { this.pushGreeting(); return; }
       for (const m of msgs) this.addMsg(m.role, m.text, true);
       this.scrollBottom();
@@ -1849,6 +1965,7 @@
       this.el.launcher.classList.toggle("hidden", this.state.open);
       this.el.unread.classList.remove("visible");
       if (this.state.open) {
+        this.restoreTabTitle();
         this.scrollBottom();
         this.el.inp.focus();
         // воронка конверсии (2026-08-27): один раз за загрузку страницы, не на каждый
@@ -1990,13 +2107,18 @@
     }
 
     setStatus(status) {
+      const previous = this.state.status;
       this.state.status = status;
+      // новая передача администратору — ждём его первого ответа заново
+      if (status === STATUS.WAITING_OPERATOR && previous !== STATUS.WAITING_OPERATOR && previous !== STATUS.HUMAN_ACTIVE) {
+        this.state.operatorReplied = false;
+      }
       const dotClass = { AI_ACTIVE:"", WAITING_OPERATOR:"waiting", HUMAN_ACTIVE:"human", CLOSED:"closed", UNAVAILABLE:"unavailable" };
       const cfg = this.state.widgetConfig;
       const labels = {
         AI_ACTIVE: cfg.status_online,
-        WAITING_OPERATOR: "ожидаем специалиста",
-        HUMAN_ACTIVE: "специалист в чате",
+        WAITING_OPERATOR: "ждём администратора",
+        HUMAN_ACTIVE: "администратор в чате",
         CLOSED: "диалог завершён",
         UNAVAILABLE: "недоступен",
       };
@@ -2009,6 +2131,7 @@
       };
 
       this.el.dot.className = "dot " + (dotClass[status] || "");
+      this.updateWaitCard();
       this.el.statusLabel.textContent = labels[status] || labels.AI_ACTIVE;
       this.el.inp.placeholder = placeholders[status] || "";
 
@@ -2038,6 +2161,8 @@
 
       if (this.state.status === STATUS.HUMAN_ACTIVE && this.state.ws) {
         this.state.ws.send(text);
+        // по живому каналу сервер заявку не подтверждает — номер видно по самому сообщению
+        if (PHONE_IN_TEXT.test(text)) { this.state.leadLeft = true; this.updateWaitCard(); }
         return;
       }
 
@@ -2068,9 +2193,12 @@
           this.state.sessionId = data.session_id;
           window.localStorage.setItem(this.storageKey(), data.session_id);
         }
+        if (data.lead_created) this.state.leadLeft = true;
+        const before = this.state.status;
         this.setStatus(data.status);
         if (data.answer) {
-          const isHandoff = data.status === STATUS.WAITING_OPERATOR;
+          // событием в ленте — только сам момент передачи; ответы бота, пока ждём, — обычные сообщения, их надо прочитать
+          const isHandoff = data.status === STATUS.WAITING_OPERATOR && ![STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(before);
           this.addMsg(isHandoff ? "system" : "assistant", data.answer);
         }
         this.addQuickActions(data.quick_actions);
@@ -2124,6 +2252,7 @@
       if (this.state.companyId) window.localStorage.removeItem(this.storageKey());
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;
+      this.state.leadLeft = false;
     }
 
     markUnavailable(err) {
@@ -2159,11 +2288,17 @@
           const d = JSON.parse(e.data);
           if (d.type === "operator_joined") { this.setStatus(STATUS.HUMAN_ACTIVE); this.addMsg("system", d.text); }
           else if (d.type === "operator_left") { this.setStatus(STATUS.CLOSED); this.addMsg("system", d.text); }
-          else if (d.type === "message" && d.role === "operator") { this.setStatus(STATUS.HUMAN_ACTIVE); this.addMsg("operator", d.text); }
+          else if (d.type === "message" && d.role === "operator") {
+            this.state.operatorReplied = true;
+            this.setStatus(STATUS.HUMAN_ACTIVE);
+            this.addMsg("operator", d.text);
+            this.notifyTab();
+          }
         } catch (_) {}
       });
       this.state.ws.addEventListener("close", (event) => {
-        if (this.state.status !== STATUS.HUMAN_ACTIVE) return;
+        const live = [STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE];
+        if (!live.includes(this.state.status)) return;
         // Сервер шлёт эти коды явно, когда сессии реально больше нет — не обрыв, а
         // осознанный отказ (routes/ws.py: 4404 сессия не найдена, 4003 company_id не
         // совпадает). Ретраить тут нечего, сразу как раньше.
@@ -2173,12 +2308,40 @@
           this.state.wsReconnectAttempts = attempt + 1;
           const delay = WS_RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt); // 1с, 2с, 4с, 8с
           this.state.wsReconnectTimer = setTimeout(() => {
-            if (this.state.status === STATUS.HUMAN_ACTIVE) this.connectWS();
+            if (live.includes(this.state.status)) this.connectWS();
           }, delay);
           return;
         }
-        this.setStatus(STATUS.CLOSED);
+        // пока администратор не взял чат, переписка идёт и без канала — следующее сообщение переподключит
+        if (isFatal || this.state.status === STATUS.HUMAN_ACTIVE) this.setStatus(STATUS.CLOSED);
       });
+    }
+
+    updateWaitCard() {
+      const waiting = [STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(this.state.status) && !this.state.operatorReplied;
+      const appeared = waiting && this.el.presence.hidden;
+      this.el.presence.hidden = !waiting;
+      if (!waiting) return;
+      // лента стала ниже — иначе последнее сообщение уезжает под капсулу
+      if (appeared) this.scrollBottom();
+      const joined = this.state.status === STATUS.HUMAN_ACTIVE;
+      this.el.presenceDot.className = "dot " + (joined ? "human" : "waiting");
+      this.el.presenceTitle.textContent = joined ? "Администратор отвечает" : "Зовём администратора";
+      this.el.presencePhone.hidden = this.state.leadLeft;
+      this.el.presenceSub.textContent = "Ответ придёт сюда, даже если закроете чат";
+    }
+
+    // ответ администратора, а человек в другой вкладке или окно закрыто — видно в названии вкладки
+    notifyTab() {
+      if (!document.hidden && this.state.open) return;
+      if (this._titleBefore == null) this._titleBefore = document.title;
+      document.title = "💬 Новое сообщение — " + this._titleBefore;
+    }
+
+    restoreTabTitle() {
+      if (this._titleBefore == null) return;
+      document.title = this._titleBefore;
+      this._titleBefore = null;
     }
 
     scrollBottom() {

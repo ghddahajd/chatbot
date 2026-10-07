@@ -1456,9 +1456,6 @@
         this.el.inp.placeholder = "Ваш номер телефона";
         this.el.inp.focus();
       });
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && this.state.open) this.restoreTabTitle();
-      });
       this.el.close.addEventListener("click", () => this.toggle());
       this.el.send.addEventListener("click", () => this.submit());
       this.el.reset.addEventListener("click", () => this.startNew());
@@ -2012,7 +2009,6 @@
       this.el.launcher.classList.toggle("hidden", this.state.open);
       this.el.unread.classList.remove("visible");
       if (this.state.open) {
-        this.restoreTabTitle();
         this.scrollBottom();
         this.el.inp.focus();
         // воронка конверсии (2026-08-27): один раз за загрузку страницы, не на каждый
@@ -2339,7 +2335,6 @@
             this.state.operatorReplied = true;
             this.setStatus(STATUS.HUMAN_ACTIVE);
             this.addMsg("operator", d.text);
-            this.notifyTab();
           }
         } catch (_) {}
       });
@@ -2376,19 +2371,6 @@
       this.el.presenceTitle.textContent = joined ? "Администратор отвечает" : "Зовём администратора";
       this.el.presencePhone.hidden = this.state.leadLeft;
       this.el.presenceSub.textContent = "Ответ придёт сюда, даже если закроете чат";
-    }
-
-    // ответ администратора, а человек в другой вкладке или окно закрыто — видно в названии вкладки
-    notifyTab() {
-      if (!document.hidden && this.state.open) return;
-      if (this._titleBefore == null) this._titleBefore = document.title;
-      document.title = "💬 Новое сообщение — " + this._titleBefore;
-    }
-
-    restoreTabTitle() {
-      if (this._titleBefore == null) return;
-      document.title = this._titleBefore;
-      this._titleBefore = null;
     }
 
     scrollBottom() {

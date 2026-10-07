@@ -807,6 +807,7 @@
         align-items: center;
         gap: 8px 10px;
         border-radius: var(--radius-sm);
+        background: var(--bg-warm); /* старые браузеры без color-mix */
         background: color-mix(in srgb, var(--accent-soft) 16%, var(--bg));
         border: 1px solid var(--accent-border);
         flex-shrink: 0;

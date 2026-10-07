@@ -30,7 +30,9 @@ UNKNOWN_REASONS = {
 # widget_impression/chat_opened (2026-08-27, воронка конверсии) — та же логика: высокий
 # объём (пишется на каждую загрузку страницы/каждое открытие чата), без индивидуальной
 # ценности после недолгого окна — сворачиваем туда же.
-MESSAGE_RETENTION_EVENT_TYPES = {"message_answered", "widget_impression", "chat_opened"}
+# teaser_shown — то же: пишется почти на каждую загрузку страницы. Нажатия на приглашение
+# (teaser_*_clicked) редкие, их храним как есть, как и клики «Позвонить»/«Telegram».
+MESSAGE_RETENTION_EVENT_TYPES = {"message_answered", "widget_impression", "chat_opened", "teaser_shown"}
 # Воронка (conversion_funnel) джойнит эти событий по session_id, а после ретеншна сырой
 # session_id пропадает (rollup хранит только счётчики) — окно воронки держим заметно
 # КОРОЧЕ ретеншна (60 дней), чтобы каждая стадия всегда считалась по ещё живым сырым

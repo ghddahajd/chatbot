@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
+from app.analytics import archive_old_analytics_events
 from app.ops_bot import OpsBot
+from app.utils.jsonl import append_jsonl, read_jsonl
 
 from .test_ops_bot import _Alerts
 from .test_settings_routes import _bootstrap_widget, _set_client_widget
@@ -62,3 +66,17 @@ def test_launcher_color_must_be_hex(test_client, managed_env) -> None:
     test_client.app.state.knowledge_base_resolver._cache.clear()
 
     assert _bootstrap_widget(test_client)["button_color"] == "#ADCE6D"
+
+
+def test_old_teaser_shows_are_archived_but_clicks_are_kept(tmp_path) -> None:
+    # показ пишется почти на каждую загрузку страницы — без чистки файл аналитики рос бы без конца
+    analytics_file, rollup_file = tmp_path / "analytics.jsonl", tmp_path / "rollup.jsonl"
+    old = (datetime.utcnow() - timedelta(days=90)).isoformat()
+    for event_type in ("teaser_shown", "teaser_price_clicked", "teaser_booking_clicked"):
+        append_jsonl(analytics_file, {"timestamp": old, "event_type": event_type, "company_id": "rosh_demo"})
+
+    removed = archive_old_analytics_events(analytics_file, rollup_file, retention_days=60)
+
+    assert removed == 1
+    assert {entry["event_type"] for entry in read_jsonl(analytics_file)} == {"teaser_price_clicked", "teaser_booking_clicked"}
+    assert read_jsonl(rollup_file)[0]["event_type"] == "teaser_shown"

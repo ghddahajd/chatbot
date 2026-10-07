@@ -34,6 +34,7 @@ from .models import MessageRole, SessionStatus
 from .sessions import SessionStore
 from .telegram_routing import LEGACY, TelegramRouting, TelegramTarget
 from .utils.jsonl import append_jsonl, read_jsonl
+from .ws_manager import OPERATOR_JOINED_TEXT
 
 
 logger = logging.getLogger(__name__)
@@ -857,6 +858,7 @@ class TelegramBridgeService:
         # вместо реального разговора, хотя оператор уже реально взял диалог в работу.
         if session.status != SessionStatus.CLOSED:
             await self.session_store.set_status(session_id, SessionStatus.HUMAN_ACTIVE)
+            await self.ws_manager.send_to_client(session_id, {"type": "operator_joined", "text": OPERATOR_JOINED_TEXT})
 
         topic_id = session.telegram_topic_id
         if topic_id is None:

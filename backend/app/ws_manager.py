@@ -10,6 +10,9 @@ from fastapi import WebSocket
 from .models import SessionStatus
 from .sessions import SessionStore
 
+# сразу, как администратор взял чат, — иначе человек минуты две видит тишину и уходит
+OPERATOR_JOINED_TEXT = "Администратор подключился к чату."
+
 
 class ConnectionManager:
     """отслеживает клиентские и операторские websocket-соединения по сессиям."""
@@ -30,7 +33,7 @@ class ConnectionManager:
         await self.session_store.set_status(session_id, SessionStatus.HUMAN_ACTIVE)
         await self.send_to_client(
             session_id,
-            {"type": "operator_joined", "text": "Специалист подключился к диалогу"},
+            {"type": "operator_joined", "text": OPERATOR_JOINED_TEXT},
         )
 
     async def disconnect_client(self, session_id: str) -> None:

@@ -587,6 +587,27 @@ def test_claim_transitions_session_to_human_active(monkeypatch) -> None:
     assert status == SessionStatus.HUMAN_ACTIVE
 
 
+def test_claim_tells_the_visitor_right_away(monkeypatch) -> None:
+    # администратор нажимает «Взять» за секунды, а отвечает через пару минут — без этого сигнала
+    # человек всё это время видит тишину и уходит
+    _reset_fake_client(monkeypatch)
+    store = SessionStore()
+    ws_manager = FakeWsManager()
+
+    async def run() -> str:
+        session = await store.get_or_create(None, "rosh_demo")
+        await store.set_status(session.session_id, SessionStatus.WAITING_OPERATOR)
+        FakeAsyncClient.responses["createForumTopic"] = {"ok": True, "result": {"message_thread_id": 42}}
+        await _service(store, ws_manager)._handle_callback_query(
+            {"id": "cb1", "data": f"claim:{session.session_id}", "from": {"username": "masha"}, "message": {"message_id": 100}}
+        )
+        return session.session_id
+
+    session_id = anyio.run(run)
+
+    assert (session_id, {"type": "operator_joined", "text": "Администратор подключился к чату."}) in ws_manager.sent
+
+
 def test_claim_tracks_operator_claimed_analytics_event(monkeypatch) -> None:
     """Аналитика "по манагерам" (в разработке, 2026-08-27) без этого события не имеет
     источника данных — session.telegram_claimed_by живёт только в памяти и стирается

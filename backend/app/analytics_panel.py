@@ -313,6 +313,11 @@ def render_analytics_panel(
     }
     .tab-btn.active { color: var(--text); border-bottom-color: var(--accent-deep); }
     .tab-btn:hover { color: var(--text); }
+    /* на телефоне четыре вкладки иначе не влезают и сдвигают всю страницу вбок */
+    @media (max-width: 520px) {
+      .tabs { gap: 0; }
+      .tab-btn { padding: 10px 11px; white-space: nowrap; }
+    }
 
     /* ── вкладка "Чаты" ── */
     .chat-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -405,7 +410,7 @@ def render_analytics_panel(
     .doctor-row {
       display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
     }
-    .doctor-row .doctor-name { flex: 1 1 180px; min-width: 140px; }
+    .doctor-row .doctor-name { flex: 1.4 1 230px; min-width: 140px; }
     .doctor-row .doctor-specialty { flex: 1 1 160px; min-width: 130px; }
     .doctor-row .doctor-schedule { flex: 1 1 180px; min-width: 150px; }
     .doctor-remove-btn {
@@ -429,6 +434,115 @@ def render_analytics_panel(
     }
     .settings-reset-btn:hover:not(:disabled) { background: var(--border-soft); color: var(--text); }
     .settings-reset-btn:disabled { opacity: .45; cursor: default; }
+
+    /* раскладка «Настроек»: меню разделов слева, справа один раздел — без простыни вниз */
+    .settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .settings-nav {
+      position: sticky; top: 16px; display: flex; flex-direction: column; gap: 2px;
+      background: var(--card); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 8px;
+    }
+    .settings-nav-btn {
+      position: relative; display: flex; align-items: center; gap: 10px; width: 100%;
+      font: inherit; font-size: 14px; font-weight: 600; text-align: left; white-space: nowrap;
+      padding: 10px 12px; border: 0; border-radius: 12px; background: transparent;
+      color: var(--text-secondary); cursor: pointer; transition: background .15s, color .15s;
+    }
+    .settings-nav-btn svg {
+      width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .settings-nav-btn:hover { background: var(--border-soft); color: var(--text); }
+    .settings-nav-btn.active { background: color-mix(in srgb, var(--accent-soft) 32%, var(--card)); color: var(--text); }
+    /* точка — в разделе есть несохранённые правки: видно, даже когда открыт другой */
+    .settings-nav-btn.changed::after {
+      content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-deep); margin-left: auto;
+    }
+    .settings-section { display: none; }
+    .settings-section.active { display: block; }
+    /* end: подпись в две строки не сдвигает поле — поля в ряду стоят на одной линии */
+    .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; align-items: end; }
+    .settings-grid .settings-field { max-width: none; margin-bottom: 0; }
+    .settings-grid .settings-checkbox { margin-bottom: 0; }
+    .settings-grid .span-2 { grid-column: 1 / -1; }
+    .settings-grid .settings-field input[type="text"], .settings-grid .settings-field select { width: 100%; }
+    .color-field { display: flex; gap: 8px; align-items: center; }
+    .color-field input[type="text"] { flex: 1; min-width: 0; }
+    .color-swatch {
+      flex: none; width: 40px; height: 40px; padding: 3px; border: 1px solid var(--border);
+      border-radius: 10px; background: var(--bg); cursor: pointer;
+    }
+    .color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .color-swatch::-webkit-color-swatch { border: 0; border-radius: 7px; }
+    .color-swatch::-moz-color-swatch { border: 0; border-radius: 7px; }
+    .color-swatch.empty { background: repeating-linear-gradient(45deg, var(--border-soft) 0 6px, var(--bg) 6px 12px); }
+    .color-swatch.empty::-webkit-color-swatch { opacity: 0; }
+    .color-swatch.empty::-moz-color-swatch { opacity: 0; }
+
+    .widget-settings { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 24px; align-items: start; }
+    .widget-preview {
+      position: sticky; top: 16px; background: var(--bg-page); border-radius: var(--radius-sm); padding: 14px;
+      --wp-primary: var(--accent); --wp-primary-fg: var(--bg); --wp-launcher: var(--accent); --wp-launcher-fg: var(--bg);
+    }
+    .wp-caption { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; }
+    .wp-chat { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; font-size: 12px; }
+    .wp-header { padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+    .wp-title { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+    .wp-ai { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+    .wp-status { display: flex; align-items: center; gap: 5px; color: var(--text-secondary); margin-top: 2px; font-size: 11px; }
+    .wp-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
+    .wp-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--bg-page); }
+    .wp-card { align-self: stretch; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 7px 9px; font-weight: 700; }
+    .wp-label { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; }
+    .wp-msg { max-width: 88%; padding: 7px 9px; border-radius: 12px; line-height: 1.35; }
+    .wp-bot { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); }
+    .wp-user { align-self: flex-end; background: var(--wp-primary); color: var(--wp-primary-fg); }
+    .wp-op { align-self: flex-start; background: var(--accent-soft); }
+    .wp-input { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border-soft); }
+    .wp-placeholder { flex: 1; min-width: 0; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 6px 8px; border: 1px solid var(--border); border-radius: 10px; }
+    .wp-send { flex: none; background: var(--wp-primary); color: var(--wp-primary-fg); font-weight: 700; padding: 6px 9px; border-radius: 10px; }
+    .wp-launcher-row { display: flex; justify-content: flex-end; margin-top: 12px; }
+    .wp-launcher-row.left { justify-content: flex-start; }
+    .wp-launcher {
+      display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px 0 11px; border-radius: 999px;
+      background: var(--wp-launcher); color: var(--wp-launcher-fg); font-weight: 600; font-size: 12.5px; box-shadow: var(--shadow);
+    }
+    .wp-launcher svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+
+    /* сохранение всегда на виду: раньше кнопка была одна, в самом низу длинной страницы */
+    .settings-savebar {
+      position: sticky; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 10px;
+      margin-top: 4px; padding: 10px 10px 10px 20px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--card); box-shadow: var(--shadow); transition: border-color .2s, box-shadow .2s;
+    }
+    .settings-savebar.dirty {
+      border-color: var(--accent-soft);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 40%, transparent), var(--shadow);
+    }
+    .settings-savebar .settings-status { flex: 1; margin-left: 0; color: var(--text-muted); }
+    .settings-savebar.dirty .settings-status { color: var(--text); }
+    .settings-savebar .settings-status.success { color: var(--accent-deep); }
+    .settings-savebar .settings-status.error { color: #c0392b; }
+    .settings-savebar:not(.dirty) .settings-save-btn { background: var(--border-soft); color: var(--text-secondary); }
+    .settings-discard-btn {
+      font: inherit; font-size: 13.5px; font-weight: 600; padding: 10px 16px; border-radius: 999px;
+      border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer;
+    }
+    .settings-discard-btn:hover { background: var(--border-soft); color: var(--text); }
+    @media (max-width: 1000px) {
+      .widget-settings { grid-template-columns: 1fr; }
+      .widget-preview { position: static; max-width: 340px; }
+    }
+    @media (max-width: 860px) {
+      .settings-layout { grid-template-columns: 1fr; }
+      .settings-nav {
+        position: static; flex-direction: row; overflow-x: auto; gap: 4px;
+        scrollbar-width: none; -webkit-overflow-scrolling: touch;
+      }
+      .settings-nav-btn { width: auto; flex: none; padding: 9px 12px; }
+      .settings-grid { grid-template-columns: 1fr; }
+      .settings-savebar { bottom: 8px; border-radius: 18px; padding: 8px 8px 8px 14px; }
+      .settings-savebar .settings-status { font-size: 12.5px; }
+    }
 
     /* ── чаты: список слева / переписка справа (master-detail) ── */
     .chats-layout { display: flex; gap: 16px; align-items: flex-start; }
@@ -541,150 +655,206 @@ def render_analytics_panel(
     </div>
 
     <div id="settingsContent" style="display:none">
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Часы работы</h2>
-          <button type="button" class="settings-reset-btn" data-block="hours" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+      <div class="settings-layout">
+        <nav class="settings-nav" id="settingsNav" aria-label="Разделы настроек">
+          <button type="button" class="settings-nav-btn active" data-section="hours"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Часы работы</button>
+          <button type="button" class="settings-nav-btn" data-section="contacts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>Контакты</button>
+          <button type="button" class="settings-nav-btn" data-section="widget"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>Виджет</button>
+          <button type="button" class="settings-nav-btn" data-section="facts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5 2.5-2.5M3.5 18l1.5 1.5 2.5-2.5"/></svg>Факты о клинике</button>
+          <button type="button" class="settings-nav-btn" data-section="doctors"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Врачи</button>
+          <button type="button" class="settings-nav-btn" data-section="buttons"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="5"/></svg>Кнопки в ответах</button>
+          <button type="button" class="settings-nav-btn" data-section="behavior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Поведение</button>
+          <button type="button" class="settings-nav-btn" data-section="texts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Тексты бота</button>
+        </nav>
+        <div class="settings-main">
+          <section class="card settings-section active" data-section="hours">
+            <div class="settings-card-header">
+              <h2>Часы работы</h2>
+              <button type="button" class="settings-reset-btn" data-block="hours" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Отметьте "выходной" для дней, когда клиника не работает</p>
+            <div id="hoursGrid"><div class="loading">Загрузка…</div></div>
+          </section>
+          <section class="card settings-section" data-section="contacts">
+            <div class="settings-card-header">
+              <h2>Контакты</h2>
+              <button type="button" class="settings-reset-btn" data-block="contacts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Бот называет их посетителям и ставит в кнопки «Позвонить» и «Написать в Telegram»</p>
+            <div class="settings-grid">
+              <div class="settings-field">
+                <label for="settingsPhone">Телефон</label>
+                <input type="text" id="settingsPhone" />
+              </div>
+              <div class="settings-field">
+                <label for="settingsTelegram">Telegram</label>
+                <input type="text" id="settingsTelegram" />
+              </div>
+              <div class="settings-field span-2">
+                <label for="settingsAddress">Адрес</label>
+                <input type="text" id="settingsAddress" />
+              </div>
+              <div class="settings-field">
+                <label for="settingsWebsite">Сайт</label>
+                <input type="text" id="settingsWebsite" />
+              </div>
+              <div class="settings-field">
+                <label for="settingsPrivacyUrl">Ссылка на политику обработки данных</label>
+                <input type="text" id="settingsPrivacyUrl" placeholder="https://…" />
+              </div>
+            </div>
+          </section>
+          <section class="card settings-section" data-section="widget">
+            <div class="settings-card-header">
+              <h2>Виджет</h2>
+              <button type="button" class="settings-reset-btn" data-block="widget" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Как чат выглядит на сайте — справа видно сразу, до сохранения</p>
+            <div class="widget-settings">
+              <div class="settings-grid">
+                <div class="settings-field">
+                  <label for="settingsHeaderTitle">Заголовок чата</label>
+                  <input type="text" id="settingsHeaderTitle" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsHeaderSubtitle">Подсказка под заголовком</label>
+                  <input type="text" id="settingsHeaderSubtitle" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsPrimaryColor">Основной цвет</label>
+                  <div class="color-field">
+                    <input type="color" class="color-swatch" data-for="settingsPrimaryColor" aria-label="Выбрать основной цвет" />
+                    <input type="text" id="settingsPrimaryColor" placeholder="#1F7A5C" />
+                  </div>
+                </div>
+                <div class="settings-field">
+                  <label for="settingsButtonColor">Цвет кнопки чата</label>
+                  <div class="color-field">
+                    <input type="color" class="color-swatch" data-for="settingsButtonColor" aria-label="Выбрать цвет кнопки чата" />
+                    <input type="text" id="settingsButtonColor" placeholder="#1F7A5C" />
+                  </div>
+                </div>
+                <div class="settings-field">
+                  <label for="settingsLauncherLabel">Надпись на кнопке чата</label>
+                  <input type="text" id="settingsLauncherLabel" maxlength="30" placeholder="Задать вопрос" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsPosition">Расположение</label>
+                  <select id="settingsPosition">
+                    <option value="bottom-right">Справа снизу</option>
+                    <option value="bottom-left">Слева снизу</option>
+                  </select>
+                </div>
+                <div class="settings-field">
+                  <label for="settingsStatusOnline">Статус под заголовком</label>
+                  <input type="text" id="settingsStatusOnline" maxlength="30" placeholder="на связи" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsInputPlaceholder">Подсказка в поле ввода</label>
+                  <input type="text" id="settingsInputPlaceholder" maxlength="60" placeholder="Напишите вопрос…" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsAssistantLabel">Подпись над ответами бота</label>
+                  <input type="text" id="settingsAssistantLabel" maxlength="30" placeholder="Ассистент" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsOperatorLabel">Подпись над ответами администратора</label>
+                  <input type="text" id="settingsOperatorLabel" maxlength="30" placeholder="Специалист" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsAvatarEmoji">Эмодзи в чате</label>
+                  <input type="text" id="settingsAvatarEmoji" maxlength="4" />
+                </div>
+                <div class="settings-field">
+                  <label for="settingsHighlightColor">Рамка у «Записаться на приём»</label>
+                  <div class="color-field">
+                    <input type="color" class="color-swatch" data-for="settingsHighlightColor" aria-label="Выбрать цвет рамки" />
+                    <input type="text" id="settingsHighlightColor" placeholder="пусто — без рамки" />
+                  </div>
+                </div>
+                <label class="settings-checkbox span-2"><input type="checkbox" id="settingsAiBadge" /> Показывать в шапке кнопку «с ИИ»</label>
+              </div>
+              <aside class="widget-preview" aria-label="Как чат выглядит на сайте">
+                <div class="wp-caption">Как увидят на сайте</div>
+                <div class="wp-chat">
+                  <div class="wp-header">
+                    <div class="wp-title"><span id="wpTitle"></span><span class="wp-ai" id="wpAi">с ИИ</span></div>
+                    <div class="wp-status"><span class="wp-dot"></span><span id="wpStatus"></span></div>
+                  </div>
+                  <div class="wp-body">
+                    <div class="wp-card" id="wpBookingCard">Записаться на приём</div>
+                    <div class="wp-label" id="wpBotLabel"></div>
+                    <div class="wp-msg wp-bot">Здравствуйте! Подскажу цену и запишу на приём.</div>
+                    <div class="wp-msg wp-user" id="wpUser">Сколько стоит чистка?</div>
+                    <div class="wp-label" id="wpOpLabel"></div>
+                    <div class="wp-msg wp-op">Добрый день! Чистка от 800 ₽, могу записать на завтра.</div>
+                  </div>
+                  <div class="wp-input"><span class="wp-placeholder" id="wpPlaceholder"></span><span class="wp-send" id="wpSend">Отправить</span></div>
+                </div>
+                <div class="wp-launcher-row" id="wpLauncherRow">
+                  <span class="wp-launcher" id="wpLauncher"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><span id="wpLauncherLabel"></span></span>
+                </div>
+              </aside>
+            </div>
+          </section>
+          <section class="card settings-section" data-section="facts">
+            <div class="settings-card-header">
+              <h2>Факты о клинике</h2>
+              <button type="button" class="settings-reset-btn" data-block="facts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Бот опирается на них, когда спрашивают про ОМС, ДМС, скорую и расписание</p>
+            <div class="settings-grid">
+              <label class="settings-checkbox"><input type="checkbox" id="factOms" /> Работаем по ОМС</label>
+              <label class="settings-checkbox"><input type="checkbox" id="factDms" /> Работаем по ДМС</label>
+              <label class="settings-checkbox"><input type="checkbox" id="factAmbulance" /> Скорая помощь привозит к нам</label>
+              <label class="settings-checkbox"><input type="checkbox" id="factSells" /> Продаём товары/косметику</label>
+              <label class="settings-checkbox"><input type="checkbox" id="factDoctorSchedule" /> Раскрываем расписание врачей</label>
+            </div>
+          </section>
+          <section class="card settings-section" data-section="doctors">
+            <div class="settings-card-header">
+              <h2>Врачи</h2>
+              <button type="button" class="settings-reset-btn" data-block="doctors" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Имя обязательно, специализация и расписание — по желанию</p>
+            <div id="doctorsList"></div>
+            <button type="button" class="doctor-add-btn" id="doctorAddBtn">+ Добавить врача</button>
+          </section>
+          <section class="card settings-section" data-section="buttons">
+            <div class="settings-card-header">
+              <h2>Кнопки в ответах бота</h2>
+              <button type="button" class="settings-reset-btn" data-block="buttons" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Меняется только подпись — бот понимает нажатие как раньше. Пусто — как есть.</p>
+            <div id="buttonLabelsList" class="settings-grid"></div>
+          </section>
+          <section class="card settings-section" data-section="behavior">
+            <div class="settings-card-header">
+              <h2>Поведение</h2>
+              <button type="button" class="settings-reset-btn" data-block="behavior" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <div class="settings-field">
+              <label for="settingsWaitMinutes">Через сколько минут предлагать «Администратор пока не подключился — продолжим с ботом?»</label>
+              <input type="number" id="settingsWaitMinutes" min="1" max="60" />
+            </div>
+            <div class="settings-field">
+              <label class="settings-checkbox"><input type="checkbox" id="settingsConnectOnRequest" /> Сразу соединять с администратором по просьбе «позовите менеджера» (выключено — бот сначала предлагает помочь сам)</label>
+            </div>
+          </section>
+          <section class="card settings-section" data-section="texts">
+            <div class="settings-card-header">
+              <h2>Тексты бота</h2>
+              <button type="button" class="settings-reset-btn" data-block="texts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
+            </div>
+            <p class="card-hint">Что бот отвечает в разных ситуациях. Несколько вариантов — бот чередует их. Медицинские, кризисные и ценовые тексты здесь не меняются.</p>
+            <div id="textsEditor"></div>
+          </section>
         </div>
-        <p class="card-hint">Отметьте "выходной" для дней, когда клиника не работает</p>
-        <div id="hoursGrid"><div class="loading">Загрузка…</div></div>
       </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Контакты</h2>
-          <button type="button" class="settings-reset-btn" data-block="contacts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <div class="settings-field">
-          <label for="settingsPhone">Телефон</label>
-          <input type="text" id="settingsPhone" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsAddress">Адрес</label>
-          <input type="text" id="settingsAddress" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsTelegram">Telegram</label>
-          <input type="text" id="settingsTelegram" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsWebsite">Сайт</label>
-          <input type="text" id="settingsWebsite" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsPrivacyUrl">Ссылка на политику обработки данных</label>
-          <input type="text" id="settingsPrivacyUrl" placeholder="https://…" />
-        </div>
-      </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Виджет</h2>
-          <button type="button" class="settings-reset-btn" data-block="widget" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <div class="settings-field">
-          <label for="settingsHeaderTitle">Заголовок чата</label>
-          <input type="text" id="settingsHeaderTitle" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsHeaderSubtitle">Подсказка под заголовком</label>
-          <input type="text" id="settingsHeaderSubtitle" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsPrimaryColor">Основной цвет</label>
-          <input type="text" id="settingsPrimaryColor" placeholder="#1F7A5C" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsButtonColor">Цвет кнопки</label>
-          <input type="text" id="settingsButtonColor" placeholder="#1F7A5C" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsPosition">Расположение</label>
-          <select id="settingsPosition">
-            <option value="bottom-right">Справа снизу</option>
-            <option value="bottom-left">Слева снизу</option>
-          </select>
-        </div>
-        <div class="settings-field">
-          <label for="settingsAvatarEmoji">Эмодзи в чате</label>
-          <input type="text" id="settingsAvatarEmoji" maxlength="4" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsAssistantLabel">Подпись над ответами бота</label>
-          <input type="text" id="settingsAssistantLabel" maxlength="30" placeholder="Ассистент" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsHighlightColor">Рамка у «Записаться на приём»</label>
-          <input type="text" id="settingsHighlightColor" placeholder="#2E9E6B, пусто — без рамки" />
-        </div>
-        <label class="settings-checkbox"><input type="checkbox" id="settingsAiBadge" /> Показывать в шапке кнопку «с ИИ»</label>
-        <div class="settings-field">
-          <label for="settingsLauncherLabel">Надпись на кнопке чата</label>
-          <input type="text" id="settingsLauncherLabel" maxlength="30" placeholder="Задать вопрос" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsStatusOnline">Статус под заголовком</label>
-          <input type="text" id="settingsStatusOnline" maxlength="30" placeholder="на связи" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsInputPlaceholder">Подсказка в поле ввода</label>
-          <input type="text" id="settingsInputPlaceholder" maxlength="60" placeholder="Напишите вопрос…" />
-        </div>
-        <div class="settings-field">
-          <label for="settingsOperatorLabel">Подпись над ответами администратора</label>
-          <input type="text" id="settingsOperatorLabel" maxlength="30" placeholder="Специалист" />
-        </div>
-      </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Факты о клинике</h2>
-          <button type="button" class="settings-reset-btn" data-block="facts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <label class="settings-checkbox"><input type="checkbox" id="factOms" /> Работаем по ОМС</label>
-        <label class="settings-checkbox"><input type="checkbox" id="factDms" /> Работаем по ДМС</label>
-        <label class="settings-checkbox"><input type="checkbox" id="factAmbulance" /> Скорая помощь привозит к нам</label>
-        <label class="settings-checkbox"><input type="checkbox" id="factSells" /> Продаём товары/косметику</label>
-        <label class="settings-checkbox"><input type="checkbox" id="factDoctorSchedule" /> Раскрываем расписание врачей</label>
-      </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Врачи</h2>
-          <button type="button" class="settings-reset-btn" data-block="doctors" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <p class="card-hint">Имя обязательно, специализация и расписание — по желанию</p>
-        <div id="doctorsList"></div>
-        <button type="button" class="doctor-add-btn" id="doctorAddBtn">+ Добавить врача</button>
-      </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Кнопки в ответах бота</h2>
-          <button type="button" class="settings-reset-btn" data-block="buttons" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <p class="card-hint">Меняется только подпись — бот понимает нажатие как раньше. Пусто — как есть.</p>
-        <div id="buttonLabelsList"></div>
-      </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Поведение</h2>
-          <button type="button" class="settings-reset-btn" data-block="behavior" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <div class="settings-field">
-          <label for="settingsWaitMinutes">Через сколько минут предлагать «Администратор пока не подключился — продолжим с ботом?»</label>
-          <input type="number" id="settingsWaitMinutes" min="1" max="60" />
-        </div>
-        <div class="settings-field">
-          <label class="settings-checkbox"><input type="checkbox" id="settingsConnectOnRequest" /> Сразу соединять с администратором по просьбе «позовите менеджера» (выключено — бот сначала предлагает помочь сам)</label>
-        </div>
-      </div>
-      <div class="card">
-        <div class="settings-card-header">
-          <h2>Тексты бота</h2>
-          <button type="button" class="settings-reset-btn" data-block="texts" title="Отменить последнее сохранение этого блока">↺ Отменить</button>
-        </div>
-        <p class="card-hint">Что бот отвечает в разных ситуациях. Несколько вариантов — бот чередует их. Медицинские, кризисные и ценовые тексты здесь не меняются.</p>
-        <div id="textsEditor"></div>
-      </div>
-      <div class="card">
+      <div class="settings-savebar" id="settingsSavebar">
+        <span class="settings-status" id="settingsStatus" aria-live="polite"></span>
+        <button type="button" class="settings-discard-btn" id="settingsDiscardBtn" hidden>Сбросить</button>
         <button type="button" class="settings-save-btn" id="settingsSaveBtn">Сохранить</button>
-        <span class="settings-status" id="settingsStatus"></span>
       </div>
     </div>
   </main>
@@ -1579,6 +1749,11 @@ def render_analytics_panel(
         document.getElementById("settingsConnectOnRequest").checked = data.operator_connect_on_request !== false;
         document.getElementById("buttonLabelsList").innerHTML = renderButtonLabels(data.button_labels || []);
         document.getElementById("textsEditor").innerHTML = renderTextsEditor(data.texts || []);
+        syncColorSwatches();
+        updateWidgetPreview();
+        setSettingsDirty(false);
+        scrollActiveSettingsNav();
+        status.textContent = "Изменений нет";
       } catch (error) {
         document.getElementById("hoursGrid").innerHTML = "";
         document.getElementById("doctorsList").innerHTML = "";
@@ -1643,6 +1818,7 @@ def render_analytics_panel(
             typeof errorBody.detail === "string" ? errorBody.detail : `HTTP ${response.status}`
           );
         }
+        setSettingsDirty(false);
         status.textContent = "Сохранено";
         status.className = "settings-status success";
       } catch (error) {
@@ -1724,6 +1900,7 @@ def render_analytics_panel(
       // save_overrides_atomic на каждое сохранение), остальные блоки не трогает, даже
       // если их сохраняли позже. Обсуждено с пользователем 2026-08-29 — полной истории
       // версий сознательно нет, только один шаг назад.
+      if (settingsDirty && !window.confirm("Несохранённые изменения в других разделах пропадут. Продолжить?")) return;
       const status = document.getElementById("settingsStatus");
       button.disabled = true;
       status.textContent = "Отменяю…";
@@ -1748,6 +1925,92 @@ def render_analytics_panel(
       } finally {
         button.disabled = false;
       }
+    }
+
+    // ── «Настройки»: разделы, несохранённые правки, превью виджета ──
+    const SETTINGS_SECTION_KEY = "settings-section";
+    const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+    let settingsDirty = false;
+
+    function showSettingsSection(name) {
+      const target = document.querySelector(`.settings-section[data-section="${name}"]`) ? name : "hours";
+      document.querySelectorAll(".settings-nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.section === target));
+      document.querySelectorAll(".settings-section").forEach((section) => section.classList.toggle("active", section.dataset.section === target));
+      try { localStorage.setItem(SETTINGS_SECTION_KEY, target); } catch (_) {}
+      scrollActiveSettingsNav();
+    }
+
+    // на телефоне меню — лента вбок: открытый раздел не должен прятаться за краем
+    function scrollActiveSettingsNav() {
+      const nav = document.getElementById("settingsNav");
+      const active = nav.querySelector(".settings-nav-btn.active");
+      if (active && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = active.offsetLeft - 8;
+    }
+
+    function setSettingsDirty(dirty, section) {
+      settingsDirty = dirty;
+      document.getElementById("settingsSavebar").classList.toggle("dirty", dirty);
+      document.getElementById("settingsDiscardBtn").hidden = !dirty;
+      if (!dirty) {
+        document.querySelectorAll(".settings-nav-btn.changed").forEach((btn) => btn.classList.remove("changed"));
+        return;
+      }
+      const navBtn = section && document.querySelector(`.settings-nav-btn[data-section="${section}"]`);
+      if (navBtn) navBtn.classList.add("changed");
+      const status = document.getElementById("settingsStatus");
+      status.textContent = "Есть несохранённые изменения";
+      status.className = "settings-status";
+    }
+
+    function markSettingsChanged(target) {
+      const section = target.closest(".settings-section");
+      setSettingsDirty(true, section ? section.dataset.section : null);
+      if (section && section.dataset.section === "widget") updateWidgetPreview();
+    }
+
+    function fullHex(value) {
+      return value.length === 4 ? "#" + value[1] + value[1] + value[2] + value[2] + value[3] + value[3] : value;
+    }
+
+    function syncColorSwatches() {
+      document.querySelectorAll(".color-swatch").forEach((swatch) => {
+        const value = document.getElementById(swatch.dataset.for).value.trim();
+        const valid = HEX_COLOR.test(value);
+        swatch.classList.toggle("empty", !valid);
+        if (valid) swatch.value = fullHex(value).toLowerCase();
+      });
+    }
+
+    // значок на кнопке чата — как в widget.js: тем из двух цветов, что контрастнее на её фоне
+    function readableOn(hex) {
+      const n = parseInt(fullHex(hex).slice(1), 16);
+      const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      const lum = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+      return (lum + 0.05) / 0.054 > 1.05 / (lum + 0.05) ? "var(--text)" : "var(--bg)";
+    }
+
+    function updateWidgetPreview() {
+      const value = (id) => document.getElementById(id).value.trim();
+      const primary = HEX_COLOR.test(value("settingsPrimaryColor")) ? value("settingsPrimaryColor") : "#080E0D";
+      const launcher = HEX_COLOR.test(value("settingsButtonColor")) ? value("settingsButtonColor") : primary;
+      const highlight = value("settingsHighlightColor");
+      const preview = document.querySelector(".widget-preview");
+      // текст на основном цвете в виджете всегда светлый — превью не подправляет, а показывает как есть
+      preview.style.setProperty("--wp-primary", primary);
+      preview.style.setProperty("--wp-launcher", launcher);
+      preview.style.setProperty("--wp-launcher-fg", readableOn(launcher));
+      document.getElementById("wpTitle").textContent = value("settingsHeaderTitle") || "Консультант";
+      document.getElementById("wpAi").hidden = !document.getElementById("settingsAiBadge").checked;
+      document.getElementById("wpStatus").textContent = value("settingsStatusOnline") || "на связи";
+      document.getElementById("wpBotLabel").textContent = [value("settingsAvatarEmoji"), value("settingsAssistantLabel") || "Ассистент"].filter(Boolean).join(" ");
+      document.getElementById("wpOpLabel").textContent = value("settingsOperatorLabel") || "Специалист";
+      document.getElementById("wpPlaceholder").textContent = value("settingsInputPlaceholder") || "Напишите вопрос…";
+      document.getElementById("wpLauncherLabel").textContent = value("settingsLauncherLabel") || "Задать вопрос";
+      document.getElementById("wpLauncherRow").classList.toggle("left", value("settingsPosition") === "bottom-left");
+      const card = document.getElementById("wpBookingCard");
+      const framed = HEX_COLOR.test(highlight);
+      card.style.borderColor = framed ? highlight : "";
+      card.style.boxShadow = framed ? `0 0 0 1px ${highlight}` : "";
     }
 
     async function load() {
@@ -1836,6 +2099,38 @@ def render_analytics_panel(
         item.querySelector(".text-add-variant").hidden = defaults.length >= 3;
       }
     });
+    document.getElementById("settingsNav").addEventListener("click", (event) => {
+      const btn = event.target.closest(".settings-nav-btn");
+      if (btn) showSettingsSection(btn.dataset.section);
+    });
+    const settingsContent = document.getElementById("settingsContent");
+    settingsContent.addEventListener("input", (event) => {
+      if (!event.target.closest(".settings-section")) return;
+      if (event.target.classList.contains("color-swatch")) {
+        document.getElementById(event.target.dataset.for).value = event.target.value.toUpperCase();
+      }
+      if (event.target.closest(".color-field")) syncColorSwatches();
+      markSettingsChanged(event.target);
+    });
+    settingsContent.addEventListener("change", (event) => {
+      if (event.target.matches('input[type="checkbox"], select')) markSettingsChanged(event.target);
+    });
+    // capture: «удалить врача» убирает строку раньше, чем клик всплывёт, — раздел ищем до этого
+    settingsContent.addEventListener("click", (event) => {
+      if (event.target.closest(".doctor-remove-btn, #doctorAddBtn, .text-add-variant, .text-reset")) markSettingsChanged(event.target);
+    }, true);
+    document.getElementById("settingsDiscardBtn").addEventListener("click", async () => {
+      await loadSettings();
+      document.getElementById("settingsStatus").textContent = "Изменения сброшены";
+    });
+    window.addEventListener("beforeunload", (event) => {
+      if (!settingsDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+    let savedSettingsSection = null;
+    try { savedSettingsSection = localStorage.getItem(SETTINGS_SECTION_KEY); } catch (_) {}
+    showSettingsSection(savedSettingsSection || "hours");
     document.querySelectorAll(".filter-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));

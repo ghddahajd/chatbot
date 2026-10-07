@@ -52,10 +52,9 @@ def _chat(test_client, message: str, session_id: str | None = None) -> dict:
 
 
 def _ask_operator(test_client, phrase: str = "позовите оператора") -> dict:
-    """как в жизни: бот сначала предлагает помочь сам, «да» — соединяет."""
+    """как в жизни: явная просьба соединяет сразу."""
 
-    offer = _chat(test_client, phrase)
-    return _chat(test_client, "да", offer["session_id"])
+    return _chat(test_client, phrase)
 
 
 def _pending(bridge) -> list[dict]:

@@ -22,6 +22,7 @@ from ..editable_texts import (
     OPERATOR_WAIT_OFFER_MINUTES_RANGE,
     RENAMABLE_BUTTONS,
     button_renames,
+    operator_connect_on_request,
     operator_wait_offer_minutes,
     validate_text,
 )
@@ -124,6 +125,7 @@ class CompanySettingsInput(BaseModel):
     texts: Optional[dict[str, list[str]]] = None
     button_labels: Optional[dict[str, str]] = None
     operator_wait_offer_minutes: Optional[int] = None
+    operator_connect_on_request: Optional[bool] = None
 
     @field_validator("privacy_policy_url")
     @classmethod
@@ -256,6 +258,7 @@ def _current_settings(knowledge_base, resolver=None) -> dict[str, object]:
         "texts": _texts_view(base_phrasebook, knowledge_base.phrasebook),
         "button_labels": [{"original": original, "label": renames.get(original, "")} for original in RENAMABLE_BUTTONS],
         "operator_wait_offer_minutes": operator_wait_offer_minutes(knowledge_base.config_payload),
+        "operator_connect_on_request": operator_connect_on_request(knowledge_base.config_payload),
         "working_hours_schedule": {
             day: ({"open": entry.open, "close": entry.close} if entry is not None else None)
             for day, entry in company.working_hours_schedule.items()
@@ -327,10 +330,13 @@ async def save_company_settings(
         override["button_labels"] = payload.button_labels
     elif "button_labels" in previous:
         override["button_labels"] = previous["button_labels"]
+    operator_override = dict(previous.get("operator") or {})
     if payload.operator_wait_offer_minutes is not None:
-        override["operator"] = {"wait_offer_minutes": payload.operator_wait_offer_minutes}
-    elif "operator" in previous:
-        override["operator"] = previous["operator"]
+        operator_override["wait_offer_minutes"] = payload.operator_wait_offer_minutes
+    if payload.operator_connect_on_request is not None:
+        operator_override["connect_on_request"] = payload.operator_connect_on_request
+    if operator_override:
+        override["operator"] = operator_override
     config_overrides.save_overrides_atomic(settings.overrides_dir, company_id, override)
     resolver.invalidate(company_id)
 

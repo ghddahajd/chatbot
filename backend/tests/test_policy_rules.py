@@ -179,3 +179,37 @@ def test_life_threat_answer_leads_with_the_ambulance(test_client) -> None:
     answer = response.json()["answer"]
     assert answer.startswith("Это может быть опасно")
     assert "103" in answer and "112" in answer
+
+
+# ---------------------------------------------------------------- позвать администратора
+
+
+def _open_now(knowledge_base) -> None:
+    knowledge_base.company.working_hours_schedule = {}
+
+
+def test_explicit_request_connects_at_once(policy_session, knowledge_base) -> None:
+    _open_now(knowledge_base)
+
+    result = policy.analyze_message("Хочу поговорить с менеджером", policy_session, knowledge_base, {"intent": "operator_request", "confidence": 0.9})
+
+    assert result.action == PolicyAction.TRANSFER_OPERATOR
+    assert result.reason == PolicyReason.OPERATOR_REQUESTED
+
+
+def test_switch_off_brings_back_the_offer_step(policy_session, knowledge_base) -> None:
+    _open_now(knowledge_base)
+    knowledge_base.config_payload.setdefault("operator", {})["connect_on_request"] = False
+
+    result = policy.analyze_message("Хочу поговорить с менеджером", policy_session, knowledge_base, {"intent": "operator_request", "confidence": 0.9})
+
+    assert result.action == PolicyAction.CLARIFY
+    assert "Сразу к менеджеру" in [action["label"] for action in result.quick_actions]
+
+
+def test_a_mere_mention_still_gets_the_offer_step(policy_session, knowledge_base) -> None:
+    _open_now(knowledge_base)
+
+    result = policy.analyze_message("администратор сказал, что консультация бесплатная", policy_session, knowledge_base, {"intent": "unknown", "confidence": 0.5})
+
+    assert result.action != PolicyAction.TRANSFER_OPERATOR

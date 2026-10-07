@@ -669,6 +669,9 @@ def render_analytics_panel(
           <label for="settingsWaitMinutes">Через сколько минут предлагать «Администратор пока не подключился — продолжим с ботом?»</label>
           <input type="number" id="settingsWaitMinutes" min="1" max="60" />
         </div>
+        <div class="settings-field">
+          <label class="settings-checkbox"><input type="checkbox" id="settingsConnectOnRequest" /> Сразу соединять с администратором по просьбе «позовите менеджера» (выключено — бот сначала предлагает помочь сам)</label>
+        </div>
       </div>
       <div class="card">
         <div class="settings-card-header">
@@ -1567,6 +1570,7 @@ def render_analytics_panel(
         document.getElementById("settingsInputPlaceholder").value = data.widget.input_placeholder || "";
         document.getElementById("settingsOperatorLabel").value = data.widget.operator_label || "";
         document.getElementById("settingsWaitMinutes").value = data.operator_wait_offer_minutes || 5;
+        document.getElementById("settingsConnectOnRequest").checked = data.operator_connect_on_request !== false;
         document.getElementById("buttonLabelsList").innerHTML = renderButtonLabels(data.button_labels || []);
         document.getElementById("textsEditor").innerHTML = renderTextsEditor(data.texts || []);
       } catch (error) {
@@ -1607,6 +1611,7 @@ def render_analytics_panel(
         privacy_policy_url: document.getElementById("settingsPrivacyUrl").value.trim(),
         button_labels: collectButtonLabels(),
         operator_wait_offer_minutes: parseInt(document.getElementById("settingsWaitMinutes").value, 10) || 5,
+        operator_connect_on_request: document.getElementById("settingsConnectOnRequest").checked,
         texts: collectTexts(),
         facts: {
           oms: document.getElementById("factOms").checked,

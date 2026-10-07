@@ -230,3 +230,14 @@ def test_widget_source_reads_the_new_labels() -> None:
 
     assert "c.launcher_label" in source and "cfg.status_online" in source and "cfg.input_placeholder" in source
     assert 'label.textContent = cfg.operator_label' in source
+
+
+def test_connect_on_request_switch_is_saved_and_reaches_the_bot(test_client) -> None:
+    assert _settings(test_client)["operator_connect_on_request"] is True
+    assert _chat(test_client, "Хочу поговорить с менеджером")["action"] == "transfer_operator"
+
+    assert _save(test_client, operator_connect_on_request=False, operator_wait_offer_minutes=7).status_code == 200
+
+    data = _settings(test_client)
+    assert (data["operator_connect_on_request"], data["operator_wait_offer_minutes"]) == (False, 7)
+    assert _chat(test_client, "Хочу поговорить с менеджером")["action"] == "clarify"  # снова «могу помочь здесь…»

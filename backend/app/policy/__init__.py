@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Optional
 
+from ..editable_texts import operator_connect_on_request
 from ..hours import is_currently_open
 from ..knowledge import (
     KnowledgeBase,
@@ -92,6 +93,7 @@ from .detectors import (
     COMPLAINT,
     CRISIS,
     LIFE_THREAT,
+    OPERATOR_EXPLICIT_REQUEST,
     PRICE_LIST_REQUEST,
     SYMPTOM_MENTION,
     is_booking_cancel_only,
@@ -3515,9 +3517,13 @@ def _analyze_message_core(
         # подтверждение (пользователь отвечает на прямой вопрос "подключить
         # администратора?"), а не первое двусмысленное упоминание оператора. Без этой
         # проверки такой клик снова уходил в soft-offer вместо реальной передачи.
+        # Явная просьба («хочу поговорить с менеджером», «позовите оператора») соединяет сразу:
+        # промежуточное «могу помочь здесь…» стоило людей — человек здоровался с менеджером, а бот
+        # продолжал сам. Переключатель — в «Настройках» клиента
         operator_already_confirmed = (
             session.pending_action == PendingAction.OFFERED_OPERATOR.value
             or normalized_message == "передать администратору"
+            or (operator_connect_on_request(knowledge_base.config_payload) and OPERATOR_EXPLICIT_REQUEST(normalized_message))
         )
         if not operator_already_confirmed:
             return PolicyResult(

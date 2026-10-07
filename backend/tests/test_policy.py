@@ -1521,6 +1521,7 @@ def test_bot_identity_intent_answers_directly_without_operator_redirect(
 
 
 def test_operator_request_soft_redirect(policy_session, knowledge_base) -> None:
+    knowledge_base.config_payload.setdefault("operator", {})["connect_on_request"] = False  # режим «сначала предложить»
     result = _analyze("хочу оператора", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.CLARIFY
@@ -1529,6 +1530,7 @@ def test_operator_request_soft_redirect(policy_session, knowledge_base) -> None:
 
 def test_operator_request_second_time_hard_transfer(policy_session, knowledge_base) -> None:
     """policy должен читать явное состояние, а не текст предыдущего ответа."""
+    knowledge_base.config_payload.setdefault("operator", {})["connect_on_request"] = False  # режим «сначала предложить»
     first_result = _analyze("хочу оператора", policy_session, knowledge_base)
     assert first_result.action == PolicyAction.CLARIFY
     policy_session.pending_action = PendingAction.OFFERED_OPERATOR.value
@@ -1958,6 +1960,7 @@ def test_prompt_injection_declines_even_with_a_confident_rag_match(
 
 
 def test_operator_request_keyword_soft_redirect(policy_session, knowledge_base) -> None:
+    knowledge_base.config_payload.setdefault("operator", {})["connect_on_request"] = False  # режим «сначала предложить»
     result = _analyze("позовите оператора", policy_session, knowledge_base)
 
     assert result.action == PolicyAction.CLARIFY
@@ -1967,7 +1970,7 @@ def test_operator_request_keyword_soft_redirect(policy_session, knowledge_base) 
 def test_manager_button_text_triggers_operator_flow(policy_session, knowledge_base) -> None:
     result = _analyze("Хочу поговорить с менеджером", policy_session, knowledge_base)
 
-    assert result.action == PolicyAction.CLARIFY
+    assert result.action == PolicyAction.TRANSFER_OPERATOR  # кнопка — явная просьба, соединяем сразу
     assert result.reason == PolicyReason.OPERATOR_REQUESTED
 
 

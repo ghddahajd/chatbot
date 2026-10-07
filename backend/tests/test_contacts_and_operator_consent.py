@@ -195,7 +195,9 @@ def _chat(test_client, message: str, session_id: str | None) -> dict:
 def test_consent_after_offer_connects_operator_end_to_end(message: str, test_client) -> None:
     """настоящий путь: классификация (с контекстным перехватом «да»), политика, chat_service."""
 
-    test_client.app.state.knowledge_base_resolver.get("rosh_demo", fallback=False).company.working_hours_schedule = {}
+    knowledge_base = test_client.app.state.knowledge_base_resolver.get("rosh_demo", fallback=False)
+    knowledge_base.company.working_hours_schedule = {}
+    knowledge_base.config_payload.setdefault("operator", {})["connect_on_request"] = False  # режим «сначала предложить»
     first = _chat(test_client, "позовите оператора", None)
     second = _chat(test_client, message, first["session_id"])
 

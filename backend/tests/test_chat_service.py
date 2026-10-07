@@ -2382,18 +2382,13 @@ def test_operator_request_business_hours_full_flow_on_real_client_schedule(
     fake_bridge = _FakeTelegramBridge()
     test_client.app.state.telegram_bridge_service = fake_bridge
 
-    first_payload = test_client.post(
+    # явная просьба соединяет сразу, без шага «могу помочь здесь…»
+    second_payload = test_client.post(
         "/api/chat/message",
         json={"company_id": "rosh_import_demo", "session_id": None, "message": "хочу оператора"},
     ).json()
-    assert first_payload["action"] == "clarify"
-    assert "недоступен" not in first_payload["answer"]
-
-    session_id = first_payload["session_id"]
-    second_payload = test_client.post(
-        "/api/chat/message",
-        json={"company_id": "rosh_import_demo", "session_id": session_id, "message": "Да, менеджера"},
-    ).json()
+    assert "недоступен" not in second_payload["answer"]
+    session_id = second_payload["session_id"]
     assert second_payload["status"] == "WAITING_OPERATOR"
     assert len(fake_bridge.queue_cards) == 1
     assert fake_bridge.queue_cards[0]["reason"] == "⚡️ Запросил оператора"

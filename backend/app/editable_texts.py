@@ -185,6 +185,14 @@ def operator_wait_offer_minutes(config_payload: dict) -> int:
     return value if isinstance(value, int) and low <= value <= high else DEFAULT_OPERATOR_WAIT_OFFER_MINUTES
 
 
+def operator_connect_on_request(config_payload: dict) -> bool:
+    """явная просьба позвать администратора соединяет сразу; выключено — сначала бот предлагает помочь сам."""
+
+    operator = config_payload.get("operator") if isinstance(config_payload, dict) else None
+    value = operator.get("connect_on_request") if isinstance(operator, dict) else None
+    return value if isinstance(value, bool) else True
+
+
 def validate_text(key: str, value: str) -> str | None:
     """None — всё хорошо, иначе понятное объяснение для клиники."""
 

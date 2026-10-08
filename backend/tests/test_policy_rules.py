@@ -83,8 +83,8 @@ def test_safety_rules_order_is_deliberate() -> None:
         "ambulance_fact",
         "sensitive_topic",
         "complaint",
-        "medical",
         "booking_change",
+        "medical",
     ]
 
 
@@ -213,3 +213,13 @@ def test_a_mere_mention_still_gets_the_offer_step(policy_session, knowledge_base
     result = policy.analyze_message("администратор сказал, что консультация бесплатная", policy_session, knowledge_base, {"intent": "unknown", "confidence": 0.5})
 
     assert result.action != PolicyAction.TRANSFER_OPERATOR
+
+
+def test_sick_reschedule_is_a_reschedule_but_danger_is_still_medical(policy_session, knowledge_base) -> None:
+    sick = policy.analyze_message("заболела, хочу перенести запись", policy_session, knowledge_base, {"intent": "medical_advice", "confidence": 0.9})
+    acute = policy.analyze_message(
+        "кровь не останавливается после укола, отмените запись", policy_session, knowledge_base, {"intent": "medical_advice", "confidence": 0.9}
+    )
+
+    assert (sick.rule, sick.reason) == ("booking_change", PolicyReason.BOOKING_CHANGE)
+    assert acute.rule == "medical"

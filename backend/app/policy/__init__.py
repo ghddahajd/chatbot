@@ -109,7 +109,7 @@ from .rules import (
     mentions_unknown_service,
     similar_services_result,
 )
-from .variants import find_variant_matches, is_variant_list_question, variant_price_line
+from .variants import find_variant_matches, is_variant_list_question, service_named_in, variant_price_line
 
 
 logger = logging.getLogger(__name__)
@@ -1770,17 +1770,6 @@ PRICE_OVERVIEW_ALL_TOKENS = {"все", "всех", "весь", "полный", "
 PRICE_FOLLOWUP_INTENTS = {PolicyReason.PRICE_QUESTION.value, PolicyReason.PRICE_QUESTION_NO_SERVICE.value}
 
 
-def _service_named_in(normalized_message: str, service) -> bool:
-    """название или синоним услуги действительно есть в сообщении, а не подставлены из контекста."""
-
-    message_tokens = [token for token in normalized_message.split() if len(token) > 2]
-    for term in [service.name, *(getattr(service, "synonyms", None) or [])]:
-        term_tokens = [token for token in normalize_text(str(term)).split() if len(token) > 2]
-        if any(_token_prefix_match(left, right) for left in message_tokens for right in term_tokens):
-            return True
-    return False
-
-
 # что может стоять рядом с названием услуги в коротком «а это сколько?»-ответе: «а мезотерапия?»,
 # «чистка лица делаете?», «консультация платная?»
 PRICE_FOLLOWUP_FILLER_TOKENS = {
@@ -1863,6 +1852,10 @@ def _wide_price_range_clarify_result(
 ) -> PolicyResult | None:
     if not _has_wide_price_range(service):
         return None
+    # у консультаций варианты — это врачи: сразу список с ценами, а не «напишите, к какому врачу» —
+    # ответ на такой вопрос часто уходил не туда (врач по фамилии, «главный врач»)
+    if is_consultation_only_service(service) and (variants_list := _variants_list_result(knowledge_base, service, PolicyReason.PRICE_QUESTION)):
+        return variants_list
     price_disclaimer = _phrase(
         knowledge_base,
         "price_disclaimer",
@@ -1873,10 +1866,7 @@ def _wide_price_range_clarify_result(
     unit = " за единицу" if knowledge_base.price_unit_note(service) else ""
     if is_consultation_only_service(service):
         # у консультаций варианты — это врачи; оговорка «определит врач на консультации» тут не к месту
-        message_to_user = (
-            f"«{service.name}» — {price_span}, цена зависит от специалиста. "
-            "Напишите, к какому врачу, — назову точную цену."
-        )
+        message_to_user = f"«{service.name}» — {price_span}, цена зависит от специалиста. Напишите, к какому врачу, — назову точную цену."
     else:
         message_to_user = (
             f"«{service.name}» — {price_span}{unit}, цена зависит от варианта. "
@@ -1999,6 +1989,31 @@ def _known_service_price_result(
 VARIANT_PRICE_LIST_LIMIT = 10
 
 
+def _variants_list_result(knowledge_base: KnowledgeBase, service, reason: PolicyReason) -> PolicyResult | None:
+    variants = getattr(service, "variants", []) or []
+    lines = [line for line in (variant_price_line(service, v) for v in variants[:VARIANT_PRICE_LIST_LIMIT] if isinstance(v, dict)) if line]
+    if not lines:
+        return None
+    remaining = max(0, len(variants) - len(lines))
+    tail = [f"…и ещё {remaining}. Напишите, какой вариант интересует, — назову цену."] if remaining else []
+    return PolicyResult(
+        action=PolicyAction.ANSWER,
+        reason=reason,
+        service_id=service.id,
+        confidence=0.9,
+        safe_context={
+            **knowledge_base.get_service_context(service),
+            "force_direct_answer": True,
+            "question_type": "variants_list",
+            "message_to_user": "\n".join([f"«{service.name}» — варианты и цены:", *(f"• {line}" for line in lines), *tail]),
+        },
+        # у консультаций одна страница на всех врачей (в данных РОШ — страница косметолога): ссылка увела бы не туда
+        quick_actions=["Записаться", "Позвать менеджера"]
+        if is_consultation_only_service(service)
+        else _service_quick_actions(service, "Записаться", "Позвать менеджера"),
+    )
+
+
 def _variant_followup_result(
     message: str,
     knowledge_base: KnowledgeBase,
@@ -2019,25 +2034,7 @@ def _variant_followup_result(
     # входят и в общий вопрос ("какие зоны?"), и в названия самих вариантов ("Т зона"),
     # поэтому список показываем только если точный вариант не нашёлся.
     if not matches and (context_topic == "variants_list" or is_variant_list_question(message)):
-        lines = [line for line in (variant_price_line(service, v) for v in variants[:VARIANT_PRICE_LIST_LIMIT] if isinstance(v, dict)) if line]
-        if not lines:
-            return None
-        remaining = max(0, len(variants) - len(lines))
-        tail = [f"…и ещё {remaining}. Напишите, какой вариант интересует, — назову цену."] if remaining else []
-        message_to_user = "\n".join([f"«{service.name}» — варианты и цены:", *(f"• {line}" for line in lines), *tail])
-        return PolicyResult(
-            action=PolicyAction.ANSWER,
-            reason=PolicyReason.OK,
-            service_id=service.id,
-            confidence=0.9,
-            safe_context={
-                **knowledge_base.get_service_context(service),
-                "force_direct_answer": True,
-                "question_type": "variants_list",
-                "message_to_user": message_to_user,
-            },
-            quick_actions=_service_quick_actions(service, "Записаться", "Позвать менеджера"),
-        )
+        return _variants_list_result(knowledge_base, service, PolicyReason.OK)
 
     if not matches:
         return None
@@ -2487,16 +2484,17 @@ def _rule_medical(s: Signals) -> PolicyResult:
 
 
 def _rule_complaint(s: Signals) -> PolicyResult:
+    company = s.knowledge_base.company
+    if company.working_hours and not is_currently_open(company.working_hours_schedule, company.timezone):
+        text = _format_phrase(s.knowledge_base, "complaint_escalation_after_hours", working_hours=company.working_hours)
+    else:
+        text = _phrase(s.knowledge_base, "complaint_escalation")
     return PolicyResult(
         action=PolicyAction.TRANSFER_OPERATOR,
         reason=PolicyReason.COMPLAINT,
         service_id=s.service.id if s.service else None,
         confidence=0.92,
-        safe_context={
-            "force_direct_answer": True,
-            "message_to_user": _phrase(s.knowledge_base, "complaint_escalation"),
-            "handoff_message": _phrase(s.knowledge_base, "complaint_escalation"),
-        },
+        safe_context={"force_direct_answer": True, "message_to_user": text, "handoff_message": text},
         quick_actions=["Написать в Telegram", "Открыть сайт"],
     )
 
@@ -2538,9 +2536,14 @@ SAFETY_RULES: tuple[Rule[Signals], ...] = (
         when=lambda s: COMPLAINT(s.normalized) and not (s.medical_requested and ACUTE_DANGER(s.normalized)),
         answer=lambda s: _rule_complaint(s),
     ),
+    # «отменить / перенести запись» — про существующую запись, её ведёт администратор. Выше медицины:
+    # «заболела, хочу перенести запись» — это перенос, а не вопрос врачу. Острая опасность — медицине (103)
+    Rule(
+        "booking_change",
+        when=lambda s: BOOKING_CHANGE(s.normalized) and not (s.medical_requested and ACUTE_DANGER(s.normalized)),
+        answer=lambda s: _rule_booking_change(s),
+    ),
     Rule("medical", when=lambda s: s.medical_requested, answer=lambda s: _rule_medical(s)),
-    # «отменить / перенести запись» — про существующую запись, её ведёт администратор; выше новой записи
-    Rule("booking_change", when=lambda s: BOOKING_CHANGE(s.normalized), answer=lambda s: _rule_booking_change(s)),
 )
 
 
@@ -2656,7 +2659,7 @@ def _analyze_message_core(
         not medical_requested
         and PRICE_LIST_REQUEST(normalized_message)
         and not contains_keyword(normalized_message, PROMPT_INJECTION_KEYWORDS)
-        and (service is None or not _service_named_in(normalized_message, service))
+        and (service is None or not service_named_in(normalized_message, service))
     ):
         intent = "list_services"
         price_requested = True
@@ -3493,9 +3496,8 @@ def _analyze_message_core(
         # продолжает отвечать на обычные вопросы как обычно, эта ветка только про хэндофф
         # оператору. needs_operator у итогового лида останется False (session.operator_requested
         # тут ещё не выставлялся) — карточка уйдёт тихо в "Клиенты", без "Взять в работу" по
-        # ночам. Кризисные/жалобные TRANSFER_OPERATOR-ветки (см. self_harm_crisis,
-        # complaint_escalation выше по файлу) этот хук не трогают — там честность про часы
-        # работы неуместна, они звучат одинаково срочно в любое время.
+        # ночам. Кризисная и жалобная ветки сюда не попадают: кризис звучит одинаково срочно в любое
+        # время, а жалоба про часы работы говорит сама (_rule_complaint).
         if not is_currently_open(
             knowledge_base.company.working_hours_schedule, knowledge_base.company.timezone
         ):

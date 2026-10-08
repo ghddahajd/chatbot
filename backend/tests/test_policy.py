@@ -851,7 +851,8 @@ def test_clinic_info_does_not_intercept_core_flows(policy_session, resolver, man
     city_result = _analyze("я не из Москвы", policy_session, knowledge_base)
     medical_result = _analyze("у меня воспаление что делать", policy_session, knowledge_base)
 
-    assert price_result.action == PolicyAction.CLARIFY
+    # у консультаций сразу список врачей с ценами — это ответ, а не уточнение
+    assert price_result.action == PolicyAction.ANSWER
     assert price_result.reason == PolicyReason.PRICE_QUESTION
     assert price_result.safe_context["question_type"] == "variants_list"
     assert booking_result.reason == PolicyReason.BOOKING_REQUEST
@@ -3750,7 +3751,8 @@ def test_consultation_price_has_no_procedure_disclaimer(policy_session, resolver
 
     assert gynecologist.startswith("Консультация гинеколога — 5 000 ₽")
     assert "процедуру не проводим" not in gynecologist and "По услуге" not in gynecologist
-    assert "от 3 000 до 10 000 ₽, цена зависит от специалиста" in consultations
+    assert consultations.startswith("«Консультации» — варианты и цены:")
+    assert "Консультация гинеколога — 5 000 ₽" in consultations
     assert "процедуру не проводим" not in consultations
     assert "процедуру не проводим" in procedure  # у процедур оговорка остаётся
 

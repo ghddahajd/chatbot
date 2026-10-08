@@ -120,6 +120,12 @@ GROUPS: tuple[tuple[str, tuple[EditableText, ...]], ...] = (
             ),
             EditableText("operator_return_confirmed", "Вернулись к боту", "Если после этого предложения человек выбрал продолжить с ботом."),
             EditableText("complaint_escalation", "Жалоба", "Когда человек жалуется на сервис или врача — диалог сразу передаётся администратору."),
+            EditableText(
+                "complaint_escalation_after_hours",
+                "Жалоба в нерабочее время",
+                "То же ночью и в выходные: администратор ответит в часы работы.",
+                ("working_hours",),
+            ),
             EditableText("waiting_operator_complaint_ack", "Жалоба в ожидании", "Если человек снова жалуется, пока ждёт администратора."),
             EditableText("human_active_wait", "Администратор уже ведёт диалог", "Если человек пишет боту, когда диалог уже у администратора."),
             EditableText("engagement_offer_1", "Длинный диалог — предложить администратора (1-й раз)", "После 5 сообщений человека."),

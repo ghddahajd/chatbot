@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+from os.path import commonprefix
 from typing import Any
 
-from ..knowledge import normalize_text
+from ..knowledge import _token_prefix_match, normalize_text
 
 
 VARIANT_LIST_KEYWORDS = {
@@ -214,12 +215,26 @@ def _common_variant_stems(service, variants: list[dict[str, Any]]) -> set[str]:
     return {stem for stem, count in counts.items() if count > threshold}
 
 
+def _same_word(left: str, right: str) -> bool:
+    """одно слово в другой форме: «подмышек» ~ «подмышечные», «кислотный» ~ «кислот».
+    Шести общих букв мало: «подбор» — начало «подбородка», но это другое слово."""
+
+    if left == right:
+        return True
+    short, long = sorted((left, right), key=len)
+    if long.startswith(short) and len(short) >= 6 and len(long) - len(short) <= 3:
+        return True
+    return len(commonprefix((left, right))) >= 7
+
+
 def _variant_stems(service, variant: dict[str, Any], *, exclude: set[str] = frozenset()) -> set[str]:
     service_stems = _service_stems(service)
+    # слова самой услуги не отличают её варианты друг от друга — и в другой форме тоже:
+    # «удаление новообразований» не должно совпасть с «…новообразования кожи до 0,5 см»
     return {
         stem
         for stem in _variant_raw_stems(service, variant)
-        if stem not in service_stems and stem not in exclude
+        if stem not in exclude and not any(_same_word(stem, own) for own in service_stems)
     }
 
 
@@ -269,7 +284,8 @@ def find_variant_matches(service, message: str, *, limit: int = 5) -> list[dict[
         if not isinstance(variant, dict):
             continue
         stems = _variant_stems(service, variant, exclude=common_stems)
-        overlap = len(query_stems & stems)
+        # «подмышек» и «подмышечные» после обрезки окончаний дают разные основы
+        overlap = sum(1 for stem in stems if any(_same_word(stem, query) for query in query_stems))
         if overlap > 0:
             scored.append((overlap, variant))
 
@@ -302,3 +318,14 @@ def should_stay_in_service_context(service, message: str) -> bool:
     if not (_query_stems(message) & _service_stems(service)):
         return False
     return bool(find_variant_matches(service, message, limit=1))
+
+
+def service_named_in(normalized_message: str, service) -> bool:
+    """название или синоним услуги действительно есть в сообщении, а не подставлены из контекста."""
+
+    message_tokens = [token for token in normalized_message.split() if len(token) > 2]
+    for term in [service.name, *(getattr(service, "synonyms", None) or [])]:
+        term_tokens = [token for token in normalize_text(str(term)).split() if len(token) > 2]
+        if any(_token_prefix_match(left, right) for left in message_tokens for right in term_tokens):
+            return True
+    return False

@@ -55,11 +55,7 @@ from ..policy.restricted import (
     has_medical_restricted_category,
     is_restricted_question,
 )
-from ..policy.variants import (
-    find_variant_matches,
-    is_variant_list_question,
-    should_stay_in_service_context,
-)
+from ..policy.variants import find_variant_matches, is_variant_list_question, service_named_in, should_stay_in_service_context
 from ..logging_setup import log_event
 from ..runtime_stats import STATS
 
@@ -533,9 +529,12 @@ def _contextual_frame_classification(
         if local_intent == "booking_request":
             return {"intent": "booking_request", "service_id": frame.entity_id, "confidence": 0.9}
         frame_variant = frame.slots.get("variant") if isinstance(frame.slots.get("variant"), dict) else None
+        # повторяем цену прошлого варианта только на голое «а сколько?»: назвал услугу заново
+        # («сколько стоят консультации») — это вопрос про всю услугу, а не про тот же вариант
         if (
             frame_variant is not None
             and str(frame.slots.get("question_type") or "") == "variant_price"
+            and not (contextual_service is not None and service_named_in(normalized_message, contextual_service))
             and (
                 fuzzy_contains(strip_anaphoric_pronouns(normalized_message), PRICE_KEYWORDS)
                 or normalized_message

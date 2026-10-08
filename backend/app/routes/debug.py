@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 import json
 from typing import Any, Optional
@@ -12,26 +11,17 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from ..auth import verify_operator_token
+from ..debug_sandbox import Sandbox
 from ..knowledge import normalize_text
-from ..models import Message, MessageRole, PolicyAction, PolicyReason, Session
-from ..policy import classify_and_extract, undisclosed_equipment_terms
+from ..models import ChatMessageResponse
+from ..policy import classify_and_extract
 from ..policy.constants import DURATION_KEYWORDS, PRICE_KEYWORDS
 from ..policy.extractors import contains_keyword
 from ..policy.restricted import is_restricted_question
 from ..preflight import run_preflight
+from ..services.chat_service import ChatService
 from ..services.rag_search import retrieve_article_context, search_rag_chunks
-from ..validator import validate_article_guidance_response
-from .chat_utils import (
-    CONSULTATION_RISK_RESTRICTED,
-    classify_consultation_risk,
-    format_quick_actions,
-    resolve_classification,
-    safe_complete,
-    safe_restricted_handoff,
-    safe_small_talk,
-    service_classifier_payload,
-    should_use_consultation_llm,
-)
+from .chat_utils import service_classifier_payload
 
 
 router = APIRouter(tags=["debug"])
@@ -39,7 +29,9 @@ router = APIRouter(tags=["debug"])
 
 class DebugTraceRequest(BaseModel):
     company_id: str
-    message: str = Field(min_length=1)
+    message: Optional[str] = None
+    # несколько сообщений подряд — один диалог: видно, как бот ведёт разговор, а не только первый ответ
+    messages: Optional[list[str]] = Field(default=None, min_length=1, max_length=10)
 
 
 class RagSearchRequest(BaseModel):
@@ -47,149 +39,6 @@ class RagSearchRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     # чей корпус искать; пусто — клиент по умолчанию
     company_id: Optional[str] = None
-
-
-async def _final_answer_for_policy(
-    request: Request,
-    session: Session,
-    message: str,
-    policy_result,
-    knowledge_base,
-) -> tuple[str, PolicyAction, str, bool]:
-    """повторяет answer-selection без сайд-эффектов ChatService."""
-
-    policy_result.safe_context["undisclosed_equipment_terms"] = undisclosed_equipment_terms(knowledge_base)
-
-    if policy_result.action == PolicyAction.ASK_CONTACT:
-        contact = policy_result.safe_context.get("contact")
-        if contact:
-            is_booking_request = bool(policy_result.safe_context.get("booking_request"))
-            if is_booking_request:
-                return (
-                    "Спасибо. Заявку передали. С вами свяжутся, чтобы подтвердить время и детали.",
-                    policy_result.action,
-                    "direct_lead_preview",
-                    True,
-                )
-            return (
-                "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
-                policy_result.action,
-                "direct_lead_preview",
-                True,
-            )
-        return str(policy_result.safe_context.get("message_to_user") or ""), policy_result.action, "direct", False
-
-    if policy_result.action == PolicyAction.SMALL_TALK:
-        return (
-            await safe_small_talk(request, knowledge_base.company.company_name, message),
-            policy_result.action,
-            "small_talk",
-            False,
-        )
-
-    if policy_result.action == PolicyAction.OFF_TOPIC:
-        return str(policy_result.safe_context.get("message_to_user") or ""), policy_result.action, "direct", False
-
-    if policy_result.action == PolicyAction.TRANSFER_OPERATOR:
-        answer = str(
-            policy_result.safe_context.get("handoff_message")
-            or policy_result.safe_context.get("message_to_user")
-            or "Передаю диалог менеджеру. Он увидит историю переписки."
-        )
-        return answer, policy_result.action, "direct_handoff", False
-
-    if policy_result.action == PolicyAction.CLARIFY:
-        direct_clarify_reasons = {
-            PolicyReason.OPERATOR_REQUESTED,
-            PolicyReason.LOCATION_MISMATCH,
-            PolicyReason.UNSUPPORTED_CITY,
-            PolicyReason.UNKNOWN_SERVICE,
-            PolicyReason.SIMILAR_SERVICES_FOUND,
-            PolicyReason.PRICE_QUESTION_NO_SERVICE,
-            PolicyReason.SERVICE_EXPLANATION,
-            PolicyReason.BOOKING_REQUEST,
-            PolicyReason.CONTACT_PROVIDED,
-        }
-        if (
-            policy_result.reason in direct_clarify_reasons
-            or policy_result.safe_context.get("force_direct_answer")
-            or policy_result.safe_context.get("message_to_user")
-        ):
-            answer = str(
-                policy_result.safe_context.get("message_to_user")
-                or policy_result.safe_context.get("city_note")
-                or ""
-            )
-            return answer, policy_result.action, "direct", False
-        return (
-            await safe_complete(request, policy_result.safe_context, message, session.messages[-8:]),
-            policy_result.action,
-            "safe_complete",
-            False,
-        )
-
-    if policy_result.action == PolicyAction.REJECT:
-        return str(policy_result.safe_context.get("message_to_user") or "Запрос отклонён."), policy_result.action, "direct", False
-
-    if policy_result.action == PolicyAction.ANSWER and policy_result.safe_context.get("article_guidance_candidate"):
-        candidate = policy_result.safe_context.get("article_guidance_candidate")
-        candidate = candidate if isinstance(candidate, dict) else {}
-        fallback = str(
-            candidate.get("fallback_message_to_user") or policy_result.safe_context.get("message_to_user") or ""
-        ).strip()
-        excerpt = str(candidate.get("excerpt") or "").strip()
-        if fallback and excerpt:
-            llm_context = dict(policy_result.safe_context)
-            llm_context["question_type"] = "article_guidance_excerpt"
-            llm_context["article_guidance_candidate"] = candidate
-            llm_context["article_context"] = [
-                {
-                    "title": str(candidate.get("title") or ""),
-                    "url": str(candidate.get("url") or ""),
-                    "snippet": excerpt,
-                }
-            ]
-            llm_context.pop("message_to_user", None)
-            answer = await safe_complete(request, llm_context, message, session.messages[-8:])
-            if validate_article_guidance_response(answer, llm_context):
-                return answer, policy_result.action, "article_guidance_llm", False
-        return fallback, policy_result.action, "article_guidance_fallback", False
-
-    if (
-        policy_result.action == PolicyAction.ANSWER
-        and policy_result.safe_context.get("message_to_user")
-        and (
-            policy_result.safe_context.get("force_direct_answer")
-            or (
-                not policy_result.safe_context.get("question_type")
-                and not policy_result.safe_context.get("service")
-                and not policy_result.safe_context.get("all_services")
-            )
-        )
-    ):
-        return str(policy_result.safe_context.get("message_to_user") or ""), policy_result.action, "direct", False
-
-    if should_use_consultation_llm(policy_result.safe_context):
-        consultation_risk, _request_id = await classify_consultation_risk(
-            request,
-            message,
-            policy_result.safe_context,
-        )
-        if consultation_risk == CONSULTATION_RISK_RESTRICTED:
-            return await safe_restricted_handoff(request, message), PolicyAction.TRANSFER_OPERATOR, "restricted_handoff", False
-        return (
-            await safe_complete(request, policy_result.safe_context, message, session.messages[-8:]),
-            policy_result.action,
-            "consultation_llm",
-            False,
-        )
-
-    return (
-        await safe_complete(request, policy_result.safe_context, message, session.messages[-8:]),
-        policy_result.action,
-        "safe_complete",
-        False,
-    )
 
 
 def _enum_value(value: Any) -> Any:
@@ -204,8 +53,8 @@ async def debug_trace(
 ) -> dict[str, Any]:
     verify_operator_token(request, x_operator_token)
     started_at = time.perf_counter()
-    message = payload.message.strip()
-    if not message:
+    messages = [text.strip() for text in (payload.messages or [payload.message or ""])]
+    if not messages or not all(messages):
         raise HTTPException(status_code=400, detail="Message is empty")
 
     try:
@@ -213,45 +62,118 @@ async def debug_trace(
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Unknown company") from error
 
-    steps: list[dict[str, Any]] = []
-    session = Session(company_id=payload.company_id)
-    session.messages.append(Message(role=MessageRole.USER, text=message))
+    # настоящий обработчик чата в песочнице: ответ тот же, что увидит человек, а заявки,
+    # Telegram и аналитика только записываются
+    sandbox = Sandbox(request)
+    session_id: Optional[str] = None
+    turns: list[dict[str, Any]] = []
+    last_response: Optional[ChatMessageResponse] = None
+    for text in messages:
+        effects_before, decisions_before = len(sandbox.effects), len(sandbox.decisions)
+        response = await ChatService(sandbox.request).handle_message(
+            company_id=payload.company_id, session_id=session_id, message=text
+        )
+        if not isinstance(response, ChatMessageResponse):
+            raise HTTPException(status_code=response.status_code, detail="Chat pipeline returned an error")
+        session_id, last_response = response.session_id, response
+        decision = sandbox.decisions[-1]["result"] if len(sandbox.decisions) > decisions_before else None
+        turns.append(
+            {
+                "message": text,
+                "answer": response.answer,
+                "action": _enum_value(response.action),
+                "status": _enum_value(response.status),
+                # None — ход решили шаги записи до правил (выбор дня, номер в ожидании)
+                "reason": _enum_value(decision.reason) if decision else None,
+                "rule": decision.rule if decision else None,
+                "rules_matched": decision.rules_matched if decision else [],
+                "quick_actions": [action.model_dump() for action in response.quick_actions],
+                "effects": sandbox.effects[effects_before:],
+            }
+        )
+
+    message = messages[-1]
+    last_decision = sandbox.decisions[-1] if sandbox.decisions and turns[-1]["reason"] is not None else None
+    classification = last_decision["classification"] if last_decision else {}
+    policy_result = last_decision["result"] if last_decision else None
+    steps = _explain_steps(request, knowledge_base, message, classification, policy_result)
+    steps.append(
+        {
+            "step": "llm_generation",
+            "result": {
+                "mode": "chat_service",
+                "provider": request.app.state.settings.llm_provider,
+                "model": request.app.state.settings.llm_model,
+            },
+        }
+    )
+    steps.append({"step": "validation", "result": {"passed": True, "note": "ответ прошёл те же проверки, что в чате"}})
+
+    return {
+        "company_id": payload.company_id,
+        "message": message,
+        "steps": steps,
+        "final_action": turns[-1]["action"],
+        "final_answer": last_response.answer,
+        "lead_preview": any(effect["service"] == "lead" for effect in turns[-1]["effects"]),
+        "quick_actions": turns[-1]["quick_actions"],
+        "turns": turns,
+        "total_time_ms": round((time.perf_counter() - started_at) * 1000, 1),
+    }
+
+
+def _explain_steps(
+    request: Request,
+    knowledge_base: Any,
+    message: str,
+    classification: dict[str, Any],
+    policy_result: Any,
+) -> list[dict[str, Any]]:
+    """пояснения к последнему ходу: что понял классификатор, что нашлось в прайсе и статьях, какое
+    правило решило. На ответ не влияют — он уже посчитан настоящим обработчиком."""
+
     known_services = service_classifier_payload(request, knowledge_base, include_variants=True)
-
     local_classification = classify_and_extract(
-        message,
-        known_services,
-        knowledge_base.company.city,
-        knowledge_base.domain_profile,
+        message, known_services, knowledge_base.company.city, knowledge_base.domain_profile
     )
-    classification_started_at = time.perf_counter()
-    classification = await resolve_classification(message, request, knowledge_base, session)
-    steps.append(
-        {
-            "step": "classification",
-            "duration_ms": round((time.perf_counter() - classification_started_at) * 1000, 1),
-            "result": {
-                "local": local_classification,
-                "final": classification,
-            },
-        }
-    )
-
     is_restricted, restricted_category = is_restricted_question(message, knowledge_base.domain_profile)
-    steps.append(
-        {
-            "step": "restricted_check",
-            "result": {
-                "is_restricted": is_restricted,
-                "category": restricted_category,
-                "domain_profile": knowledge_base.domain_profile,
-            },
-        }
-    )
-
     service = knowledge_base.find_service_by_id(classification.get("service_id"))
     context = knowledge_base.get_service_context(service) if service else {}
-    steps.append(
+    price = context.get("price") if isinstance(context.get("price"), dict) else None
+
+    normalized_message = normalize_text(message)
+    price_requested = classification.get("intent") == "price_question" or contains_keyword(normalized_message, PRICE_KEYWORDS)
+    rag_triggered = (
+        classification.get("intent") == "faq_question"
+        and not price_requested
+        and not contains_keyword(normalized_message, DURATION_KEYWORDS)
+    )
+    rag_error = None
+    article_matches: list[dict[str, Any]] = []
+    if rag_triggered:
+        corpus_path = knowledge_base.rag_corpus_path()
+        if corpus_path is None:
+            rag_error = f"no_corpus: rag.corpus={knowledge_base.rag_corpus}"
+        else:
+            try:
+                article_matches = retrieve_article_context(
+                    f"{service.name} {message}" if service is not None else message, path=corpus_path
+                )
+            except FileNotFoundError:
+                rag_error = f"corpus_not_found: {corpus_path}"
+            except (json.JSONDecodeError, ValueError) as error:
+                rag_error = f"invalid_corpus: {type(error).__name__}"
+
+    safe_context = policy_result.safe_context if policy_result is not None else {}
+    candidate = safe_context.get("article_guidance_candidate")
+    cosmetic_used = safe_context.get("question_type") == "cosmetic_article_guidance"
+    mapping = safe_context.get("article_service_mapping")
+    return [
+        {"step": "classification", "result": {"local": local_classification, "final": classification}},
+        {
+            "step": "restricted_check",
+            "result": {"is_restricted": is_restricted, "category": restricted_category, "domain_profile": knowledge_base.domain_profile},
+        },
         {
             "step": "kb_lookup",
             "result": {
@@ -260,149 +182,46 @@ async def debug_trace(
                 "service_id": service.id if service else None,
                 "service_name": service.name if service else None,
             },
-        }
-    )
-    price = context.get("price") if isinstance(context.get("price"), dict) else None
-    steps.append(
+        },
         {
             "step": "price_lookup",
-            "result": {
-                "source": "prices.json",
-                "found": price is not None,
-                "price_text": price.get("price_text") if price else None,
-            },
-        }
-    )
-
-    rag_started_at = time.perf_counter()
-    rag_error = None
-    article_matches: list[dict[str, Any]] = []
-    normalized_message = normalize_text(message)
-    price_requested = classification.get("intent") == "price_question" or contains_keyword(
-        normalized_message, PRICE_KEYWORDS
-    )
-    duration_requested = contains_keyword(normalized_message, DURATION_KEYWORDS)
-    rag_triggered = (
-        classification.get("intent") == "faq_question"
-        and not price_requested
-        and not duration_requested
-    )
-    if rag_triggered:
-        rag_query = f"{service.name} {message}" if service is not None else message
-        corpus_path = knowledge_base.rag_corpus_path()
-        if corpus_path is None:
-            rag_error = f"no_corpus: rag.corpus={knowledge_base.rag_corpus}"
-        else:
-            try:
-                article_matches = retrieve_article_context(rag_query, path=corpus_path)
-            except FileNotFoundError:
-                rag_error = f"corpus_not_found: {corpus_path}"
-            except (json.JSONDecodeError, ValueError) as error:
-                rag_error = f"invalid_corpus: {type(error).__name__}"
-    steps.append(
+            "result": {"source": "prices.json", "found": price is not None, "price_text": price.get("price_text") if price else None},
+        },
         {
             "step": "rag_retrieval",
-            "duration_ms": round((time.perf_counter() - rag_started_at) * 1000, 1),
             "result": {
                 "triggered": rag_triggered,
                 "matches": article_matches,
                 "error": rag_error,
+                "used": safe_context.get("question_type") == "faq_question",
             },
-        }
-    )
-
-    policy_started_at = time.perf_counter()
-    policy_result = await asyncio.to_thread(
-        request.app.state.policy_analyzer, message, session, knowledge_base, classification
-    )
-    rag_step = steps[-1]
-    rag_step["result"]["used"] = policy_result.safe_context.get("question_type") == "faq_question"
-    cosmetic_mapping = policy_result.safe_context.get("article_service_mapping")
-    cosmetic_article_context = policy_result.safe_context.get("article_context")
-    article_guidance_candidate = policy_result.safe_context.get("article_guidance_candidate")
-    cosmetic_guidance_used = policy_result.safe_context.get("question_type") == "cosmetic_article_guidance"
-    steps.append(
+        },
         {
             "step": "cosmetic_article_guidance",
             "result": {
-                "used": cosmetic_guidance_used,
-                "approved_mapping_found": bool(cosmetic_mapping),
-                "excerpt_present": bool(
-                    isinstance(article_guidance_candidate, dict)
-                    and str(article_guidance_candidate.get("excerpt") or "").strip()
-                ),
-                "llm_candidate_available": isinstance(article_guidance_candidate, dict),
-                "fallback_template": (
-                    str(article_guidance_candidate.get("fallback_message_to_user") or "")
-                    if isinstance(article_guidance_candidate, dict)
-                    else None
-                ),
-                "mapping": cosmetic_mapping if isinstance(cosmetic_mapping, dict) else None,
-                "matches": cosmetic_article_context if cosmetic_guidance_used else [],
+                "used": cosmetic_used,
+                "approved_mapping_found": bool(mapping),
+                "excerpt_present": bool(isinstance(candidate, dict) and str(candidate.get("excerpt") or "").strip()),
+                "llm_candidate_available": isinstance(candidate, dict),
+                "fallback_template": str(candidate.get("fallback_message_to_user") or "") if isinstance(candidate, dict) else None,
+                "mapping": mapping if isinstance(mapping, dict) else None,
+                "matches": safe_context.get("article_context") if cosmetic_used else [],
             },
-        }
-    )
-    steps.append(
+        },
         {
             "step": "policy_decision",
-            "duration_ms": round((time.perf_counter() - policy_started_at) * 1000, 1),
             "result": {
-                "action": _enum_value(policy_result.action),
-                "reason": _enum_value(policy_result.reason),
-                "service_id": policy_result.service_id,
-                "confidence": policy_result.confidence,
-                "quick_actions": policy_result.quick_actions,
-                "safe_context_keys": sorted(policy_result.safe_context.keys()),
-                "rule": policy_result.rule,
-                "rules_matched": policy_result.rules_matched,
+                "action": _enum_value(policy_result.action) if policy_result else None,
+                "reason": _enum_value(policy_result.reason) if policy_result else None,
+                "service_id": policy_result.service_id if policy_result else None,
+                "confidence": policy_result.confidence if policy_result else None,
+                "quick_actions": policy_result.quick_actions if policy_result else [],
+                "safe_context_keys": sorted(safe_context.keys()),
+                "rule": policy_result.rule if policy_result else None,
+                "rules_matched": policy_result.rules_matched if policy_result else [],
             },
-        }
-    )
-
-    generation_started_at = time.perf_counter()
-    final_answer, response_action, generation_mode, lead_preview = await _final_answer_for_policy(
-        request,
-        session,
-        message,
-        policy_result,
-        knowledge_base,
-    )
-    steps.append(
-        {
-            "step": "llm_generation",
-            "duration_ms": round((time.perf_counter() - generation_started_at) * 1000, 1),
-            "result": {
-                "mode": generation_mode,
-                "provider": request.app.state.settings.llm_provider,
-                "model": request.app.state.settings.llm_model,
-                "prompt_tokens": None,
-                "completion_tokens": None,
-            },
-        }
-    )
-    steps.append(
-        {
-            "step": "validation",
-            "result": {
-                "passed": True,
-                "note": "safe_complete handles validator/fallback internally",
-            },
-        }
-    )
-
-    return {
-        "company_id": payload.company_id,
-        "message": message,
-        "steps": steps,
-        "final_action": _enum_value(response_action),
-        "final_answer": final_answer,
-        "lead_preview": lead_preview,
-        "quick_actions": [
-            action.model_dump()
-            for action in format_quick_actions(policy_result.quick_actions, request, knowledge_base)
-        ],
-        "total_time_ms": round((time.perf_counter() - started_at) * 1000, 1),
-    }
+        },
+    ]
 
 
 @router.get("/api/debug/telegram-check")

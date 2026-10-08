@@ -66,7 +66,8 @@ def test_debug_trace_includes_rag_retrieval_matches(test_client, tmp_path: Path,
     async def fake_resolve_classification(*_args, **_kwargs):
         return {"intent": "faq_question", "service_id": None, "confidence": 0.9}
 
-    monkeypatch.setattr("app.routes.debug.resolve_classification", fake_resolve_classification)
+    # отладка прогоняет настоящий обработчик чата — подменяем классификатор там, где он его зовёт
+    monkeypatch.setattr("app.services.chat_service.resolve_classification", fake_resolve_classification)
 
     response = test_client.post(
         "/api/debug/trace?token=demo-operator-token",

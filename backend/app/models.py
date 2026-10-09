@@ -246,6 +246,8 @@ class ChatMessageRequest(BaseModel):
     message: str = Field(max_length=4000)
     # путь страницы сайта, откуда пишут; сохраняется только первый за сессию
     page: str = Field(default="", max_length=2000)
+    # карточка «Быстрая запись» шлёт выбранный день вместе с номером, одним сообщением
+    booking_day: str = Field(default="", max_length=40)
 
 
 class QuickFaqItem(BaseModel):
@@ -277,6 +279,8 @@ class ChatMessageResponse(BaseModel):
     answer: str
     lead_created: bool = False
     quick_actions: list[QuickAction] = Field(default_factory=list)
+    # бот ждёт номер для новой записи — виджет показывает карточку: {"days", "open_now", "contacts"}
+    booking_form: Optional[dict[str, Any]] = None
 
 
 class WidgetBootstrapResponse(BaseModel):

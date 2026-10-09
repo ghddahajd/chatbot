@@ -779,6 +779,7 @@ def render_analytics_panel(
                   </div>
                 </div>
                 <label class="settings-checkbox span-2"><input type="checkbox" id="settingsAiBadge" /> Показывать в шапке кнопку «с ИИ»</label>
+                <label class="settings-checkbox span-2"><input type="checkbox" id="settingsQuickBooking" /> Быстрая запись: карточка «день + номер» и кнопка «Записаться» у поля ввода</label>
               </div>
               <aside class="widget-preview" aria-label="Как чат выглядит на сайте">
                 <div class="wp-caption">Как увидят на сайте</div>
@@ -1770,6 +1771,7 @@ def render_analytics_panel(
         document.getElementById("settingsAssistantLabel").value = data.widget.assistant_label || "";
         document.getElementById("settingsHighlightColor").value = data.widget.booking_highlight_color || "";
         document.getElementById("settingsAiBadge").checked = data.widget.ai_badge === "show";
+        document.getElementById("settingsQuickBooking").checked = data.widget.quick_booking === "on";
         document.getElementById("factOms").checked = Boolean(data.facts.oms);
         document.getElementById("factDms").checked = Boolean(data.facts.dms);
         document.getElementById("factAmbulance").checked = Boolean(data.facts.ambulance_brings);
@@ -1818,6 +1820,7 @@ def render_analytics_panel(
           avatar_emoji: document.getElementById("settingsAvatarEmoji").value,
           assistant_label: document.getElementById("settingsAssistantLabel").value.trim() || "Ассистент",
           ai_badge: document.getElementById("settingsAiBadge").checked ? "show" : "",
+          quick_booking: document.getElementById("settingsQuickBooking").checked ? "on" : "",
           booking_highlight_color: document.getElementById("settingsHighlightColor").value.trim(),
           launcher_label: document.getElementById("settingsLauncherLabel").value.trim() || "Задать вопрос",
           status_online: document.getElementById("settingsStatusOnline").value.trim() || "на связи",

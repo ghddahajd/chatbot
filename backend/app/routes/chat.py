@@ -63,6 +63,7 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         session_id=payload.session_id,
         message=payload.message,
         page=payload.page,
+        booking_day=payload.booking_day,
     )
 
 

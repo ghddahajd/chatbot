@@ -67,6 +67,7 @@ class WidgetInput(BaseModel):
     # None — поле не прислали (старая версия вкладки), тогда остаётся значение из данных клиента
     assistant_label: Optional[str] = Field(default=None, min_length=1, max_length=30)
     ai_badge: Optional[str] = None
+    quick_booking: Optional[str] = None
     booking_highlight_color: Optional[str] = None
     launcher_label: Optional[str] = Field(default=None, min_length=1, max_length=30)
     status_online: Optional[str] = Field(default=None, min_length=1, max_length=30)
@@ -78,6 +79,13 @@ class WidgetInput(BaseModel):
     def _validate_ai_badge(cls, value: Optional[str]) -> Optional[str]:
         if value not in (None, "", "show"):
             raise ValueError(f"ai_badge: ожидалось пусто или show, получено {value!r}")
+        return value
+
+    @field_validator("quick_booking")
+    @classmethod
+    def _validate_quick_booking(cls, value: Optional[str]) -> Optional[str]:
+        if value not in (None, "", "on"):
+            raise ValueError(f"quick_booking: ожидалось пусто или on, получено {value!r}")
         return value
 
     @field_validator("booking_highlight_color")

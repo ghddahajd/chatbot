@@ -323,6 +323,16 @@ def test_settings_can_switch_off_what_client_data_switched_on(test_client, manag
     assert widget["booking_highlight_color"] == ""
 
 
+def test_quick_booking_is_on_by_default_and_switches_off_in_settings(test_client) -> None:
+    assert _bootstrap_widget(test_client)["quick_booking"] == "on"
+
+    assert _save_widget(test_client, quick_booking="").status_code == 200
+
+    assert _bootstrap_widget(test_client)["quick_booking"] == ""
+    saved = test_client.get("/api/settings/company?company_id=rosh_demo", headers=OPERATOR_HEADERS).json()["widget"]
+    assert saved["quick_booking"] == ""
+
+
 def test_old_settings_tab_without_new_fields_keeps_client_values(test_client, managed_env) -> None:
     _set_client_widget(managed_env, booking_highlight_color="#2E9E6B", assistant_label="Консультант РОШ")
     test_client.app.state.knowledge_base_resolver._cache.clear()
@@ -340,6 +350,7 @@ def test_old_settings_tab_without_new_fields_keeps_client_values(test_client, ma
         {"booking_highlight_color": "green"},
         {"booking_highlight_color": "#2E9E6B;background:red"},
         {"ai_badge": "yes"},
+        {"quick_booking": "yes"},
         {"assistant_label": ""},
         {"assistant_label": "х" * 31},
     ],

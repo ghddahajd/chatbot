@@ -23,6 +23,23 @@
   const WS_RECONNECT_MAX_ATTEMPTS = 4;
   const WS_RECONNECT_BASE_DELAY_MS = 1000;
   // 10 цифр номера с любыми разделителями, с 8 / 7 / +7 или без
+  // номер в карточке записи — 10 цифр после «+7», который уже стоит в поле. Целиком, с «+7» или «8»
+  // впереди, номер приносят только автозаполнение и вставка — тогда первая из 11 цифр лишняя. При
+  // наборе по одной цифре ничего не угадываем: «8» по привычке человек видит и стирает сам
+  function phoneDigits(value, wholeNumber) {
+    let digits = String(value).replace(/\D/g, "");
+    if (wholeNumber && digits.length === 11 && /^[78]/.test(digits)) digits = digits.slice(1);
+    return digits.slice(0, 10);
+  }
+  // разделители — только перед следующей цифрой, иначе стереть «)» или «-» не получится
+  function formatPhone(d) {
+    if (!d) return "";
+    let s = "(" + d.slice(0, 3);
+    if (d.length > 3) s += ") " + d.slice(3, 6);
+    if (d.length > 6) s += "-" + d.slice(6, 8);
+    if (d.length > 8) s += "-" + d.slice(8, 10);
+    return s;
+  }
   const PHONE_IN_TEXT = /(?:\+7|8|7)?[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/;
 
   // Приглашение у кнопки чата: ценность в заголовке и две главные задачи в одно касание.
@@ -954,6 +971,71 @@
         margin-left: 5px;
       }
 
+      /* ── Быстрая запись: день и номер одной карточкой ── */
+      .booking-card {
+        background: var(--bg);
+        border: 1px solid var(--accent-border);
+        border-radius: var(--radius-sm);
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .bc-title { font-size: 15px; font-weight: 800; color: var(--text); letter-spacing: -.01em; }
+      .bc-sub { margin-top: -7px; font-size: 13px; line-height: 1.4; color: var(--text-secondary); }
+      .bc-days { display: flex; flex-wrap: wrap; gap: 6px; }
+      .bc-day.selected { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--text); }
+      .bc-phone-row { display: flex; gap: 8px; }
+      .bc-phone-wrap {
+        flex: 1;
+        min-width: 0;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg-page);
+        cursor: text;
+      }
+      .bc-phone-wrap:focus-within { border-color: var(--accent-border); box-shadow: 0 0 0 3px rgba(173,206,109,.25); }
+      .bc-phone-wrap.invalid { border-color: #c0392b; }
+      .bc-prefix { padding: 0 4px 0 12px; font-size: 16px; color: var(--text); }
+      .bc-phone {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        border: 0;
+        padding: 0 12px 0 0;
+        font: inherit;
+        font-size: 16px; /* меньше 16px — iOS приближает страницу при вводе */
+        color: var(--text);
+        background: transparent;
+        outline: none;
+      }
+      .bc-submit {
+        height: 44px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: var(--accent);
+        color: var(--bg);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .bc-submit:hover { background: var(--accent-dark); }
+      .bc-error { font-size: 12px; color: #c0392b; }
+      .bc-hint { font-size: 12px; color: #a35a00; }
+      .bc-note { font-size: 12px; line-height: 1.4; color: var(--text-muted); }
+
+      .book-bar { padding: 8px 12px 0; background: var(--bg); border-top: 1px solid var(--border-soft); }
+      .book-bar[hidden] { display: none; }
+      .book-bar:not([hidden]) + .composer { border-top: 0; padding-top: 8px; }
+      .book-btn { gap: 6px; }
+      .book-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+
       /* ── Waiting / closed overlay ── */
       .overlay-state {
         display: none;
@@ -1308,6 +1390,15 @@
           </p>
           <button class="consent-accept" type="button">Принять</button>
         </div>
+        <div class="book-bar" hidden>
+          <button class="quick-btn book-btn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"></path>
+              <path d="M8 3v4M16 3v4M4 10h16"></path>
+            </svg>
+            Записаться на приём
+          </button>
+        </div>
         <div class="composer">
           <div class="input-wrap">
             <input class="inp" type="text" placeholder="Напишите вопрос…" />
@@ -1362,6 +1453,8 @@
           assistant_label: "Ассистент",
           ai_badge: "",
           booking_highlight_color: "",
+          // «on» приходит из «Настроек»; пусто — запись по-старому, двумя шагами переписки
+          quick_booking: "",
           launcher_label: "Задать вопрос",
           status_online: "на связи",
           input_placeholder: "Напишите вопрос…",
@@ -1391,6 +1484,8 @@
         voiceHint: this.$(".voice-hint"),
         send: this.$(".send-btn"),
         composer: this.$(".composer"),
+        bookBar: this.$(".book-bar"),
+        bookBtn: this.$(".book-btn"),
         closedNote: this.$(".closed-note"),
         reset: this.$(".reset-btn"),
         consentBanner: this.$(".consent-banner"),
@@ -1458,6 +1553,8 @@
       });
       this.el.close.addEventListener("click", () => this.toggle());
       this.el.send.addEventListener("click", () => this.submit());
+      // без «на консультацию»: посреди разговора о чистке заявка должна остаться на чистку
+      this.el.bookBtn.addEventListener("click", () => this.sendText("Хочу записаться"));
       this.el.reset.addEventListener("click", () => this.startNew());
       this.el.consentAccept.addEventListener("click", () => this.acceptConsent());
       this.el.inp.addEventListener("keydown", (e) => {
@@ -2062,7 +2159,7 @@
 
     addMsg(role, text, silent) {
       this.clearGreeting();
-      this.el.messages.querySelectorAll(".quick-actions").forEach(n => n.remove());
+      this.el.messages.querySelectorAll(".quick-actions, .booking-card").forEach(n => n.remove());
 
       const isSystem = role === "system";
       const isHandoff = (role === "assistant" || isSystem) && (
@@ -2089,9 +2186,10 @@
       if (!silent) this.scrollBottom();
 
       if (!this.state.open) this.el.unread.classList.add("visible");
+      this.updateBookBar();
     }
 
-    addQuickActions(actions) {
+    addQuickActions(actions, { plain = false } = {}) {
       this.el.messages.querySelectorAll(".quick-actions").forEach(n => n.remove());
       if (!Array.isArray(actions) || !actions.length) return;
       if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
@@ -2105,7 +2203,7 @@
         // первая кнопка группы — самый вероятный next-step, визуально выделяем;
         // позиция в массиве, а не текст лейбла (тот приходит из phrasebook и
         // может отличаться у клиента).
-        btn.className = "quick-btn" + (wrap.childElementCount === 0 ? " primary" : "");
+        btn.className = "quick-btn" + (wrap.childElementCount === 0 && !plain ? " primary" : "");
         btn.type = "button";
         btn.textContent = norm.label;
         btn.addEventListener("click", () => {
@@ -2121,6 +2219,85 @@
         wrap.appendChild(btn);
       }
       if (wrap.childElementCount) { this.el.messages.appendChild(wrap); this.scrollBottom(); }
+    }
+
+    // запись карточкой: день по желанию и номер уходят одним сообщением, без лишнего шага переписки
+    addBookingCard(form, actions) {
+      const days = Array.isArray(form.days) ? form.days : [];
+      const card = document.createElement("div");
+      card.className = "booking-card";
+      card.innerHTML = `
+        <div class="bc-title">Запишу за 30 секунд</div>
+        <div class="bc-sub"></div>
+        <div class="bc-days"></div>
+        <div class="bc-phone-row">
+          <label class="bc-phone-wrap"><span class="bc-prefix">+7</span><input class="bc-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(___) ___-__-__" aria-label="Номер телефона" /></label>
+          <button class="bc-submit" type="button">Жду звонка</button>
+        </div>
+        <div class="bc-hint" hidden></div>
+        <div class="bc-error" hidden>Проверьте номер: после +7 нужно 10 цифр</div>
+        <div class="bc-note">Вы ещё не записаны — номер нужен только для записи</div>`;
+      card.querySelector(".bc-sub").textContent = form.open_now === false
+        ? "Сейчас мы закрыты — перезвоним в рабочее время"
+        : "Перезвоним и подберём удобное время";
+      const phone = card.querySelector(".bc-phone");
+      const error = card.querySelector(".bc-error");
+      const hint = card.querySelector(".bc-hint");
+      const daysEl = card.querySelector(".bc-days");
+      let day = "";
+      for (const label of days) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "quick-btn bc-day";
+        chip.textContent = label;
+        chip.addEventListener("click", () => {
+          day = day === label ? "" : label;
+          daysEl.querySelectorAll(".bc-day").forEach(c => c.classList.toggle("selected", c.textContent === day));
+          phone.focus();
+        });
+        daysEl.appendChild(chip);
+      }
+      if (!days.length) daysEl.remove();
+      let digits = "";
+      phone.addEventListener("input", (e) => {
+        const typed = phone.value.replace(/\D/g, "").length - digits.length;
+        const wholeNumber = typed > 1 || /^insertFrom|^insertReplacement/.test(e.inputType || "");
+        digits = phoneDigits(phone.value, wholeNumber);
+        phone.value = formatPhone(digits);
+        // мобильные начинаются с 9: «89…» и «79…» — это привычные 8 или 7 перед номером, а не код
+        hint.hidden = !/^[78]9/.test(digits);
+        hint.textContent = hint.hidden ? "" : `Похоже, в начале лишняя «${digits[0]}» — +7 уже стоит перед номером`;
+        phone.parentElement.classList.remove("invalid");
+        error.hidden = true;
+      });
+      const send = () => {
+        const d = digits;
+        if (d.length !== 10) { phone.parentElement.classList.add("invalid"); error.hidden = false; phone.focus(); return; }
+        const number = "+7 " + d.slice(0, 3) + " " + d.slice(3, 6) + "-" + d.slice(6, 8) + "-" + d.slice(8);
+        this.sendText(number, { bookingDay: day, display: day ? day + " · " + number : number });
+      };
+      card.querySelector(".bc-submit").addEventListener("click", send);
+      phone.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
+      this.el.messages.appendChild(card);
+      // дни уже в карточке; ниже — «Позвонить в клинику» и «Написать в Telegram», без выделения
+      const below = (actions || []).filter(a => !days.includes(typeof a === "string" ? a : a?.label));
+      const labels = new Set(below.map(a => (typeof a === "string" ? a : a?.label)));
+      for (const contact of Array.isArray(form.contacts) ? form.contacts : []) if (!labels.has(contact.label)) below.push(contact);
+      this.addQuickActions(below, { plain: true });
+      this.updateBookBar();
+      this.scrollBottom();
+    }
+
+    // «Записаться» под рукой всю переписку: открывает ту же карточку, что и кнопка на стартовом экране
+    updateBookBar() {
+      if (!this.el.bookBar) return;
+      this.el.bookBar.hidden = !(
+        this.state.widgetConfig.quick_booking === "on"
+        && this.state.status === STATUS.AI_ACTIVE
+        && !this.state.leadLeft
+        && this.el.messages.querySelector(".msg.user")
+        && !this.el.messages.querySelector(".booking-card")
+      );
     }
 
     showTyping() {
@@ -2185,6 +2362,7 @@
       this.el.inp.disabled = isClosed || isUnavail;
       this.el.send.disabled = isClosed || isUnavail;
       if (this.el.mic) this.el.mic.disabled = isClosed || isUnavail;
+      this.updateBookBar();
     }
 
     async submit() {
@@ -2194,13 +2372,13 @@
       this.sendText(text);
     }
 
-    async sendText(text) {
+    async sendText(text, { bookingDay = "", display = "" } = {}) {
       if (!text || this.state.sending || !this.state.companyId) return;
       if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
 
       this.acceptConsent();
       this.el.inp.value = "";
-      this.addMsg("user", text);
+      this.addMsg("user", display || text);
 
       if (this.state.status === STATUS.HUMAN_ACTIVE && this.state.ws) {
         this.state.ws.send(text);
@@ -2225,6 +2403,7 @@
             company_id: this.state.companyId,
             message: text,
             page: window.location.pathname,
+            booking_day: bookingDay,
           }),
           signal: timeoutController.signal,
         });
@@ -2244,7 +2423,8 @@
           const isHandoff = data.status === STATUS.WAITING_OPERATOR && ![STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(before);
           this.addMsg(isHandoff ? "system" : "assistant", data.answer);
         }
-        this.addQuickActions(data.quick_actions);
+        if (data.booking_form && this.state.widgetConfig.quick_booking === "on") this.addBookingCard(data.booking_form, data.quick_actions);
+        else this.addQuickActions(data.quick_actions);
         if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
       } catch (err) {
         await this.hideTyping();

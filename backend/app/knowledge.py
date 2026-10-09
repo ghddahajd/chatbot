@@ -44,6 +44,8 @@ DEFAULT_WIDGET_CONFIG = {
     "ai_badge": "",
     # рамка карточки «Записаться на приём» на стартовом экране, #RGB или #RRGGBB; пусто — без рамки
     "booking_highlight_color": "",
+    # "on" — запись карточкой (день + номер) и кнопка «Записаться» у поля ввода; пусто — как раньше
+    "quick_booking": "on",
     "launcher_label": "Задать вопрос",
     "status_online": "на связи",
     "input_placeholder": "Напишите вопрос…",
@@ -51,7 +53,7 @@ DEFAULT_WIDGET_CONFIG = {
 }
 HEX_COLOR_PATTERN = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
 # для этих полей пустая строка — осмысленное «выключить», а не «не задано»
-WIDGET_KEYS_EMPTY_MEANS_OFF = {"ai_badge", "booking_highlight_color"}
+WIDGET_KEYS_EMPTY_MEANS_OFF = {"ai_badge", "booking_highlight_color", "quick_booking"}
 DEFAULT_DOMAIN_PROFILE = {
     "type": "generic",
     "safety_level": "normal",
@@ -1230,6 +1232,8 @@ class KnowledgeBaseResolver:
             config["position"] = DEFAULT_WIDGET_CONFIG["position"]
         if config["ai_badge"] != "show":
             config["ai_badge"] = ""
+        if config["quick_booking"] != "on":
+            config["quick_booking"] = ""
         # цвет уходит прямо в стиль виджета на сайте клиента — пропускаем только hex
         if not HEX_COLOR_PATTERN.fullmatch(str(config["booking_highlight_color"])):
             config["booking_highlight_color"] = ""

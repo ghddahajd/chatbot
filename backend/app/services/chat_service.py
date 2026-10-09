@@ -63,6 +63,8 @@ from ..routes.chat_utils import (
     should_use_consultation_llm,
 )
 from ..validator import validate_article_guidance_response
+from . import quick_booking
+from .quick_booking import PREFERRED_TIME_KEY
 from .session_summarizer import summarize_session
 
 
@@ -79,7 +81,6 @@ ENGAGEMENT_DISMISS_MESSAGES = {
 }
 LEAD_CONTEXT_START_KEY = "lead_context_start_index"
 LEAD_SERVICE_ID_KEY = "lead_service_id"
-PREFERRED_TIME_KEY = "preferred_time"
 # цифры вместе с пробелами, дефисами, скобками и «+» — кусок, похожий на номер телефона
 _PHONE_LEFTOVER_PATTERN = re.compile(r"\+?\d[\d\s()\-]*\d")
 
@@ -99,6 +100,7 @@ class ChatService:
         # какое правило решило этот ход и какие проиграли — для строки chat_turn в логе
         self._policy_rule: str | None = None
         self._policy_rules_lost: list[str] = []
+        self._booking_day = ""  # день из карточки «Быстрая запись», приходит вместе с номером
 
     def _remember_rule(self, policy_result: PolicyResult) -> None:
         self._policy_rule = policy_result.rule
@@ -749,20 +751,15 @@ class ChatService:
             )
 
         phone = extract_phone(message)
+        if phone and self._booking_day:
+            session = await quick_booking.remember_card_day(session_store, session, self._booking_day, knowledge_base.company)
         day_choice = (
             BOOKING_DAY_CHOICES.get(normalize_text(message))
             if not phone and session.pending_action == PendingAction.BOOKING_CONTACT.value
             else None
         )
         if day_choice is not None:
-            preference, phrase_key = day_choice
-            company = knowledge_base.company
-            if phrase_key == "booking_when_today" and not is_currently_open(
-                company.working_hours_schedule, company.timezone
-            ):
-                phrase_key = "booking_when_today_closed"
-                # администратор прочитает карточку утром — «сегодня» без пометки было бы двусмысленным
-                preference = "сегодня — запрос пришёл в нерабочее время"
+            preference, phrase_key = quick_booking.day_preference(day_choice, knowledge_base.company)
             await session_store.update_contact_draft(session.session_id, metadata={PREFERRED_TIME_KEY: preference})
             answer = self._phrase(phrase_key, self._phrase("booking_phone_prompt", "Оставьте, пожалуйста, номер телефона."))
             await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
@@ -1310,12 +1307,14 @@ class ChatService:
         session_id: str | None,
         message: str,
         page: str = "",
+        booking_day: str = "",
     ) -> ChatMessageResponse | JSONResponse:
         """Тонкая обёртка: резолвит/создаёт session_id и сериализует всю обработку одного
         сообщения per-session локом (см. SessionStore.lock_for) — сам pipeline не тронут,
         просто выполняется целиком под локом в _handle_message_locked."""
 
         started = time.perf_counter()
+        self._booking_day = booking_day
         session_store = self.request.app.state.session_store
         session = await session_store.get_or_create(session_id, company_id)
         if page:
@@ -1326,6 +1325,7 @@ class ChatService:
                 session_id=session.session_id,
                 message=message,
             )
+        await quick_booking.attach_form(self.request, company_id, session.session_id, response)
         await self._track_answer_safe(
             company_id,
             session.session_id,

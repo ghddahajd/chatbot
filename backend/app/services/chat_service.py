@@ -926,12 +926,15 @@ class ChatService:
                 or policy_result.safe_context.get("objection_topic")
                 or ""
             ) or None
+        # показали все услуги или все цены — разговор уже не об одной услуге, прошлую не подставляем
+        new_topic = policy_result.safe_context.get("question_type") in {"list_services", "price_overview"}
         await session_store.update_context(
             session.session_id,
             last_service_id=policy_result.service_id,
+            clear_last_service=new_topic,
             last_intent=last_intent,
             active_frame=active_frame,
-            clear_active_frame=active_frame is None and policy_result.action in {PolicyAction.OFF_TOPIC, PolicyAction.REJECT},
+            clear_active_frame=new_topic or (active_frame is None and policy_result.action in {PolicyAction.OFF_TOPIC, PolicyAction.REJECT}),
             substantive_message_count=substantive_message_count,
             increment_objection_topic=increment_objection_topic,
             add_notable_flag=self._notable_flag_for_policy_result(policy_result),

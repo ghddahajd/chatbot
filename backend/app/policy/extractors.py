@@ -831,7 +831,7 @@ def is_location_mismatch(
 
 
 def last_service_from_history(session: Session, knowledge_base: KnowledgeBase) -> Optional[str]:
-    previous_messages = session.messages[:-1]
+    previous_messages = session.messages[session.topic_reset_at : -1]
     barrier_keywords = {
         "ботекс",
         "ботокс",

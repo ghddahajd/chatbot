@@ -106,6 +106,9 @@ class Session(BaseModel):
     operator_requested: bool = False
     pending_action: Optional[str] = None
     last_service_id: Optional[str] = None
+    # сколько сообщений было, когда бот показал все услуги или все цены: услугу из переписки до этой
+    # точки не подставляем — разговор пошёл заново, а не об услуге из начала
+    topic_reset_at: int = 0
     last_intent: Optional[str] = None
     active_frame: Optional[ContextFrame] = None
     contact_draft: dict[str, Any] = Field(default_factory=dict)

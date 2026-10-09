@@ -334,6 +334,7 @@ class SessionStore:
         session_id: str,
         *,
         last_service_id: Optional[str] = None,
+        clear_last_service: bool = False,
         last_intent: Optional[str] = None,
         active_frame: Optional[ContextFrame] = None,
         clear_active_frame: bool = False,
@@ -346,7 +347,10 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
-            if last_service_id is not None:
+            if clear_last_service:
+                session.last_service_id = None
+                session.topic_reset_at = len(session.messages)
+            elif last_service_id is not None:
                 session.last_service_id = last_service_id
             if last_intent is not None:
                 session.last_intent = last_intent

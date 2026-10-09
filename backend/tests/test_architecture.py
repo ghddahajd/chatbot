@@ -103,7 +103,7 @@ NEW_FILE_LIMIT = 600
 # осознанно, правкой этой строки в том же коммите
 CEILINGS = {
     "policy/__init__.py": 3934,  # +2: шаг 1 чинил цены в старом коде, они переезжают в свой файл на шаге 4
-    "services/chat_service.py": 1946,
+    "services/chat_service.py": 1949,  # +3: тема разговора сбрасывается после списка услуг; оркестратор худеет на шаге 5
     "policy/constants.py": 1122,
     "routes/chat_utils.py": 980,
     "policy/extractors.py": 865,

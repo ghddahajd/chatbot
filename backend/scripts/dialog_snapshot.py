@@ -124,6 +124,12 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
         ),
         _rl("rl_bug06_variant_word_form", "day", ["лазерная эпиляция подмышек цена"], contains_all=["подмыш"], max_rubles=1, known_rubles_only=True),
         _rl("rl_bug07_analyses_faq", "day", ["хочу сдать кровь на анализ"], contains_any=["анализ"]),
+        # после списка всех услуг «уточнить цену» — уже не про услугу из начала разговора
+        _rl(
+            "rl_bug15_price_after_services_list", "day",
+            ["сколько стоит консультация", "покажи услуги", "хочу уточнить цену"],
+            not_contains=["«Консультации» — варианты и цены"],
+        ),
         # неполный номер рядом с правильным не мешает сохранить правильный
         _rl("rl_bug09_two_phones", "day", ["запишите меня", "8 926 123-45 или 8 926 123-45-67"], lead_phone="+79261234567"),
         _rl(

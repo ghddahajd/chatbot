@@ -1152,6 +1152,15 @@ class AnalyticsService:
                 ("booking", "teaser_booking_clicked"),
             )
         }
+        booking_card = {
+            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+            for kind, event_type in (
+                ("shown", "booking_card_shown"),
+                ("day", "booking_card_day_picked"),
+                ("phone", "booking_card_phone_started"),
+                ("sent", "booking_card_sent"),
+            )
+        }
 
         stages = [
             {"label": "Посетители с виджетом", "count": impressions, "page_loads": len(impression_events)},
@@ -1200,6 +1209,7 @@ class AnalyticsService:
             "stages": stages,
             "contact_clicks": contact_clicks,
             "teaser": teaser,
+            "booking_card": booking_card,
             "pages": _widget_pages(
                 impression_events,
                 opened_events,

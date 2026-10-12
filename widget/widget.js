@@ -985,10 +985,10 @@
       .bc-sub { margin-top: -7px; font-size: 13px; line-height: 1.4; color: var(--text-secondary); }
       .bc-days { display: flex; flex-wrap: wrap; gap: 6px; }
       .bc-day.selected { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--text); }
-      .bc-phone-row { display: flex; gap: 8px; }
+      /* кнопка под полем, во всю ширину: «Перезвоните мне» рядом с номером на телефоне не помещается */
+      .bc-phone-row { display: flex; flex-direction: column; gap: 8px; }
       .bc-phone-wrap {
-        flex: 1;
-        min-width: 0;
+        flex: none;
         height: 44px;
         display: flex;
         align-items: center;
@@ -1024,8 +1024,16 @@
         font-weight: 700;
         cursor: pointer;
         white-space: nowrap;
+        transition: background .2s, color .2s, box-shadow .2s;
       }
       .bc-submit:hover { background: var(--accent-dark); }
+      /* номер набран целиком — осталось нажать. Без увеличения кнопки: текст при нём прыгает */
+      .bc-submit.ready {
+        background: var(--accent-soft);
+        color: var(--text);
+        box-shadow: 0 0 0 3px rgba(173,206,109,.35);
+      }
+      .bc-submit.ready:hover { background: var(--accent-soft); filter: brightness(.96); }
       .bc-error { font-size: 12px; color: #c0392b; }
       .bc-hint { font-size: 12px; color: #a35a00; }
       .bc-note { font-size: 12px; line-height: 1.4; color: var(--text-muted); }
@@ -2231,8 +2239,8 @@
         <div class="bc-sub"></div>
         <div class="bc-days"></div>
         <div class="bc-phone-row">
-          <label class="bc-phone-wrap"><span class="bc-prefix">+7</span><input class="bc-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(___) ___-__-__" aria-label="Номер телефона" /></label>
-          <button class="bc-submit" type="button">Жду звонка</button>
+          <label class="bc-phone-wrap"><span class="bc-prefix">+7</span><input class="bc-phone" type="tel" inputmode="tel" autocomplete="tel" enterkeyhint="send" placeholder="(___) ___-__-__" aria-label="Номер телефона" /></label>
+          <button class="bc-submit" type="button">Перезвоните мне</button>
         </div>
         <div class="bc-hint" hidden></div>
         <div class="bc-error" hidden>Проверьте номер: после +7 нужно 10 цифр</div>
@@ -2244,6 +2252,10 @@
       const error = card.querySelector(".bc-error");
       const hint = card.querySelector(".bc-hint");
       const daysEl = card.querySelector(".bc-days");
+      const submit = card.querySelector(".bc-submit");
+      // каждый шаг считаем один раз на карточку: где останавливаются, а не сколько раз нажали
+      const counted = new Set();
+      const step = (kind) => { if (!counted.has(kind)) { counted.add(kind); this.trackEvent(kind); } };
       let day = "";
       for (const label of days) {
         const chip = document.createElement("button");
@@ -2252,6 +2264,7 @@
         chip.textContent = label;
         chip.addEventListener("click", () => {
           day = day === label ? "" : label;
+          step("booking-card-day");
           daysEl.querySelectorAll(".bc-day").forEach(c => c.classList.toggle("selected", c.textContent === day));
           phone.focus();
         });
@@ -2264,6 +2277,8 @@
         const wholeNumber = typed > 1 || /^insertFrom|^insertReplacement/.test(e.inputType || "");
         digits = phoneDigits(phone.value, wholeNumber);
         phone.value = formatPhone(digits);
+        if (digits) step("booking-card-phone");
+        submit.classList.toggle("ready", digits.length === 10);
         // мобильные начинаются с 9: «89…» и «79…» — это привычные 8 или 7 перед номером, а не код
         hint.hidden = !/^[78]9/.test(digits);
         hint.textContent = hint.hidden ? "" : `Похоже, в начале лишняя «${digits[0]}» — +7 уже стоит перед номером`;
@@ -2274,11 +2289,13 @@
         const d = digits;
         if (d.length !== 10) { phone.parentElement.classList.add("invalid"); error.hidden = false; phone.focus(); return; }
         const number = "+7 " + d.slice(0, 3) + " " + d.slice(3, 6) + "-" + d.slice(6, 8) + "-" + d.slice(8);
+        step("booking-card-sent");
         this.sendText(number, { bookingDay: day, display: day ? day + " · " + number : number });
       };
-      card.querySelector(".bc-submit").addEventListener("click", send);
+      submit.addEventListener("click", send);
       phone.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
       this.el.messages.appendChild(card);
+      step("booking-card-shown");
       // дни уже в карточке; ниже — «Позвонить в клинику» и «Написать в Telegram», без выделения
       const below = (actions || []).filter(a => !days.includes(typeof a === "string" ? a : a?.label));
       const labels = new Set(below.map(a => (typeof a === "string" ? a : a?.label)));
@@ -2294,6 +2311,7 @@
       this.el.bookBar.hidden = !(
         this.state.widgetConfig.quick_booking === "on"
         && this.state.status === STATUS.AI_ACTIVE
+        && !this.state.sending  // пока бот отвечает — ответом может прийти сама карточка
         && !this.state.leadLeft
         && this.el.messages.querySelector(".msg.user")
         && !this.el.messages.querySelector(".booking-card")
@@ -2389,6 +2407,7 @@
 
       this.state.sending = true;
       this.el.send.disabled = true;
+      this.updateBookBar();
       this.showTyping();
       await nextFrame();
 
@@ -2439,6 +2458,7 @@
         window.clearTimeout(timeoutId);
         this.state.sending = false;
         this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
+        this.updateBookBar();
       }
     }
 

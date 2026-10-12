@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from app.ops_bot import OpsBot
 from app.policy.constants import BOOKING_CONTACT_ALTERNATIVES
 
 from .test_booking_tiles import TILES, _chat, _last_lead, _set_open
+from .test_ops_bot import _Alerts
+from .test_teaser_invite import _event
 
 
 def _send(test_client, message: str, session_id: str, booking_day: str) -> dict:
@@ -89,3 +92,30 @@ def test_turned_off_in_settings_the_booking_goes_the_old_way(test_client, monkey
 
     assert off["booking_form"] is None
     assert (off["answer"], off["quick_actions"]) == (on["answer"], on["quick_actions"])
+
+
+def _card_visits(test_client) -> None:
+    for visitor in ("visitor-a", "visitor-b"):
+        _event(test_client, "impression", visitor)
+        _event(test_client, "booking-card-shown", visitor)
+    _event(test_client, "booking-card-day", "visitor-a")
+    _event(test_client, "booking-card-phone", "visitor-a")
+    _event(test_client, "booking-card-phone", "visitor-a")  # та же карточка — тот же человек
+    _event(test_client, "booking-card-sent", "visitor-a")
+
+
+def test_card_steps_reach_the_funnel(test_client) -> None:
+    _card_visits(test_client)
+
+    funnel = test_client.app.state.analytics_service.conversion_funnel(company_id="rosh_demo", days=7)
+
+    # по переписке не видно, выбрали ли день и начали ли номер — только по этим шагам
+    assert funnel["booking_card"] == {"shown": 2, "day": 1, "phone": 1, "sent": 1}
+
+
+def test_funnel_command_shows_the_card_line(test_client) -> None:
+    _card_visits(test_client)
+
+    text = test_client.portal.call(OpsBot(test_client.app, _Alerts()).reply, "воронка")
+
+    assert "карточка записи: показали 2 · день 1 · начали номер 1 · отправили 1" in text

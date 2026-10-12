@@ -27,6 +27,12 @@ WIDGET_EVENT_TYPES = {
     "teaser-shown": "teaser_shown",
     "teaser-price": "teaser_price_clicked",
     "teaser-booking": "teaser_booking_clicked",
+    # карточка быстрой записи: на каком шаге останавливаются — по переписке этого не видно,
+    # выбор дня и ввод номера ничего не отправляют, пока не нажата кнопка
+    "booking-card-shown": "booking_card_shown",
+    "booking-card-day": "booking_card_day_picked",
+    "booking-card-phone": "booking_card_phone_started",
+    "booking-card-sent": "booking_card_sent",
 }
 VISITOR_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 # поисковые и служебные роботы тоже выполняют скрипты и накручивали бы «посетителей»

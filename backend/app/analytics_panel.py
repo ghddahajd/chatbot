@@ -1093,6 +1093,10 @@ def render_analytics_panel(
       const teaserLine = teaser.shown
         ? `<p class="card-hint funnel-teaser">Приглашение у кнопки чата: показали ${fmt(teaser.shown)} · «Узнать цену» ${fmt(teaser.price)} · «Записаться» ${fmt(teaser.booking)}</p>`
         : "";
+      const card = funnel.booking_card || {};
+      const cardLine = card.shown
+        ? `<p class="card-hint funnel-teaser">Карточка записи: показали ${fmt(card.shown)} · выбрали день ${fmt(card.day)} · начали вводить номер ${fmt(card.phone)} · отправили ${fmt(card.sent)}</p>`
+        : "";
       return `
         <div class="card">
           <h2>Воронка конверсии</h2>
@@ -1101,6 +1105,7 @@ def render_analytics_panel(
           <p class="funnel-tier-note">Посетителей и открытия чата считает браузер — часть из них прячут блокировщики рекламы. Переписки и лиды ниже считает сервер, их может оказаться больше, чем открытий.</p>
           ${tier(stages.slice(2))}
           ${teaserLine}
+          ${cardLine}
         </div>
       `;
     }

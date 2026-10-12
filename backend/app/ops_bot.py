@@ -210,6 +210,11 @@ class OpsBot:
                 lines.append(
                     f"    приглашение: показали {teaser['shown']} · «Узнать цену» {teaser.get('price', 0)} · «Записаться» {teaser.get('booking', 0)}"
                 )
+            card = funnel.get("booking_card") or {}
+            if card.get("shown"):
+                lines.append(
+                    f"    карточка записи: показали {card['shown']} · день {card.get('day', 0)} · начали номер {card.get('phone', 0)} · отправили {card.get('sent', 0)}"
+                )
             for row in (funnel.get("pages") or [])[:TOP_PAGES]:
                 lines.append(f"    {row['page']} — загрузок {row['loads']}, открытий {row['opens']}, диалогов {row['dialogs']}")
         return "\n".join(lines) if len(lines) > 1 else f"🔻 {self.project} — за 7 дней данных нет"

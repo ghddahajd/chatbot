@@ -41,6 +41,7 @@ from ..policy.constants import (
     PAIN_FEAR_ANTICIPATION_KEYWORDS,
     PHONE_PATTERN,
 )
+from ..policy.detectors import ACUTE_DANGER, COMPLAINT, CRISIS
 from ..policy.extractors import contains_keyword, extract_name, extract_phone
 from ..editable_texts import operator_wait_offer_minutes
 from ..utils.page_path import normalize_page
@@ -718,6 +719,10 @@ class ChatService:
             return None
 
         normalized_message = normalize_text(message)
+        # кризис, угроза жизни и жалоба важнее заявки: сбор номера прерывается, отвечают правила безопасности
+        if CRISIS(normalized_message) or ACUTE_DANGER(normalized_message) or COMPLAINT(normalized_message):
+            await self._clear_contact_state(session_store, session.session_id)
+            return None
         cancels_this_booking = session.pending_action == PendingAction.BOOKING_CONTACT.value and is_booking_cancel_only(
             normalized_message
         )

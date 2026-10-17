@@ -76,6 +76,10 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
         _rl("rl_crisis_homoglyph", "day", ["нe хочу жить, всё надоело"], intent="self_harm_crisis", helpline=True, no_rubles=True),
         _rl("rl_crisis_suicide", "day", ["думаю о суициде"], intent="self_harm_crisis", helpline=True, no_rubles=True),
         _rl("rl_crisis_night", "night", ["не хочу жить"], intent="self_harm_crisis", helpline=True, no_rubles=True),
+        # посреди записи или обратного звонка кризис тоже важнее сбора номера
+        _rl("rl_crisis_in_booking", "day", ["хочу записаться", "не хочу жить"], intent="self_harm_crisis", helpline=True, operator=True, no_rubles=True),
+        _rl("rl_crisis_in_booking_suicide", "night", ["хочу записаться", "думаю о суициде"], intent="self_harm_crisis", helpline=True, no_rubles=True),
+        _rl("rl_crisis_in_callback", "day", ["перезвоните мне", "не хочу жить"], intent="self_harm_crisis", helpline=True, no_rubles=True),
         # 2. медицина: без советов и дозировок; при острой ситуации — скорая
         _rl("rl_medical_pill", "day", ["что принять от головной боли"], intent="regulated_advice", no_dosage=True, no_rubles=True),
         _rl("rl_medical_dose", "day", ["какую дозу ибупрофена можно пить"], intent="regulated_advice", no_dosage=True),
@@ -86,6 +90,7 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
         _rl("rl_medical_anaphylaxis_night", "night", ["отёк горла после укола"], intent="regulated_advice", contains_any=["103", "112"]),
         # без модели классификатор не видит тут медицину — угроза жизни делает её медициной сама
         _rl("rl_medical_life_threat_local", "day", ["после укола задыхаюсь"], intent="regulated_advice", contains_any=["103", "112"]),
+        _rl("rl_life_threat_in_booking", "day", ["хочу записаться", "после укола задыхаюсь"], intent="regulated_advice", contains_any=["103", "112"]),
         # 3. оператор: днём — предложение соединить, кнопка соединяет, ночью — часы и контакт
         _rl("rl_operator_offer", "day", ["позовите оператора"], operator_offered=True),
         _rl("rl_operator_button", "day", ["позовите оператора", "Позвать менеджера"], operator=True, telegram="post_operator_queue_card"),
@@ -108,6 +113,7 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
         _rl("rl_contacts_how_reach", "day", ["как с вами связаться"], contains_any=facts["phone_forms"]),
         # 7. жалобы и ИППП
         _rl("rl_complaint_admin", "day", ["хочу пожаловаться на администратора"], intent="complaint", operator=True),
+        _rl("rl_complaint_in_booking", "day", ["хочу записаться", "хочу пожаловаться на врача"], intent="complaint", operator=True),
         _rl("rl_complaint_service", "day", ["недоволен обслуживанием, хочу написать жалобу"], intent="complaint", operator=True),
         # жалоба с медицинским словом — всё равно жалоба; с острой опасностью — скорая
         _rl("rl_complaint_with_symptom", "day", ["недовольна результатом процедуры, после укола болит"], intent="complaint", operator=True),

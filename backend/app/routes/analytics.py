@@ -55,13 +55,12 @@ class TrackEventRequest(BaseModel):
 
 
 def _check_track_rate_limit(request: Request) -> None:
-    # Публичный, неавторизованный эндпоинт (зовёт браузер любого посетителя сайта, не
-    # оператор) — переиспользуем тот же лимитер, что и /api/chat/message, чтобы не плодить
-    # отдельный механизм под лёгкие "маячки" воронки.
+    # Публичный, неавторизованный эндпоинт (зовёт браузер любого посетителя сайта). Лимитер
+    # свой, не чата: иначе маячки воронки съедали бы лимит, которым человек отправляет номер
     settings = request.app.state.settings
     if not settings.chat_rate_limit_enabled:
         return
-    limiter = request.app.state.chat_rate_limiter
+    limiter = request.app.state.track_rate_limiter
     if not limiter.allow(client_ip(request, trusted_proxy_count=settings.trusted_proxy_count)):
         raise HTTPException(status_code=429, detail="Too many requests. Please wait.")
 

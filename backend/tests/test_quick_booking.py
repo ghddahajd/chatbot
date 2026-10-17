@@ -119,3 +119,32 @@ def test_funnel_command_shows_the_card_line(test_client) -> None:
     text = test_client.portal.call(OpsBot(test_client.app, _Alerts()).reply, "воронка")
 
     assert "карточка записи: показали 2 · день 1 · начали номер 1 · отправили 1" in text
+
+
+def test_funnel_signals_do_not_use_up_the_chat_limit(managed_env, monkeypatch) -> None:
+    # за одним IP у мобильного оператора много людей: сигналы карточки не должны отнимать отправку номера
+    monkeypatch.setenv("CHAT_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_PER_MINUTE", "2")
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.main import app
+
+    get_settings.cache_clear()
+    headers = {"X-Forwarded-For": "203.0.113.20"}
+    with TestClient(app) as client:
+        signals = [
+            client.post(
+                "/api/widget/event",
+                json={"company_id": "rosh_demo", "session_id": "", "visitor_id": "visitor-a", "kind": kind, "page": "/"},
+                headers=headers,
+            ).status_code
+            for kind in ("impression", "chat-opened", "booking-card-shown", "booking-card-day", "booking-card-phone")
+        ]
+        message = client.post(
+            "/api/chat/message", json={"company_id": "rosh_demo", "session_id": None, "message": "хочу записаться"}, headers=headers
+        )
+    get_settings.cache_clear()
+
+    assert signals == [200] * 5
+    assert message.status_code == 200

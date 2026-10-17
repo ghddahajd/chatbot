@@ -29,7 +29,8 @@
   function phoneDigits(value, wholeNumber) {
     let digits = String(value).replace(/\D/g, "");
     if (wholeNumber && digits.length === 11 && /^[78]/.test(digits)) digits = digits.slice(1);
-    return digits.slice(0, 10);
+    // 11-ю цифру не отбрасываем: молча обрезанный номер «8 916…» ушёл бы как «+7 891…»
+    return digits.slice(0, 12);
   }
   // разделители — только перед следующей цифрой, иначе стереть «)» или «-» не получится
   function formatPhone(d) {
@@ -37,7 +38,7 @@
     let s = "(" + d.slice(0, 3);
     if (d.length > 3) s += ") " + d.slice(3, 6);
     if (d.length > 6) s += "-" + d.slice(6, 8);
-    if (d.length > 8) s += "-" + d.slice(8, 10);
+    if (d.length > 8) s += "-" + d.slice(8);
     return s;
   }
   const PHONE_IN_TEXT = /(?:\+7|8|7)?[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}/;
@@ -47,6 +48,11 @@
   // Вопросы те же, что у карточек стартового экрана, — ответ одинаковый, откуда ни нажми.
   const PRICE_QUESTION = "Какие услуги у вас есть и сколько стоят?";
   const BOOKING_QUESTION = "Хочу записаться на консультацию";
+  // кнопка «Записаться на приём» над полем: без «на консультацию» — посреди разговора о чистке
+  // заявка должна остаться на чистку
+  const BOOK_BAR_QUESTION = "Хочу записаться";
+  const PHONE_TOO_LONG = "Лишняя цифра: после +7 нужно ровно 10. Если начали с 8 — сотрите её";
+  const PHONE_TOO_SHORT = "Проверьте номер: после +7 нужно 10 цифр";
   // закрыл крестиком — сутки не показываем: иначе карточка выскакивает на каждой странице сайта
   const TEASER_SNOOZE_MS = 24 * 60 * 60 * 1000;
   const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -1447,6 +1453,7 @@
         wsReconnectAttempts: 0,
         wsReconnectTimer: null,
         leadLeft: false,
+        bookingPending: false,
         typingNode: null,
         typingStartedAt: 0,
         voiceEnabled: false,
@@ -1561,8 +1568,7 @@
       });
       this.el.close.addEventListener("click", () => this.toggle());
       this.el.send.addEventListener("click", () => this.submit());
-      // без «на консультацию»: посреди разговора о чистке заявка должна остаться на чистку
-      this.el.bookBtn.addEventListener("click", () => this.sendText("Хочу записаться"));
+      this.el.bookBtn.addEventListener("click", () => this.sendText(BOOK_BAR_QUESTION));
       this.el.reset.addEventListener("click", () => this.startNew());
       this.el.consentAccept.addEventListener("click", () => this.acceptConsent());
       this.el.inp.addEventListener("keydown", (e) => {
@@ -2278,19 +2284,29 @@
         digits = phoneDigits(phone.value, wholeNumber);
         phone.value = formatPhone(digits);
         if (digits) step("booking-card-phone");
+        const tooLong = digits.length > 10;
         submit.classList.toggle("ready", digits.length === 10);
-        // мобильные начинаются с 9: «89…» и «79…» — это привычные 8 или 7 перед номером, а не код
-        hint.hidden = !/^[78]9/.test(digits);
+        // раннее предупреждение, ничего не блокирует: мобильные начинаются с 9, и «89…» / «79…» —
+        // скорее всего привычные 8 или 7 перед номером. Не дать отправить — дело счёта цифр
+        hint.hidden = tooLong || !/^[78]9/.test(digits);
         hint.textContent = hint.hidden ? "" : `Похоже, в начале лишняя «${digits[0]}» — +7 уже стоит перед номером`;
-        phone.parentElement.classList.remove("invalid");
-        error.hidden = true;
+        phone.parentElement.classList.toggle("invalid", tooLong);
+        error.textContent = PHONE_TOO_LONG;
+        error.hidden = !tooLong;
       });
       const send = () => {
         const d = digits;
-        if (d.length !== 10) { phone.parentElement.classList.add("invalid"); error.hidden = false; phone.focus(); return; }
+        if (d.length !== 10) {
+          error.textContent = d.length > 10 ? PHONE_TOO_LONG : PHONE_TOO_SHORT;
+          phone.parentElement.classList.add("invalid");
+          error.hidden = false;
+          phone.focus();
+          return;
+        }
         const number = "+7 " + d.slice(0, 3) + " " + d.slice(3, 6) + "-" + d.slice(6, 8) + "-" + d.slice(8);
-        step("booking-card-sent");
-        this.sendText(number, { bookingDay: day, display: day ? day + " · " + number : number });
+        // «отправили» — когда сервер принял номер и завёл заявку, а не при нажатии: таймаут или отказ не в счёт
+        this.sendText(number, { bookingDay: day, display: day ? day + " · " + number : number })
+          .then((data) => { if (data && data.lead_created) step("booking-card-sent"); });
       };
       submit.addEventListener("click", send);
       phone.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
@@ -2311,7 +2327,7 @@
       this.el.bookBar.hidden = !(
         this.state.widgetConfig.quick_booking === "on"
         && this.state.status === STATUS.AI_ACTIVE
-        && !this.state.sending  // пока бот отвечает — ответом может прийти сама карточка
+        && !this.state.bookingPending  // отправлен запрос на запись — ответом придёт карточка
         && !this.state.leadLeft
         && this.el.messages.querySelector(".msg.user")
         && !this.el.messages.querySelector(".booking-card")
@@ -2406,6 +2422,7 @@
       }
 
       this.state.sending = true;
+      this.state.bookingPending = text === BOOKING_QUESTION || text === BOOK_BAR_QUESTION;
       this.el.send.disabled = true;
       this.updateBookBar();
       this.showTyping();
@@ -2445,6 +2462,7 @@
         if (data.booking_form && this.state.widgetConfig.quick_booking === "on") this.addBookingCard(data.booking_form, data.quick_actions);
         else this.addQuickActions(data.quick_actions);
         if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
+        return data;
       } catch (err) {
         await this.hideTyping();
         const isTimeout = err && err.name === "AbortError";
@@ -2457,6 +2475,7 @@
       } finally {
         window.clearTimeout(timeoutId);
         this.state.sending = false;
+        this.state.bookingPending = false;
         this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
         this.updateBookBar();
       }

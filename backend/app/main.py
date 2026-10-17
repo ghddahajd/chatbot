@@ -196,6 +196,7 @@ async def lifespan(app: FastAPI):
     app.state.policy_analyzer = analyze_message
     app.state.ws_manager = ConnectionManager(app.state.session_store)
     app.state.chat_rate_limiter = RateLimiter(limit=settings.chat_rate_limit_per_minute)
+    app.state.track_rate_limiter = RateLimiter(limit=settings.track_rate_limit_per_minute)
     app.state.telegram_bridge_service = TelegramBridgeService(
         bot_token=settings.telegram_bot_token,
         group_chat_id=settings.telegram_operators_group_id,

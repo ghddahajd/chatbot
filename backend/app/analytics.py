@@ -25,6 +25,19 @@ UNKNOWN_REASONS = {
     PolicyReason.PRICE_QUESTION_NO_SERVICE,
     PolicyReason.SIMILAR_SERVICES_FOUND,
 }
+
+
+def _is_unknown_question(policy_result: PolicyResult) -> bool:
+    if policy_result.reason not in UNKNOWN_REASONS:
+        return False
+    # бот ответил по делу — список цен или «Ботокса нет, есть Ксеомин…» с ценой: в «непонятых»
+    # клиника искала бы дыру в базе там, где её нет
+    if policy_result.action == PolicyAction.ANSWER and policy_result.reason == PolicyReason.PRICE_QUESTION_NO_SERVICE:
+        return False
+    fact_guard = policy_result.safe_context.get("fact_guard") or {}
+    return not fact_guard.get("known_values")
+
+
 # message_answered пишется на КАЖДЫЙ ход (track_answer) и не имеет ценности после
 # отладочного окна — единственный event_type, который archive_old_analytics_events
 # сворачивает в счётчики и удаляет. Остальные типы (unknown_question/regulated_handoff/
@@ -198,7 +211,7 @@ class AnalyticsService:
             "reason": policy_result.reason.value,
             "service_id": policy_result.service_id,
         }
-        if policy_result.reason in UNKNOWN_REASONS:
+        if _is_unknown_question(policy_result):
             await self.track_event(
                 company_id=company_id,
                 session_id=session_id,

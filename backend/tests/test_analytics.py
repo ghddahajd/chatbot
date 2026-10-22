@@ -2,7 +2,10 @@
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from app.analytics import AnalyticsService, archive_old_analytics_events
+from app.models import PolicyAction, PolicyReason, PolicyResult
 from app.utils.jsonl import append_jsonl, read_jsonl
 
 
@@ -1091,6 +1094,56 @@ def test_track_policy_result_skips_objection_raised_for_non_objection_reasons(tm
 
     events = [e for e in read_jsonl(analytics_file) if e["event_type"] == "objection_raised"]
     assert events == []
+
+
+def _unknown_questions_after(tmp_path, policy_result: PolicyResult) -> list[dict]:
+    import anyio
+
+    analytics_file = tmp_path / "analytics.jsonl"
+    service = AnalyticsService(analytics_file=analytics_file, leads_file=tmp_path / "leads.jsonl")
+    anyio.run(
+        lambda: service.track_policy_result(
+            company_id="rosh_import_demo", session_id="s-1", message="вопрос", policy_result=policy_result
+        )
+    )
+    return [e for e in read_jsonl(analytics_file) if e["event_type"] == "unknown_question"]
+
+
+def _brand_guard(known_values: list[str]) -> PolicyResult:
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.UNKNOWN_SERVICE,
+        safe_context={"fact_guard": {"topic": "ботулинотерапия", "matched_blocked": ["Ботокс"], "known_values": known_values}},
+    )
+
+
+@pytest.mark.parametrize(
+    "policy_result",
+    [
+        # «Хочу уточнить цену» — показали популярные цены
+        PolicyResult(action=PolicyAction.ANSWER, reason=PolicyReason.PRICE_QUESTION_NO_SERVICE),
+        # «сколько стоит ботокс» — «Ботокса нет, есть Ксеомин и Миотокс» с ценой
+        _brand_guard(["Ксеомин", "Миотокс"]),
+    ],
+    ids=["price_list", "brand_corrected"],
+)
+def test_answered_questions_are_not_unknown(tmp_path, policy_result: PolicyResult) -> None:
+    assert _unknown_questions_after(tmp_path, policy_result) == []
+
+
+@pytest.mark.parametrize(
+    "policy_result",
+    [
+        PolicyResult(action=PolicyAction.CLARIFY, reason=PolicyReason.UNKNOWN_SERVICE),
+        PolicyResult(action=PolicyAction.CLARIFY, reason=PolicyReason.PRICE_QUESTION_NO_SERVICE),
+        PolicyResult(action=PolicyAction.CLARIFY, reason=PolicyReason.SIMILAR_SERVICES_FOUND),
+        # бренда нет, а что есть — бот назвать не смог
+        _brand_guard([]),
+    ],
+    ids=["unknown_service", "price_which_service", "similar_services", "brand_nothing_known"],
+)
+def test_real_gaps_stay_unknown(tmp_path, policy_result: PolicyResult) -> None:
+    assert len(_unknown_questions_after(tmp_path, policy_result)) == 1
 
 
 def test_top_unanswered_questions_groups_by_normalized_text(tmp_path) -> None:

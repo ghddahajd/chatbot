@@ -689,8 +689,9 @@ def _service_explanation_message(service) -> str:
     examples = _service_variant_examples(service)
     if examples:
         variants_count = len(getattr(service, "variants", []) or [])
+        variants_word = "вариантом" if variants_count % 10 == 1 and variants_count % 100 != 11 else "вариантами"
         return (
-            f"{service.name} — направление с {variants_count} вариантами в прайсе. "
+            f"{service.name} — направление с {variants_count} {variants_word} в прайсе. "
             "Например: "
             + "; ".join(examples)
             + ". Точный вариант и стоимость лучше подтвердить с менеджером."

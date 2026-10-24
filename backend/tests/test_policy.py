@@ -3763,3 +3763,15 @@ def test_consultation_price_has_no_link_to_a_single_specialists_page(policy_sess
     result = _analyze("сколько стоит консультация гинеколога", policy_session, knowledge_base)
 
     assert result.quick_actions == ["Записаться"]
+
+
+
+def test_service_explanation_counts_variants_in_russian() -> None:
+    from types import SimpleNamespace
+
+    from app.policy import _service_explanation_message
+
+    for count, phrase in ((1, "с 1 вариантом"), (2, "с 2 вариантами"), (11, "с 11 вариантами"), (21, "с 21 вариантом")):
+        variants = [{"name": f"Вариант {index}", "price_text": "1 000 ₽"} for index in range(count)]
+        service = SimpleNamespace(name="Массаж лица", variants=variants, short_description="")
+        assert f"Массаж лица — направление {phrase} в прайсе." in _service_explanation_message(service), count

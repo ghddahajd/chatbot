@@ -63,6 +63,13 @@ def _known_service_terms(service_payload: dict[str, Any]) -> list[str]:
     return [term for term in terms if term]
 
 
+def _contains_term(normalized_term: str, normalized_message: str, query_tokens: list[str]) -> bool:
+    # короткое слово — только целиком, как в contains_keyword: иначе «узи» находилось в «загрузить»
+    if len(normalized_term) <= 3:
+        return normalized_term in query_tokens
+    return normalized_term in normalized_message
+
+
 def _tenant_catalog_text(known_services: list[dict[str, Any]]) -> str:
     # Категория намеренно НЕ идёт через _known_service_terms — та же функция используется для
     # разрешения service_id по сообщению, и категория (часто общая у нескольких услуг) как
@@ -155,34 +162,39 @@ def _local_service_id(
     best_match: tuple[int, str] | None = None
     for service_payload in known_services:
         normalized_name = normalize_text(str(service_payload.get("name") or ""))
-        if normalized_name and normalized_name in normalized_message:
+        if normalized_name and _contains_term(normalized_name, normalized_message, query_tokens):
             if best_match is None or len(normalized_name) > best_match[0]:
                 best_match = (len(normalized_name), str(service_payload.get("id")))
         for variant in service_payload.get("variants") or []:
             if not isinstance(variant, dict):
                 continue
             normalized_variant_name = normalize_text(str(variant.get("name") or ""))
-            if normalized_variant_name and normalized_variant_name in normalized_message:
+            if normalized_variant_name and _contains_term(normalized_variant_name, normalized_message, query_tokens):
                 if best_match is None or len(normalized_variant_name) > best_match[0]:
                     best_match = (len(normalized_variant_name), str(service_payload.get("id")))
     if best_match is not None:
         return best_match[1]
 
-    for service_payload in known_services:
-        for term in _known_service_terms(service_payload):
-            normalized_term = normalize_text(term)
-            if normalized_term and normalized_term in normalized_message:
-                return str(service_payload.get("id"))
-
-            term_tokens = [token for token in normalized_term.split() if token]
-            if term_tokens and all(
-                any(
-                    _service_token_match(term_token, query_token, allow_fuzzy=allow_fuzzy)
-                    for query_token in query_tokens
-                )
-                for term_token in term_tokens
-            ):
-                return str(service_payload.get("id"))
+    terms = [
+        (str(service_payload.get("id")), normalize_text(term))
+        for service_payload in known_services
+        for term in _known_service_terms(service_payload)
+    ]
+    # точное слово у любой услуги важнее нечёткого у той, что раньше в списке: иначе «микротоки»
+    # ловил «миотокс» ботулинотерапии, хотя у микротоковой терапии это синоним целиком
+    for service_id, normalized_term in terms:
+        if normalized_term and _contains_term(normalized_term, normalized_message, query_tokens):
+            return service_id
+    for service_id, normalized_term in terms:
+        term_tokens = [token for token in normalized_term.split() if token]
+        if term_tokens and all(
+            any(
+                _service_token_match(term_token, query_token, allow_fuzzy=allow_fuzzy)
+                for query_token in query_tokens
+            )
+            for term_token in term_tokens
+        ):
+            return service_id
 
     return None
 

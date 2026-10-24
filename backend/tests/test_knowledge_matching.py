@@ -147,6 +147,32 @@ def test_bicom_body_check_resolves_to_itself_not_bioresonance(resolver, managed_
     assert result["service_id"] == "biorezonansnaya_terapiya_na_apparate_bicom_4d87fe07"
 
 
+def test_exact_synonym_of_later_service_beats_fuzzy_match_of_earlier() -> None:
+    """«микротоки» нечётко похоже на «миотокс» ботулинотерапии, которая в списке раньше, —
+    а у микротоковой терапии это слово стоит синонимом целиком."""
+
+    services = [
+        {"id": "botox", "name": "Ботулинотерапия", "synonyms": ["ксеомин", "миотокс"], "category": "Ботулинотерапия"},
+        {"id": "microcurrent", "name": "Микротоковая терапия", "synonyms": ["микротоки"], "category": "Микротоковая терапия"},
+    ]
+
+    assert classify_and_extract("микротоки лица цена", services)["service_id"] == "microcurrent"
+    assert classify_and_extract("сколько стоит миотокс", services)["service_id"] == "botox"
+    assert classify_and_extract("миотоксом колете?", services)["service_id"] == "botox"
+
+
+def test_short_service_word_counts_only_as_a_whole_word() -> None:
+    services = [
+        {"id": "cleaning", "name": "Чистки", "synonyms": ["чистка"], "category": "Чистки"},
+        {"id": "uzi", "name": "УЗИ", "synonyms": ["узи"], "category": "УЗИ диагностика"},
+    ]
+
+    assert classify_and_extract("сколько стоит узи щитовидки", services)["service_id"] == "uzi"
+    # «узи» внутри других слов
+    assert classify_and_extract("не могу загрузить фото", services)["service_id"] is None
+    assert classify_and_extract("работаете в грузии?", services)["service_id"] is None
+
+
 def test_missing_article_service_map_is_empty(knowledge_base) -> None:
     assert knowledge_base.article_service_map == {}
 

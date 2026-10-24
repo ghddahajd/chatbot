@@ -1,5 +1,6 @@
 """роуты простой аналитики managed-service mvp."""
 
+import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import Optional
@@ -146,21 +147,30 @@ async def analytics_chats(
     request: Request,
     company_id: Optional[str] = Query(default=None),
     scope: str = Query(default="all"),
+    days: int = Query(default=3650, ge=1, le=3650),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict:
     """Вкладка "Чаты" (TSK-05) — список диалогов, живые + заархивированные, с фильтром по
-    исходу. scope: all | bot_only | operator | lead."""
+    исходу. scope: all | bot_only | operator | lead. Период — тот же, что у дашборда сверху;
+    total — сколько всего за период, для «Показать ещё»."""
 
     verify_operator_token(request, x_operator_token)
+    start, end, _label = _resolve_date_range(days, start_date, end_date)
     live_sessions = await request.app.state.session_store.list_all()
-    conversations = request.app.state.analytics_service.list_conversations(
+    return request.app.state.analytics_service.conversations_page(
         live_sessions,
         company_id=company_id,
         scope=scope,
+        days=days,
+        start=start,
+        end=end,
+        offset=offset,
         limit=limit,
     )
-    return {"conversations": conversations}
 
 
 class ChatExportRequest(BaseModel):
@@ -274,64 +284,70 @@ async def analytics_dashboard(
     else:
         funnel_start = funnel_end = trend_start = trend_end = None
 
-    timezone_name = _company_timezone(request, company_id)
-    top_services = [
-        {
-            "service_id": entry["service_id"],
-            "service_name": _resolve_service_name(request, company_id, entry["service_id"]),
-            "count": entry["count"],
-        }
-        for entry in analytics_service.top_services(company_id=company_id, days=days, start=start, end=end)
-    ]
+    # полтора десятка подсчётов по файлу событий (~18 МБ на проде) — в своём потоке и с одним разбором
+    # файла на всех: иначе всё это время стоят ответы чата посетителям
+    def build() -> dict:
+        with analytics_service.events_snapshot():
+            timezone_name = _company_timezone(request, company_id)
+            top_services = [
+                {
+                    "service_id": entry["service_id"],
+                    "service_name": _resolve_service_name(request, company_id, entry["service_id"]),
+                    "count": entry["count"],
+                }
+                for entry in analytics_service.top_services(company_id=company_id, days=days, start=start, end=end)
+            ]
 
-    return {
-        "company_id": company_id,
-        "days": days if not custom_range else None,
-        "range_label": range_label,
-        "summary": analytics_service.summary(sessions=sessions, company_id=company_id, limit=10),
-        "operators": analytics_service.operator_summary(
-            company_id=company_id, days=days, start=start, end=end
-        )["operators"],
-        "leads_by_month": analytics_service.leads_by_month(company_id=company_id),
-        "leads_by_reason": analytics_service.leads_by_reason(
-            company_id=company_id, days=days, start=start, end=end
-        ),
-        "top_services": top_services,
-        "funnel": analytics_service.conversion_funnel(
-            company_id=company_id, days=funnel_days, start=funnel_start, end=funnel_end
-        ),
-        "unanswered_trend": analytics_service.unanswered_trend(
-            company_id=company_id, days=trend_days, start=trend_start, end=trend_end
-        ),
-        "intent_breakdown": analytics_service.intent_breakdown(
-            company_id=company_id, days=days, start=start, end=end
-        ),
-        "objection_breakdown": analytics_service.objection_breakdown(
-            company_id=company_id, days=days, start=start, end=end
-        ),
-        "top_unanswered_questions": analytics_service.top_unanswered_questions(
-            company_id=company_id, days=days, start=start, end=end
-        ),
-        "top_answered_questions": analytics_service.top_answered_questions(
-            company_id=company_id, days=days, start=start, end=end
-        ),
-        "activity_by_hour": analytics_service.activity_by_hour(
-            company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
-        ),
-        "activity_by_weekday": analytics_service.activity_by_weekday(
-            company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
-        ),
-        "timezone": timezone_name,
-        "queue_wait": analytics_service.queue_wait_stats(
-            company_id=company_id, days=days, start=start, end=end
-        ),
-        # period_comparison сравнивает "N дней vs предыдущие N дней ОТ СЕГОДНЯ" — для
-        # кастомного периода (не обязательно кончающегося сегодня) это дало бы честно
-        # выглядящее, но неверное число. Лучше не показать бейдж дельты вообще, чем соврать.
-        "period_comparison": (
-            analytics_service.period_comparison(company_id=company_id, days=days) if not custom_range else None
-        ),
-    }
+            return {
+                "company_id": company_id,
+                "days": days if not custom_range else None,
+                "range_label": range_label,
+                "summary": analytics_service.summary(sessions=sessions, company_id=company_id, limit=10),
+                "operators": analytics_service.operator_summary(
+                    company_id=company_id, days=days, start=start, end=end
+                )["operators"],
+                "leads_by_month": analytics_service.leads_by_month(company_id=company_id),
+                "leads_by_reason": analytics_service.leads_by_reason(
+                    company_id=company_id, days=days, start=start, end=end
+                ),
+                "top_services": top_services,
+                "funnel": analytics_service.conversion_funnel(
+                    company_id=company_id, days=funnel_days, start=funnel_start, end=funnel_end
+                ),
+                "unanswered_trend": analytics_service.unanswered_trend(
+                    company_id=company_id, days=trend_days, start=trend_start, end=trend_end
+                ),
+                "intent_breakdown": analytics_service.intent_breakdown(
+                    company_id=company_id, days=days, start=start, end=end
+                ),
+                "objection_breakdown": analytics_service.objection_breakdown(
+                    company_id=company_id, days=days, start=start, end=end
+                ),
+                "top_unanswered_questions": analytics_service.top_unanswered_questions(
+                    company_id=company_id, days=days, start=start, end=end
+                ),
+                "top_answered_questions": analytics_service.top_answered_questions(
+                    company_id=company_id, days=days, start=start, end=end
+                ),
+                "activity_by_hour": analytics_service.activity_by_hour(
+                    company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
+                ),
+                "activity_by_weekday": analytics_service.activity_by_weekday(
+                    company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
+                ),
+                "timezone": timezone_name,
+                "queue_wait": analytics_service.queue_wait_stats(
+                    company_id=company_id, days=days, start=start, end=end
+                ),
+                # period_comparison сравнивает "N дней vs предыдущие N дней ОТ СЕГОДНЯ" — для
+                # кастомного периода (не обязательно кончающегося сегодня) это дало бы честно
+                # выглядящее, но неверное число. Лучше не показать бейдж дельты вообще, чем соврать.
+                "period_comparison": (
+                    analytics_service.period_comparison(company_id=company_id, days=days) if not custom_range else None
+                ),
+            }
+
+    return await asyncio.to_thread(build)
 
 
 @router.get("/leads")

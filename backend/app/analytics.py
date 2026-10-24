@@ -6,9 +6,11 @@ import json
 import logging
 import os
 from collections import Counter, defaultdict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 from zoneinfo import ZoneInfo
 
 from .hours import _resolve_timezone
@@ -18,6 +20,10 @@ from .utils.jsonl import read_jsonl
 
 
 logger = logging.getLogger(__name__)
+
+# один разбор analytics.jsonl на весь дашборд (см. AnalyticsService.events_snapshot): на проде файл
+# ~18 МБ, а дашборд — полтора десятка подсчётов, и каждый раньше читал его заново
+_EVENTS_SNAPSHOT: ContextVar[Optional[tuple[Path, list[dict[str, Any]]]]] = ContextVar("analytics_events_snapshot", default=None)
 
 
 UNKNOWN_REASONS = {
@@ -154,6 +160,23 @@ class AnalyticsService:
     def _new_client_leads(self) -> list[dict[str, Any]]:
         return [lead for lead in self._all_leads() if str(lead.get("reason") or "") not in NOT_NEW_CLIENT_LEAD_REASONS]
 
+    def _events(self) -> list[dict[str, Any]]:
+        snapshot = _EVENTS_SNAPSHOT.get()
+        if snapshot is not None and snapshot[0] == self.analytics_file:
+            return snapshot[1]
+        return read_jsonl(self.analytics_file)
+
+    @contextmanager
+    def events_snapshot(self) -> Generator[None, None, None]:
+        """подсчёты внутри блока читают файл событий один раз. Записи общие на все подсчёты —
+        не менять их на месте, иначе один подсчёт испортит соседний."""
+
+        token = _EVENTS_SNAPSHOT.set((self.analytics_file, read_jsonl(self.analytics_file)))
+        try:
+            yield
+        finally:
+            _EVENTS_SNAPSHOT.reset(token)
+
     async def track_event(
         self,
         *,
@@ -268,7 +291,7 @@ class AnalyticsService:
         ]
         events = [
             event
-            for event in read_jsonl(self.analytics_file)
+            for event in self._events()
             if company_id is None or event.get("company_id") == company_id
         ]
 
@@ -338,7 +361,7 @@ class AnalyticsService:
         кастомный период) — явные границы, побеждают days, если заданы."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        all_events = read_jsonl(self.analytics_file)
+        all_events = self._events()
         events = _within_range(all_events, start=range_start, end=range_end, company_id=company_id)
         claims = [event for event in events if event.get("event_type") == "operator_claimed"]
         # closes/leads: живой баг (код-ревью, 2026-08-27) — раньше closes и leads фильтровались
@@ -593,7 +616,7 @@ class AnalyticsService:
         (см. track_answer) — только агрегация, новой инструментации не потребовалось."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for event in events:
             if event.get("event_type") != "message_answered":
@@ -616,7 +639,7 @@ class AnalyticsService:
         копятся с этой даты, историю назад не восстановить."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for event in events:
             if event.get("event_type") != "objection_raised":
@@ -648,6 +671,38 @@ class AnalyticsService:
         напрямую по уже существующим полям (operator_requested/lead_requested), новых данных
         собирать не пришлось."""
 
+        return self._conversation_items(live_sessions, company_id=company_id, scope=scope)[:limit]
+
+    def conversations_page(
+        self,
+        live_sessions: list[Session],
+        *,
+        company_id: Optional[str] = None,
+        scope: str = "all",
+        days: Optional[int] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """«Чаты» за период сверху страницы, по 50 с «Показать ещё»: раньше были только 50 последних
+        за всё время, и после наплыва трафика казалось, что старые диалоги пропали."""
+
+        range_start, range_end = _resolve_range(days=days, start=start, end=end)
+
+        def _in_period(item: dict[str, Any]) -> bool:
+            try:
+                updated_at = datetime.fromisoformat(str(item["updated_at"]))
+            except (TypeError, ValueError):
+                return False
+            return (range_start is None or updated_at >= range_start) and (range_end is None or updated_at <= range_end)
+
+        items = [item for item in self._conversation_items(live_sessions, company_id=company_id, scope=scope) if _in_period(item)]
+        return {"conversations": items[offset : offset + limit], "total": len(items)}
+
+    def _conversation_items(
+        self, live_sessions: list[Session], *, company_id: Optional[str], scope: str
+    ) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         for session in live_sessions:
@@ -701,7 +756,7 @@ class AnalyticsService:
 
         filtered = [item for item in items if _matches_scope(item)]
         filtered.sort(key=lambda item: item["updated_at"] or "", reverse=True)
-        return filtered[:limit]
+        return filtered
 
     def get_conversation(self, session_id: str, live_sessions: list[Session]) -> Optional[dict[str, Any]]:
         """Полный транскрипт одного диалога для вкладки "Чаты" — сначала живая сессия, иначе
@@ -811,7 +866,7 @@ class AnalyticsService:
             range_end = now
             range_start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         for event in events:
             if event.get("event_type") != "unknown_question":
@@ -845,7 +900,7 @@ class AnalyticsService:
         (кластеризация по смыслу), сознательно не делаем сейчас, см. память по TSK-05."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         counts: Counter[str] = Counter()
         examples: dict[str, str] = {}
         for event in events:
@@ -933,7 +988,7 @@ class AnalyticsService:
         ретеншном) — иначе окно дальше 60 дней молча показывало бы неполную картину."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         zone = _resolve_timezone(timezone_name) if timezone_name else None
         counts: Counter[int] = Counter()
         for event in events:
@@ -974,7 +1029,7 @@ class AnalyticsService:
         даты, это чистая функция, дублировать в схеме незачем."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         zone = _resolve_timezone(timezone_name) if timezone_name else None
         counts: Counter[int] = Counter()
         for event in events:
@@ -1017,7 +1072,7 @@ class AnalyticsService:
         работает на любом окне, включая "всё время" (days=None)."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
 
         requested_at_by_session: dict[str, datetime] = {}
         for event in events:
@@ -1097,7 +1152,7 @@ class AnalyticsService:
                 }
             )
 
-        all_events = read_jsonl(self.analytics_file)
+        all_events = self._events()
         all_leads = self._new_client_leads()
 
         current_conversations = _conversations(_in_range(all_events, conversation_current_start, now))
@@ -1136,7 +1191,7 @@ class AnalyticsService:
         по тому, что передали."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(read_jsonl(self.analytics_file), start=range_start, end=range_end, company_id=company_id)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         leads = _within_range(self._new_client_leads(), start=range_start, end=range_end, company_id=company_id)
 
         impression_events = [event for event in events if event.get("event_type") == "widget_impression"]

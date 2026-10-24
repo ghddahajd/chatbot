@@ -549,6 +549,12 @@ def render_analytics_panel(
     .chats-detail-pane { flex: 1 1 auto; min-width: 0; max-height: 74vh; overflow-y: auto; }
 
     .chat-row { padding: 11px 12px; border-radius: 12px; cursor: pointer; }
+    .chats-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px 4px; font-size: 12.5px; color: var(--text-muted); }
+    .chats-more-btn {
+      font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); cursor: pointer;
+    }
+    .chats-more-btn:disabled { opacity: .6; cursor: default; }
     .chat-row + .chat-row { margin-top: 2px; }
     .chat-row:hover { background: var(--border-soft); }
     .chat-row.active { background: color-mix(in srgb, var(--accent-soft) 32%, var(--card)); }
@@ -1000,7 +1006,13 @@ def render_analytics_panel(
       `;
     }
 
+    // у каждой загрузки свой номер: опоздавший ответ (по клинике или периоду, с которых уже ушли)
+    // выбрасывается, а не перерисовывает экран чужими цифрами
+    const loadSeq = { dashboard: 0, leads: 0, chats: 0, settings: 0 };
+    let dashboardStale = false;
+
     async function loadLeads() {
+      const seq = ++loadSeq.leads;
       const wrap = document.getElementById("leadsTableWrap");
       const rangeParams = currentRangeParams();
       if (!rangeParams) {
@@ -1011,8 +1023,10 @@ def render_analytics_panel(
       try {
         const companyId = document.getElementById("companySelect").value;
         const data = await fetchLeads(companyId, rangeParams);
+        if (seq !== loadSeq.leads) return;
         wrap.innerHTML = renderLeadsTable(data.leads);
       } catch (error) {
+        if (seq !== loadSeq.leads) return;
         wrap.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
       }
     }
@@ -1469,10 +1483,12 @@ def render_analytics_panel(
     let currentChatScope = "all";
     const chatTranscriptCache = {};
 
-    async function fetchChats(companyId, scope) {
+    async function fetchChats(companyId, scope, rangeParams, offset) {
       const params = new URLSearchParams();
       if (companyId) params.set("company_id", companyId);
       params.set("scope", scope);
+      applyRangeParams(rangeParams, params);
+      if (offset) params.set("offset", offset);
       const res = await fetch(`/api/analytics/chats?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
@@ -1616,27 +1632,71 @@ def render_analytics_panel(
     // из «Лидов»: открыть именно этот диалог, а не первый в списке после загрузки
     let pendingChatSessionId = null;
 
+    let chatsShown = 0;
+    let chatsTotal = 0;
+
+    function chatsMoreFooter() {
+      const more = chatsShown < chatsTotal
+        ? '<button type="button" class="chats-more-btn" id="chatsMoreBtn">Показать ещё</button>'
+        : "";
+      return `<div class="chats-more"><span>Показано ${chatsShown} из ${chatsTotal}</span>${more}</div>`;
+    }
+
     async function loadChats() {
+      const seq = ++loadSeq.chats;
       const preferredSessionId = pendingChatSessionId;
       pendingChatSessionId = null;
       const list = document.getElementById("chatsList");
       const companyId = document.getElementById("companySelect").value;
-      list.innerHTML = '<div class="loading">Загрузка…</div>';
+      const rangeParams = currentRangeParams();
       activeChatSessionId = null;
       exportSelection.clear();
       updateExportControls();
       document.getElementById("chatDetail").innerHTML = '<div class="empty-state">Выберите диалог слева</div>';
+      if (!rangeParams) {
+        list.innerHTML = '<div class="empty-state">Выберите обе даты периода сверху</div>';
+        return;
+      }
+      list.innerHTML = '<div class="loading">Загрузка…</div>';
       try {
-        const data = await fetchChats(companyId, currentChatScope);
+        const data = await fetchChats(companyId, currentChatScope, rangeParams, 0);
+        if (seq !== loadSeq.chats) return;
         chatRowsById = {};
         data.conversations.forEach((item) => { chatRowsById[item.session_id] = item; });
+        chatsShown = data.conversations.length;
+        chatsTotal = data.total;
         list.innerHTML = data.conversations.length
-          ? data.conversations.map(renderChatRow).join("")
-          : '<div class="empty-state">Диалогов не найдено</div>';
+          ? data.conversations.map(renderChatRow).join("") + chatsMoreFooter()
+          : '<div class="empty-state">Диалогов за этот период не найдено</div>';
         if (preferredSessionId) selectChat(preferredSessionId);
         else if (data.conversations.length) selectChat(data.conversations[0].session_id);
       } catch (error) {
+        if (seq !== loadSeq.chats) return;
         list.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function loadMoreChats(button) {
+      const seq = loadSeq.chats;
+      const list = document.getElementById("chatsList");
+      const rangeParams = currentRangeParams();
+      if (!rangeParams) return;
+      button.disabled = true;
+      button.textContent = "Загрузка…";
+      try {
+        const data = await fetchChats(document.getElementById("companySelect").value, currentChatScope, rangeParams, chatsShown);
+        if (seq !== loadSeq.chats) return;
+        // пока листали, сверху могли появиться новые диалоги и сдвинуть страницы — уже показанные не дублируем
+        const fresh = data.conversations.filter((item) => !chatRowsById[item.session_id]);
+        fresh.forEach((item) => { chatRowsById[item.session_id] = item; });
+        chatsShown += data.conversations.length;
+        chatsTotal = data.total;
+        list.querySelector(".chats-more").remove();
+        list.insertAdjacentHTML("beforeend", fresh.map(renderChatRow).join("") + chatsMoreFooter());
+      } catch (error) {
+        if (seq !== loadSeq.chats) return;
+        button.disabled = false;
+        button.textContent = "Не загрузилось — ещё раз";
       }
     }
 
@@ -1649,6 +1709,7 @@ def render_analytics_panel(
       document.getElementById("chatsContent").style.display = tab === "chats" ? "" : "none";
       document.getElementById("leadsContent").style.display = tab === "leads" ? "" : "none";
       document.getElementById("settingsContent").style.display = tab === "settings" ? "" : "none";
+      if (tab === "dashboard" && dashboardStale) load();
       if (tab === "chats") loadChats();
       if (tab === "leads") loadLeads();
       if (tab === "settings") loadSettings();
@@ -1753,6 +1814,7 @@ def render_analytics_panel(
     }
 
     async function loadSettings() {
+      const seq = ++loadSeq.settings;
       const status = document.getElementById("settingsStatus");
       status.textContent = "";
       status.className = "settings-status";
@@ -1762,6 +1824,7 @@ def render_analytics_panel(
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
+        if (seq !== loadSeq.settings) return;
         document.getElementById("hoursGrid").innerHTML = renderHoursGrid(data.working_hours_schedule);
         bindHoursClosedToggles();
         document.getElementById("settingsPhone").value = data.phone || "";
@@ -1798,6 +1861,7 @@ def render_analytics_panel(
         scrollActiveSettingsNav();
         status.textContent = "Изменений нет";
       } catch (error) {
+        if (seq !== loadSeq.settings) return;
         document.getElementById("hoursGrid").innerHTML = "";
         document.getElementById("doctorsList").innerHTML = "";
         status.textContent = `Не удалось загрузить: ${escapeHtml(error.message)}`;
@@ -2057,6 +2121,8 @@ def render_analytics_panel(
     }
 
     async function load() {
+      const seq = ++loadSeq.dashboard;
+      dashboardStale = false;
       const content = document.getElementById("content");
       const companyId = document.getElementById("companySelect").value;
       const rangeParams = currentRangeParams();
@@ -2067,6 +2133,7 @@ def render_analytics_panel(
       content.innerHTML = '<div class="loading">Загрузка…</div>';
       try {
         const data = await fetchDashboard(companyId, rangeParams);
+        if (seq !== loadSeq.dashboard) return;
         if (data.timezone) clinicTimezone = data.timezone;
         const hint = periodHint(data);
         content.innerHTML = `
@@ -2098,12 +2165,19 @@ def render_analytics_panel(
           ${renderUnanswered(data.summary.unanswered)}
         `;
       } catch (error) {
+        if (seq !== loadSeq.dashboard) return;
         content.innerHTML = `<div class="error">Не удалось загрузить: ${escapeHtml(error.message)}</div>`;
       }
     }
 
+    // скрытый дашборд не считаем зря — помечаем устаревшим и обновляем, когда на него вернутся
+    function reloadDashboardIfVisible() {
+      if (document.getElementById("content").style.display === "none") dashboardStale = true;
+      else load();
+    }
+
     document.getElementById("companySelect").addEventListener("change", () => {
-      load();
+      reloadDashboardIfVisible();
       if (document.getElementById("chatsContent").style.display !== "none") loadChats();
       if (document.getElementById("leadsContent").style.display !== "none") loadLeads();
       if (document.getElementById("settingsContent").style.display !== "none") loadSettings();
@@ -2111,8 +2185,9 @@ def render_analytics_panel(
     // "Свой период" (2026-08-30) — показывает/прячет поля дат, перезагружает и дашборд, и
     // "Лиды", если та сейчас открыта (общий диапазон для обеих вкладок).
     function reloadForActiveRangeTab() {
-      load();
+      reloadDashboardIfVisible();
       if (document.getElementById("leadsContent").style.display !== "none") loadLeads();
+      if (document.getElementById("chatsContent").style.display !== "none") loadChats();
     }
     document.getElementById("daysSelect").addEventListener("change", () => {
       const isCustom = document.getElementById("daysSelect").value === "custom";
@@ -2191,6 +2266,11 @@ def render_analytics_panel(
       });
     });
     document.getElementById("chatsList").addEventListener("click", (event) => {
+      const moreButton = event.target.closest("#chatsMoreBtn");
+      if (moreButton) {
+        loadMoreChats(moreButton);
+        return;
+      }
       // клик по галочке только отмечает чат для выгрузки, а не открывает его
       if (event.target.closest(".chat-check")) return;
       const row = event.target.closest(".chat-row");

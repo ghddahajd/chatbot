@@ -279,7 +279,7 @@ DEFAULT_PHRASEBOOK = {
     # ответ «какие услуги и сколько стоят»: заголовок списка, заголовок полного прайса и строка после
     "price_overview_heading": "Популярные направления и цены:",
     "price_overview_all_heading": "Цены на услуги:",
-    "price_overview_footer": "Итоговая сумма зависит от деталей. Напишите, какая услуга интересует, — подскажу подробнее.",
+    "price_overview_footer": "Итоговая сумма зависит от деталей. Записать вас на консультацию?",
     # без слов «скидки» и «акции»: у клиники их нет, ответ не должен намекать, что они бывают
     "discount_question": "Условия по стоимости подскажет администратор — позвать его?",
     # угроза жизни (одышка, отёк горла, потеря сознания): скорая — первой фразой, днём и ночью
@@ -693,6 +693,10 @@ class KnowledgeBase:
         self.domain_profile = domain_profile or _default_domain_profile()
         self.config_payload = config_payload or {}
         self.article_service_map = article_service_map or {}
+        # виджет присылает только путь страницы, а в связке — полные адреса сайта
+        self._article_by_path = {
+            (urlparse(url).path.rstrip("/") or "/"): entry for url, entry in self.article_service_map.items()
+        }
         self.quick_faq = quick_faq or []
         self._quick_faq_by_id = {item.id: item for item in self.quick_faq}
         self.symptom_service_map = symptom_service_map or {}
@@ -893,6 +897,13 @@ class KnowledgeBase:
         if not service_id:
             return None
         return self._prices_by_service_id.get(service_id)
+
+    def page_entry(self, page: Optional[str]) -> Optional[ArticleServiceMapEntry]:
+        """запись связки «страница → услуги» по пути страницы, где сейчас человек."""
+
+        if not page:
+            return None
+        return self._article_by_path.get(page.rstrip("/") or "/")
 
     def find_quick_faq_by_id(self, faq_id: Optional[str]) -> Optional[QuickFaqItem]:
         if not faq_id:

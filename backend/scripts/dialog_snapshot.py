@@ -63,8 +63,9 @@ FLOW_DIALOGS: list[tuple[str, str, list[str]]] = [
 ]
 
 
-def _rl(rl_id: str, when: str, turns: list[str], **checks: Any) -> dict[str, Any]:
-    return {"id": rl_id, "time": when, "turns": turns, "checks": checks}
+def _rl(rl_id: str, when: str, turns: list[str], *, page: str = "", **checks: Any) -> dict[str, Any]:
+    # page — путь страницы, с которой пишут (как присылает виджет): от неё зависит ответ о цене
+    return {"id": rl_id, "time": when, "turns": turns, "page": page, "checks": checks}
 
 
 def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
@@ -115,6 +116,27 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
         _rl("rl_lead_plain_digits", "day", ["хочу записаться на ботокс", "89261234567"], lead_phone="+79261234567"),
         # 5. цены: неизвестная услуга — без сумм
         _rl("rl_price_unknown", "day", ["сколько стоит пересадка сердца"], no_rubles=True),
+        # цена под страницу: со статьи — её услуга, с главной — общий список, названная услуга важнее страницы
+        _rl(
+            "rl_page_price_pdrn", "day", ["Какие услуги у вас есть и сколько стоят?"],
+            page="/blog/sperma-lososya-pdrn", contains_all=["PDRN", "23 000"], not_contains=["Популярные направления"],
+        ),
+        _rl(
+            "rl_page_price_gyn_article", "night", ["сколько стоит?"],
+            page="/blog/kokki-v-mazke-u-jenschin-chto-eto-znachit-i-chem-opasny", contains_all=["Консультация гинеколога", "5 000"],
+        ),
+        _rl(
+            "rl_page_price_problem", "day", ["сколько стоит?"],
+            page="/problems/starenie-koji-ruk", contains_all=["По этой теме", "Филлеры"], not_contains=["помога"],
+        ),
+        _rl(
+            "rl_page_price_home", "day", ["Какие услуги у вас есть и сколько стоят?"],
+            page="/", contains_any=["Популярные направления"], not_contains=["Напишите, какая услуга"],
+        ),
+        _rl(
+            "rl_page_named_service_wins", "day", ["сколько стоит чистка лица"],
+            page="/blog/sperma-lososya-pdrn", contains_any=["Чистк"], not_contains=["PDRN"],
+        ),
         # точный синоним поздней услуги сильнее нечёткого «миотокс» у ботулинотерапии
         _rl("rl_price_microcurrent", "day", ["микротоки лица цена"], contains_any=["Микротоков"], not_contains=["Ботулинотерап"]),
         # скидок у клиники нет: ответ ведёт к администратору и не обещает их
@@ -442,9 +464,10 @@ def run_version(repo_dir: Path, work_items: list[dict[str, Any]], company_id: st
                 recorder.calls = []
                 record: dict[str, Any] = {"dialog": item["dialog"], "time": item["time"], "turn": index, "message": message}
                 try:
-                    response = client.post(
-                        "/api/chat/message", json={"company_id": company_id, "session_id": session_id, "message": message}
-                    )
+                    body = {"company_id": company_id, "session_id": session_id, "message": message}
+                    if item.get("page"):
+                        body["page"] = item["page"]
+                    response = client.post("/api/chat/message", json=body)
                     payload = response.json()
                     # напрямую из словаря: у store.get асинхронная блокировка из цикла событий TestClient
                     session = store._sessions.get(session_id)
@@ -578,7 +601,7 @@ def _work_items(dialogs: list[dict[str, Any]], red_lines: list[dict[str, Any]]) 
         for when in [dialog["only_time"]] if dialog.get("only_time") else list(snap.FIXED_TIMES):
             items.append({"dialog": dialog["id"], "time": when, "turns": dialog["turns"]})
     for line in red_lines:
-        items.append({"dialog": line["id"], "time": line["time"], "turns": line["turns"]})
+        items.append({"dialog": line["id"], "time": line["time"], "turns": line["turns"], "page": line.get("page", "")})
     return items
 
 

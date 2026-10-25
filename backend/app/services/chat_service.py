@@ -1326,7 +1326,7 @@ class ChatService:
         session_store = self.request.app.state.session_store
         session = await session_store.get_or_create(session_id, company_id)
         if page:
-            await session_store.set_first_page(session.session_id, normalize_page(page))
+            await session_store.remember_page(session.session_id, normalize_page(page))
         async with session_store.lock_for(session.session_id):
             response = await self._handle_message_locked(
                 company_id=company_id,

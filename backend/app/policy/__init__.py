@@ -111,6 +111,7 @@ from .rules import (
     mentions_unknown_service,
     similar_services_result,
 )
+from .page_prices import _price_from_line, _rubles, page_price_result
 from .variants import find_variant_matches, is_variant_list_question, service_named_in, variant_price_line
 
 
@@ -1795,38 +1796,22 @@ def _is_just_service_name(normalized_message: str, service) -> bool:
     return named
 
 
-def _rubles(amount: float) -> str:
-    return f"{int(amount):,} ₽".replace(",", " ")
-
-
-def _price_from_line(knowledge_base: KnowledgeBase, service, variant: dict[str, object] | None = None) -> str | None:
-    """«Название — от N ₽» для обзора цен; без цены в прайсе — None."""
-
-    if variant is not None:
-        label = " ".join(str(variant.get("name") or "").split())
-        price = variant.get("price_from")
-        if not label or not isinstance(price, (int, float)) or price <= 0:
-            return None
-        return f"{label} — {_rubles(price)}"
-    price_from, price_to = getattr(service, "price_from", None), getattr(service, "price_to", None)
-    if not isinstance(price_from, (int, float)) or price_from <= 0:
-        return None
-    prefix = "" if price_to == price_from else "от "
-    unit = " за единицу" if knowledge_base.price_unit_note(service) else ""
-    return f"{' '.join(service.name.split())} — {prefix}{_rubles(price_from)}{unit}"
-
-
 def _price_overview_result(
     knowledge_base: KnowledgeBase,
     normalized_message: str,
     *,
     reason: PolicyReason,
     confidence: float,
+    page: Optional[str] = None,
 ) -> PolicyResult | None:
-    """цены сразу: популярные направления клиента с «от N ₽», по просьбе «все» — все услуги с ценой."""
+    """цены сразу: со страницы услуги — её цена, иначе популярные направления клиента с «от N ₽»,
+    по просьбе «все» — все услуги с ценой."""
 
     featured = knowledge_base.featured_price_items()
     show_all = not featured or bool(set(normalized_message.split()) & PRICE_OVERVIEW_ALL_TOKENS) or "прайс" in normalized_message
+    page_result = None if show_all else page_price_result(knowledge_base, page, confidence=confidence)
+    if page_result is not None:
+        return page_result
     items = [(service, None) for service in _dedupe_services_by_name(knowledge_base.services)] if show_all else featured
     lines = [line for service, variant in items if (line := _price_from_line(knowledge_base, service, variant))]
     if not lines:
@@ -3186,7 +3171,11 @@ def _analyze_message_core(
     if intent == "list_services":
         if price_requested:
             overview = _price_overview_result(
-                knowledge_base, normalized_message, reason=PolicyReason.PRICE_QUESTION, confidence=classifier_confidence or 0.9
+                knowledge_base,
+                normalized_message,
+                reason=PolicyReason.PRICE_QUESTION,
+                confidence=classifier_confidence or 0.9,
+                page=session.current_page,
             )
             if overview is not None:
                 return overview
@@ -3681,7 +3670,11 @@ def _analyze_message_core(
         if service is None:
             if not mentions_unknown_service(normalized_message):
                 overview = _price_overview_result(
-                    knowledge_base, normalized_message, reason=PolicyReason.PRICE_QUESTION_NO_SERVICE, confidence=0.86
+                    knowledge_base,
+                    normalized_message,
+                    reason=PolicyReason.PRICE_QUESTION_NO_SERVICE,
+                    confidence=0.86,
+                    page=session.current_page,
                 )
                 if overview is not None:
                     return overview

@@ -124,6 +124,8 @@ class Session(BaseModel):
     operator_return_offered: bool = False
     # путь страницы, где человек написал первым (для аналитики «где начинают переписку»)
     first_page: Optional[str] = None
+    # где человек сейчас: на «сколько стоит?» бот называет цену услуги этой страницы
+    current_page: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -161,6 +163,10 @@ class ArticleServiceMapEntry(BaseModel):
     excerpt: str = ""
     reviewed_note: str = ""
     extra_caution_note: str = ""
+    # части названий позиций прайса, цену которых показывать на этой странице (статья про PDRN —
+    # «plinest», «nucleo»), и как их назвать; пусто — цена всей услуги
+    price_focus: list[str] = Field(default_factory=list)
+    price_focus_title: str = ""
 
 
 class Service(BaseModel):

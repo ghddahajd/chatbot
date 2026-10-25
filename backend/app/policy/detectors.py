@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Collection
 
-from .extractors import contains_keyword
+from .extractors import contains_keyword, contains_keyword_word_start
 
 
 @dataclass(frozen=True)
@@ -653,6 +653,33 @@ OPERATOR_EXPLICIT_REQUEST = Detector(
 )
 
 
+# ---------------------------------------------------------------- скидки и акции
+
+# По началу слова, не где угодно: «акци» внутри «реакция» — это про аллергию, не про акцию. Голого
+# «дешевле» нет: «в соседней клинике дешевле» — возражение про конкурента, у него свой ответ
+DISCOUNT_WORDS = {"скидк", "скидочн", "акци", "промокод", "подешевле", "распродаж", "спецпредложени"}
+DISCOUNT_QUESTION = Detector(
+    "discount_question",
+    lambda text: contains_keyword_word_start(text, DISCOUNT_WORDS),
+    examples_yes=(
+        "а скидки есть?",
+        "есть какие-нибудь акции?",
+        "сделаете скидку на чистку?",
+        "промокод есть?",
+        "можно подешевле?",
+        "сколько стоит чистка лица, а скидки есть?",
+    ),
+    examples_no=(
+        "у меня аллергическая реакция после укола",
+        "в соседней клинике эта же процедура стоит дешевле",
+        "скиньте номер телефона",
+        "это дорого",
+        "а акне лечите?",
+        "сколько стоит чистка лица",
+    ),
+)
+
+
 DETECTORS: tuple[Detector, ...] = (
     CRISIS,
     SYMPTOM_MENTION,
@@ -664,4 +691,5 @@ DETECTORS: tuple[Detector, ...] = (
     BOOKING_CANCEL_ONLY,
     PRICE_LIST_REQUEST,
     OPERATOR_EXPLICIT_REQUEST,
+    DISCOUNT_QUESTION,
 )

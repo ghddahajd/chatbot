@@ -100,6 +100,7 @@ GROUPS: tuple[tuple[str, tuple[EditableText, ...]], ...] = (
         (
             EditableText("operator_soft_offer", "Первый ответ на «позовите оператора»", "Бот предлагает помочь сам или сразу соединить."),
             EditableText("operator_offer_declined_continue", "Остались с ботом", "Если после этого предложения человек решает продолжить в чате."),
+            EditableText("discount_question", "Вопрос о скидках и акциях", "Ответ на «а скидки есть?», «акции», «промокод», «подешевле» — с кнопкой позвать администратора."),
             EditableText("handoff_message", "Передача администратору", "Когда диалог передаётся администратору в рабочее время."),
             EditableText(
                 "operator_after_hours",

@@ -85,6 +85,7 @@ def test_safety_rules_order_is_deliberate() -> None:
         "complaint",
         "booking_change",
         "medical",
+        "discount",
     ]
 
 
@@ -223,3 +224,23 @@ def test_sick_reschedule_is_a_reschedule_but_danger_is_still_medical(policy_sess
 
     assert (sick.rule, sick.reason) == ("booking_change", PolicyReason.BOOKING_CHANGE)
     assert acute.rule == "medical"
+
+
+def test_discount_question_goes_to_the_administrator_without_promising_discounts(knowledge_base) -> None:
+    from app.models import Session
+
+    session = Session(session_id="discount", company_id="rosh_demo")
+    for message in ("а скидки есть?", "сколько стоит чистка лица, а скидки есть?", "сдохнуть можно от этих цен, а скидки есть?"):
+        result = policy.analyze_message(message, session, knowledge_base, {"intent": "unknown", "service_id": None, "confidence": 0.5})
+
+        assert result.reason == PolicyReason.FAQ_QUESTION, message
+        text = result.safe_context["message_to_user"]
+        # у клиники скидок нет — ответ не должен их обещать
+        assert "скидк" not in text.lower() and "акци" not in text.lower(), text
+        assert "Позвать менеджера" in result.quick_actions, message
+
+    # медицина важнее: вопрос со скидкой и жалобой на самочувствие уходит врачу
+    medical = policy.analyze_message(
+        "после укола сильно болит, а скидки есть?", session, knowledge_base, {"intent": "medical_advice", "service_id": None, "confidence": 0.9}
+    )
+    assert medical.reason == PolicyReason.REGULATED_ADVICE

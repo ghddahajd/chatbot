@@ -123,3 +123,15 @@ def city_prepositional(city: str) -> str:
     if known_form:
         return known_form
     return inflect_city_prepositional(city)
+
+
+def discount_result(message_to_user: str) -> PolicyResult:
+    """«а скидки есть?» — к администратору: условия он знает, бот их не обещает."""
+
+    return PolicyResult(
+        action=PolicyAction.CLARIFY,
+        reason=PolicyReason.FAQ_QUESTION,
+        confidence=0.9,
+        safe_context={"force_direct_answer": True, "question_type": "discount", "message_to_user": message_to_user},
+        quick_actions=["Позвать менеджера", {"label": "Записаться", "type": "message", "value": "Хочу записаться"}],
+    )

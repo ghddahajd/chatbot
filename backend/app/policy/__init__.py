@@ -92,6 +92,7 @@ from .detectors import (
     BOOKING_CHANGE,
     COMPLAINT,
     CRISIS,
+    DISCOUNT_QUESTION,
     LIFE_THREAT,
     OPERATOR_EXPLICIT_REQUEST,
     PRICE_LIST_REQUEST,
@@ -106,6 +107,7 @@ from .restricted import is_restricted_question
 from .rules import (
     city_prepositional,
     cosmetic_concern_services,
+    discount_result,
     mentions_unknown_service,
     similar_services_result,
 )
@@ -2545,6 +2547,13 @@ SAFETY_RULES: tuple[Rule[Signals], ...] = (
         answer=lambda s: _rule_booking_change(s),
     ),
     Rule("medical", when=lambda s: s.medical_requested, answer=lambda s: _rule_medical(s)),
+    # «а скидки есть?» — к администратору, даже если рядом цена: о скидке спрашивает тот, кто цену уже
+    # видел. Ниже медицины и жалобы: «после укола болит, а скидки есть?» — сначала врач
+    Rule(
+        "discount",
+        when=lambda s: DISCOUNT_QUESTION(s.normalized),
+        answer=lambda s: discount_result(_phrase(s.knowledge_base, "discount_question")),
+    ),
 )
 
 

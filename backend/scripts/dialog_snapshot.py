@@ -117,6 +117,14 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
         _rl("rl_price_unknown", "day", ["сколько стоит пересадка сердца"], no_rubles=True),
         # точный синоним поздней услуги сильнее нечёткого «миотокс» у ботулинотерапии
         _rl("rl_price_microcurrent", "day", ["микротоки лица цена"], contains_any=["Микротоков"], not_contains=["Ботулинотерап"]),
+        # скидок у клиники нет: ответ ведёт к администратору и не обещает их
+        _rl("rl_discount_to_admin", "day", ["а скидки есть?"], contains_any=["администратор"], not_contains=["скидк", "акци"]),
+        # препарата нет в прайсе — по ходу длинного разговора нейросеть отвечала «Да, Филлеры»
+        _rl(
+            "rl_biostimulator_not_promised", "day",
+            ["сколько стоит скульптурный массаж лица", "микротоки лица цена", "узи щитовидки цена", "биостимуляторы радиесс есть?"],
+            contains_any=["нет"], not_contains=["Да, «Филлеры»"],
+        ),
         # 6. контакты и часы
         _rl("rl_contacts_address", "day", ["какой у вас адрес"], contains_any=[facts["address_marker"]]),
         _rl("rl_contacts_where", "day", ["где вы находитесь"], contains_any=[facts["address_marker"]]),

@@ -7,7 +7,13 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ..knowledge import DuplicateDomainError, domain_matches, hostname_from_origin, phrasebook_value_to_text
+from ..knowledge import (
+    DuplicateDomainError,
+    domain_matches,
+    hostname_from_origin,
+    is_consultation_only_service,
+    phrasebook_value_to_text,
+)
 from ..models import WidgetBootstrapResponse
 from ..utils.page_path import normalize_page
 from .analytics import _check_track_rate_limit
@@ -61,11 +67,35 @@ def check_origin(origin: str | None, company_domains: list[str], dev_mode: bool)
     return any(domain_matches(hostname, domain) for domain in company_domains)
 
 
+def _page_teaser(knowledge_base, phrasebook: dict, page: str) -> str:
+    """приглашение под страницу: свой текст страницы, иначе по её услугам; страница вне связки — пусто."""
+
+    entry = knowledge_base.page_entry(normalize_page(page)) if page else None
+    if entry is None:
+        return ""
+    if entry.teaser_title:
+        return entry.teaser_title
+    services = [service for service in map(knowledge_base.find_service_by_id, entry.service_ids) if service is not None]
+    if not services:
+        return ""
+    if all("гинеколог" in f"{service.name} {service.category}".lower() for service in services):
+        return phrasebook_value_to_text(phrasebook.get("teaser_gynecology"))
+    # «Консультации: подскажу цену и запишу» звучит коряво — у страниц про приём врача свой текст
+    if len(services) == 1 and is_consultation_only_service(services[0]):
+        return phrasebook_value_to_text(phrasebook.get("teaser_consultation"))
+    if len(services) == 1:
+        template = phrasebook_value_to_text(phrasebook.get("teaser_one_service"))
+        # в названиях из прайса бывают переносы строк и двойные пробелы
+        return template.replace("{service}", " ".join((entry.price_focus_title or services[0].name).split()))
+    return phrasebook_value_to_text(phrasebook.get("teaser_several_services"))
+
+
 @router.get("/bootstrap", response_model=WidgetBootstrapResponse)
 async def bootstrap_widget(
     request: Request,
     company_id: Optional[str] = Query(default=None, min_length=1),
     x_company_id: Optional[str] = Header(default=None),
+    page: Optional[str] = Query(default=None, max_length=500),
 ) -> WidgetBootstrapResponse:
     resolver = request.app.state.knowledge_base_resolver
     origin = request.headers.get("origin") or request.headers.get("referer")
@@ -103,6 +133,7 @@ async def bootstrap_widget(
         widget_config=resolver.widget_config(company.company_id),
         greeting=greeting,
         quick_faq=knowledge_base.quick_faq,
+        teaser_title=_page_teaser(knowledge_base, phrasebook, page or ""),
     )
 
 

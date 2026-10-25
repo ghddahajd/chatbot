@@ -167,6 +167,8 @@ class ArticleServiceMapEntry(BaseModel):
     # «plinest», «nucleo»), и как их назвать; пусто — цена всей услуги
     price_focus: list[str] = Field(default_factory=list)
     price_focus_title: str = ""
+    # своё приглашение у кнопки чата на этой странице; пусто — по типу страницы
+    teaser_title: str = ""
 
 
 class Service(BaseModel):
@@ -303,6 +305,8 @@ class WidgetBootstrapResponse(BaseModel):
     widget_config: dict[str, Any] = Field(default_factory=dict)
     greeting: str = ""
     quick_faq: list[QuickFaqItem] = Field(default_factory=list)
+    # приглашение под страницу; пусто — виджет оставляет своё общее
+    teaser_title: str = ""
 
 
 class SessionPublicResponse(BaseModel):

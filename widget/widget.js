@@ -1312,7 +1312,7 @@
           <button class="teaser-dismiss" type="button" aria-label="Скрыть">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
           </button>
-          <div class="teaser-title"><span class="teaser-live" aria-hidden="true"></span>Подскажу цену и запишу</div>
+          <div class="teaser-title"><span class="teaser-live" aria-hidden="true"></span><span class="teaser-title-text">Подскажу цену и запишу</span></div>
           <div class="teaser-sub">Отвечу сразу, без ожидания на линии</div>
           <div class="teaser-actions">
             <button class="teaser-btn primary teaser-price" type="button">Узнать цену</button>
@@ -1915,6 +1915,8 @@
       try {
         const url = new URL(API_BASE + "/api/widget/bootstrap");
         if (EMBED_COMPANY_ID) url.searchParams.set("company_id", EMBED_COMPANY_ID);
+        // приглашение у кнопки — под страницу: в статье про PDRN про PDRN, а не общее
+        url.searchParams.set("page", window.location.pathname);
         const res = await fetch(url.toString());
         if (!res.ok) throw await this.buildBootstrapError(res);
         const data = await res.json();
@@ -1922,6 +1924,9 @@
         if (!this.state.companyId) throw new Error("company not resolved");
         this.trackEvent("impression"); // воронка конверсии — верхняя стадия, "виджет загружен"
         this.applyConfig(data.widget_config || {});
+        if (typeof data.teaser_title === "string" && data.teaser_title.trim()) {
+          this.$(".teaser-title-text").textContent = data.teaser_title.trim();
+        }
         this.setupConsent(typeof data.privacy_policy_url === "string" ? data.privacy_policy_url.trim() : "");
         this.state.greetingText = typeof data.greeting === "string" ? data.greeting.trim() : "";
         this.state.quickFaq = Array.isArray(data.quick_faq) ? data.quick_faq : [];

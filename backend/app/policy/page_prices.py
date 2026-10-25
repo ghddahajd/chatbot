@@ -105,7 +105,8 @@ def page_price_result(knowledge_base: KnowledgeBase, page: Optional[str], *, con
         if len(service.variants or []) > 1:
             actions.append({"label": "Все варианты и цены", "type": "message", "value": f"Покажи все варианты и цены: {service.name}"})
         actions.append(ALL_PRICES_ACTION)
-        return _page_answer(f"{service.name} — {price_text}{unit}. {_closing(service)}", service.id, actions, confidence)
+        name = " ".join(service.name.split())
+        return _page_answer(f"{name} — {price_text}{unit}. {_closing(service)}", service.id, actions, confidence)
 
     lines = [line for service in services[:PAGE_PRICE_MAX_SERVICES] if (line := _price_from_line(knowledge_base, service))]
     if not lines:

@@ -989,6 +989,9 @@
       }
       .bc-title { font-size: 15px; font-weight: 800; color: var(--text); letter-spacing: -.01em; }
       .bc-sub { margin-top: -7px; font-size: 13px; line-height: 1.4; color: var(--text-secondary); }
+      /* день — после номера и по желанию: выбор дня первым шагом отпугивал */
+      .bc-when { display: flex; flex-direction: column; gap: 6px; }
+      .bc-when-label { font-size: 12.5px; color: var(--text-secondary); }
       .bc-days { display: flex; flex-wrap: wrap; gap: 6px; }
       .bc-day.selected { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--text); }
       /* кнопка под полем, во всю ширину: «Перезвоните мне» рядом с номером на телефоне не помещается */
@@ -2243,13 +2246,16 @@
       card.innerHTML = `
         <div class="bc-title">Запишу за 30 секунд</div>
         <div class="bc-sub"></div>
-        <div class="bc-days"></div>
         <div class="bc-phone-row">
           <label class="bc-phone-wrap"><span class="bc-prefix">+7</span><input class="bc-phone" type="tel" inputmode="tel" autocomplete="tel" enterkeyhint="send" placeholder="(___) ___-__-__" aria-label="Номер телефона" /></label>
           <button class="bc-submit" type="button">Перезвоните мне</button>
         </div>
         <div class="bc-hint" hidden></div>
         <div class="bc-error" hidden>Проверьте номер: после +7 нужно 10 цифр</div>
+        <div class="bc-when">
+          <div class="bc-when-label">Когда удобнее — необязательно</div>
+          <div class="bc-days"></div>
+        </div>
         <div class="bc-note">Вы ещё не записаны — номер нужен только для записи</div>`;
       card.querySelector(".bc-sub").textContent = form.open_now === false
         ? "Сейчас мы закрыты — перезвоним в рабочее время"
@@ -2272,11 +2278,11 @@
           day = day === label ? "" : label;
           step("booking-card-day");
           daysEl.querySelectorAll(".bc-day").forEach(c => c.classList.toggle("selected", c.textContent === day));
-          phone.focus();
+          if (digits.length !== 10) phone.focus();
         });
         daysEl.appendChild(chip);
       }
-      if (!days.length) daysEl.remove();
+      if (!days.length) card.querySelector(".bc-when").remove();
       let digits = "";
       phone.addEventListener("input", (e) => {
         const typed = phone.value.replace(/\D/g, "").length - digits.length;

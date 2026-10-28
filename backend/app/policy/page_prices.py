@@ -15,6 +15,9 @@ ALL_PRICES_ACTION = {"label": "Все цены", "type": "message", "value": "В
 DIRECTION_PREFIX = "Цены: "
 OTHER_DIRECTION = "Другое направление"
 OTHER_DIRECTION_ACTION = {"label": OTHER_DIRECTION, "type": "message", "value": OTHER_DIRECTION}
+# «цена лазер», «лазер прайс» — то же, что кнопка; кроме слова про цену и направления в сообщении
+# ничего быть не должно, иначе «сколько стоит лазерная эпиляция» ушло бы в направление, а не в услугу
+DIRECTION_PRICE_WORDS = {"цена", "цены", "цену", "ценник", "стоимость", "прайс", "почем"}
 
 
 def _amount(amount: float) -> str:
@@ -141,7 +144,8 @@ def overview_actions(knowledge_base: KnowledgeBase, show_all: bool) -> list[obje
 
 
 def price_direction_result(knowledge_base: KnowledgeBase, normalized_message: str, *, footer: str) -> Optional[PolicyResult]:
-    """нажали направление — его услуги с ценой «от»; «Другое направление» — снова кнопки направлений."""
+    """нажали направление или написали «цена лазер» — его услуги с ценой «от»; «Другое направление» —
+    снова кнопки направлений."""
 
     directions = knowledge_base.price_directions()
     if not directions:
@@ -150,12 +154,21 @@ def price_direction_result(knowledge_base: KnowledgeBase, normalized_message: st
         actions = [*(_direction_action(title) for title, _ in directions), ALL_PRICES_ACTION]
         return _direction_answer("Какое направление интересует?", actions)
     for title, items in directions:
-        if normalized_message != normalize_text(f"{DIRECTION_PREFIX}{title}"):
+        if not _asks_direction(normalized_message, title):
             continue
         lines = [line for service, variant in items if (line := _price_from_line(knowledge_base, service, variant))]
         message = "\n".join([f"{title} — цены:", *(f"• {line}" for line in lines), footer])
         return _direction_answer(message, [BOOK_ACTION, OTHER_DIRECTION_ACTION])
     return None
+
+
+def _asks_direction(normalized_message: str, title: str) -> bool:
+    words, title_words = normalized_message.split(), normalize_text(title).split()
+    if len(words) != len(title_words) + 1:
+        return False
+    return (words[0] in DIRECTION_PRICE_WORDS and words[1:] == title_words) or (
+        words[-1] in DIRECTION_PRICE_WORDS and words[:-1] == title_words
+    )
 
 
 def _direction_answer(message: str, actions: list[object]) -> PolicyResult:

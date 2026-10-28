@@ -78,6 +78,23 @@ def test_other_direction_shows_the_directions_again(managed_env, resolver) -> No
     assert _labels(result) == ["Лицо", "Лазер", "Все цены"]
 
 
+def test_typed_price_word_and_direction_open_the_direction(managed_env, resolver) -> None:
+    kb = _kb(managed_env, resolver)
+
+    for message in ("цена лицо", "Лицо цены", "стоимость лицо?", "прайс: лицо", "почём лицо"):
+        result = _ask(kb, message)
+        assert result.safe_context["message_to_user"].startswith("Лицо — цены:"), message
+        assert _labels(result) == ["Записаться", "Другое направление"], message
+
+
+def test_direction_with_other_words_is_not_a_direction(managed_env, resolver) -> None:
+    kb = _kb(managed_env, resolver)
+
+    for message in ("лицо", "цена лицо и шея", "сколько стоит чистка лица", "цены цены лицо"):
+        result = _ask(kb, message)
+        assert result.safe_context.get("question_type") != "price_direction", message
+
+
 def test_unknown_direction_is_not_answered_as_a_direction(managed_env, resolver) -> None:
     kb = _kb(managed_env, resolver)
 

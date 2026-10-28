@@ -143,6 +143,10 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
             page="/", contains_all=["Лазерная эпиляция", "Записать"], buttons_include=["Другое направление"],
         ),
         _rl(
+            "rl_price_direction_typed", "day", ["цена лазер"],
+            page="/", contains_all=["Лазерная эпиляция", "Эксимерный лазер"], buttons_include=["Другое направление"],
+        ),
+        _rl(
             "rl_page_named_service_wins", "day", ["сколько стоит чистка лица"],
             page="/blog/sperma-lososya-pdrn", contains_any=["Чистк"], not_contains=["PDRN"],
         ),

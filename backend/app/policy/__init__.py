@@ -111,7 +111,7 @@ from .rules import (
     mentions_unknown_service,
     similar_services_result,
 )
-from .page_prices import _price_from_line, _rubles, page_price_result
+from .page_prices import _price_from_line, _rubles, overview_actions, page_price_result, price_direction_result
 from .variants import find_variant_matches, is_variant_list_question, service_named_in, variant_price_line
 
 
@@ -1818,10 +1818,7 @@ def _price_overview_result(
         return None
     heading = _phrase(knowledge_base, "price_overview_all_heading" if show_all else "price_overview_heading")
     message_to_user = "\n".join([heading, *(f"• {line}" for line in lines), _phrase(knowledge_base, "price_overview_footer")])
-    quick_actions: list[object] = [{"label": "Записаться", "type": "message", "value": "Хочу записаться"}]
-    if not show_all:
-        quick_actions.append({"label": "Все услуги и цены", "type": "message", "value": "Все услуги и цены"})
-    quick_actions.append("Позвать менеджера")
+    quick_actions = overview_actions(knowledge_base, show_all)
     return PolicyResult(
         action=PolicyAction.ANSWER,
         reason=reason,
@@ -2569,6 +2566,9 @@ def _analyze_message_core(
     decision.note(first)
     if first.result is not None:
         return first.result
+    direction = price_direction_result(knowledge_base, normalized_message, footer=_phrase(knowledge_base, "price_overview_footer"))
+    if direction is not None:
+        return direction
 
     service = knowledge_base.find_service_by_id(classification.get("service_id"))
     if intent == "price_question" and normalized_message in GENERIC_PRICE_MESSAGES:

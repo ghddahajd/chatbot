@@ -766,7 +766,24 @@ class KnowledgeBase:
         («Консультация гинеколога»). Неизвестные id пропускаются; пусто — показываем все услуги."""
 
         prices = self.config_payload.get("prices")
-        raw = prices.get("featured") if isinstance(prices, dict) else None
+        return self._price_entries(prices.get("featured") if isinstance(prices, dict) else None)
+
+    def price_directions(self) -> list[tuple[str, list[tuple[Service, Optional[dict[str, Any]]]]]]:
+        """направления для цен («Лицо», «Лазер»…): prices.directions в config.yaml — название и пункты,
+        как у featured. Направление без единой услуги из прайса пропускается."""
+
+        prices = self.config_payload.get("prices")
+        raw = prices.get("directions") if isinstance(prices, dict) else None
+        directions = []
+        for entry in raw if isinstance(raw, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            title, items = str(entry.get("title") or "").strip(), self._price_entries(entry.get("items"))
+            if title and items:
+                directions.append((title, items))
+        return directions
+
+    def _price_entries(self, raw: object) -> list[tuple[Service, Optional[dict[str, Any]]]]:
         items: list[tuple[Service, Optional[dict[str, Any]]]] = []
         for entry in raw if isinstance(raw, list) else []:
             service_id, variant_id = (entry, None) if isinstance(entry, str) else (

@@ -133,6 +133,15 @@ def red_line_dialogs(facts: dict[str, Any]) -> list[dict[str, Any]]:
             "rl_page_price_home", "day", ["Какие услуги у вас есть и сколько стоят?"],
             page="/", contains_any=["Популярные направления"], not_contains=["Напишите, какая услуга"],
         ),
+        # с главной под общим списком — кнопки направлений; по кнопке — услуги направления
+        _rl(
+            "rl_price_directions_offered", "day", ["Какие услуги у вас есть и сколько стоят?"],
+            page="/", buttons_include=["Лицо", "Тело", "Лазер", "Гинекология", "Все цены"],
+        ),
+        _rl(
+            "rl_price_direction_laser", "night", ["Какие услуги у вас есть и сколько стоят?", "Цены: лазер"],
+            page="/", contains_all=["Лазерная эпиляция", "Записать"], buttons_include=["Другое направление"],
+        ),
         _rl(
             "rl_page_named_service_wins", "day", ["сколько стоит чистка лица"],
             page="/blog/sperma-lososya-pdrn", contains_any=["Чистк"], not_contains=["PDRN"],
@@ -269,6 +278,10 @@ def check_red_line(line: dict[str, Any], turns: list[dict[str, Any]], facts: dic
         missing = [marker for marker in checks["contains_all"] if marker.lower() not in answer.lower()]
         if missing:
             problems.append(f"в ответе нет {missing}")
+    if "buttons_include" in checks:
+        missing = [label for label in checks["buttons_include"] if label not in (last.get("quick_actions") or [])]
+        if missing:
+            problems.append(f"нет кнопок {missing}")
     if "min_rubles" in checks and len(_numbers(answer)) < checks["min_rubles"]:
         problems.append(f"сумм в ответе {len(_numbers(answer))}, ожидали не меньше {checks['min_rubles']}")
     if "max_rubles" in checks and len(_numbers(answer)) > checks["max_rubles"]:

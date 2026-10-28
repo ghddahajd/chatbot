@@ -242,3 +242,10 @@ def test_run_on_fixture_is_deterministic_and_checks_red_lines(managed_env, tmp_p
     verdicts = {v["id"]: v for v in dlg.evaluate_red_lines(first["results"], first["facts"])}
     assert verdicts["rl_crisis_plain"]["problems"] == []
     assert verdicts["rl_lead_booking"]["problems"] == []
+
+
+def test_red_line_checks_buttons_by_label() -> None:
+    turn = {**_turn("Популярные направления и цены: …"), "quick_actions": ["Записаться", "Лицо", "Все цены"]}
+
+    assert dlg.check_red_line(_line(buttons_include=["Лицо", "Все цены"]), [turn], {}) == []
+    assert dlg.check_red_line(_line(buttons_include=["Лицо", "Тело"]), [turn], {}) == ["нет кнопок ['Тело']"]

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка уведомления администратора</title>
+<style>
+  body { margin: 32px; background: #f4f5f0; color: #182823; font: 17px system-ui; }
+  main { max-width: 650px; }
+  button { padding: 10px 14px; margin: 4px; font: inherit; cursor: pointer; }
+</style>
+<main>
+  <h1>Ответ администратора</h1>
+  <p>Проверка настоящего виджета на искусственной переписке. Запросы к серверу и Telegram отключены.</p>
+  <button id="reply">Ответ администратора</button>
+  <button id="toggle">Открыть / свернуть чат</button>
+  <button id="dismiss">Скрыть плашку</button>
+  <button id="reload">Перезагрузить страницу</button>
+</main>
+<script src="../widget.js"></script>
+<script>
+  const Widget = customElements.get('ai-chat-widget');
+  const historyKey = 'operator-notice-preview-history';
+  Widget.prototype.bootstrap = async function () {
+    this.state.companyId = 'notice-preview';
+    this.state.sessionId = 'preview-dialog';
+    const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+    this.loadOperatorReadState(history.length);
+    this.renderHistory(history);
+    this.setStatus('HUMAN_ACTIVE');
+  };
+  Widget.prototype.trackEvent = () => {};
+  Widget.prototype.connectWS = () => {};
+  Widget.prototype.sendText = async function (text) { this.addMsg('user', text); };
+  window.addEventListener('load', () => {
+    const widget = document.querySelector('ai-chat-widget');
+    document.querySelector('#reply').onclick = () => {
+      const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+      const message = { role: 'operator', text: 'Здравствуйте! Могу помочь с вашим вопросом.' };
+      history.push(message);
+      localStorage.setItem(historyKey, JSON.stringify(history));
+      widget.addMsg(message.role, message.text);
+    };
+    document.querySelector('#toggle').onclick = () => widget.toggle();
+    document.querySelector('#dismiss').onclick = () => widget.el.operatorNoticeDismiss.click();
+    document.querySelector('#reload').onclick = () => location.reload();
+  });
+</script>
+</html>

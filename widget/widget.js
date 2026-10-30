@@ -1321,6 +1321,17 @@
         </div>
       </div>
 
+      <div class="teaser operator-notice" role="status" aria-live="polite">
+        <div class="teaser-card">
+          <button class="teaser-dismiss operator-notice-dismiss" type="button" aria-label="Скрыть уведомление">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+          <div class="teaser-title">Администратор ответил</div>
+          <div class="teaser-sub">Новое сообщение в вашем диалоге</div>
+          <div class="teaser-actions"><button class="teaser-btn primary operator-notice-open" type="button">Открыть чат</button></div>
+        </div>
+      </div>
+
       <section class="panel" aria-live="polite">
         <header class="header">
           <div class="header-info">
@@ -1457,6 +1468,9 @@
         wsReconnectTimer: null,
         leadLeft: false,
         bookingPending: false,
+        operatorMessageCount: 0,
+        operatorReadCount: 0,
+        operatorNoticeDismissed: false,
         typingNode: null,
         typingStartedAt: 0,
         voiceEnabled: false,
@@ -1526,6 +1540,8 @@
         teaserPrice: this.$(".teaser-price"),
         teaserBooking: this.$(".teaser-booking"),
         teaserDismiss: this.$(".teaser-dismiss"),
+        operatorNotice: this.$(".operator-notice"),
+        operatorNoticeDismiss: this.$(".operator-notice-dismiss"),
       };
     }
 
@@ -1564,6 +1580,17 @@
     }
 
     bindEvents() {
+      this.el.operatorNotice.addEventListener("click", () => { if (!this.state.open) this.toggle(); });
+      this.el.operatorNoticeDismiss.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.state.operatorNoticeDismissed = true;
+        this.saveOperatorReadState();
+        this.updateOperatorNotice();
+      });
+      this._onVisibilityChange = () => {
+        if (this.state.open && !document.hidden) this.markOperatorMessagesRead();
+      };
+      document.addEventListener("visibilitychange", this._onVisibilityChange);
       this.el.launcher.addEventListener("click", () => this.toggle());
       this.el.presencePhone.addEventListener("click", () => {
         this.el.inp.placeholder = "Ваш номер телефона";
@@ -1608,12 +1635,70 @@
       return "ai-widget-teaser-snooze:" + this.state.companyId;
     }
 
+    disconnectedCallback() {
+      document.removeEventListener("visibilitychange", this._onVisibilityChange);
+      this.dismissTeaser();
+    }
+
+    operatorReadKey() {
+      return "ai-widget-operator-read:" + this.state.companyId + ":" + this.state.sessionId;
+    }
+
+    loadOperatorReadState(initialCount = 0) {
+      // у старой сессии ещё нет отметки прочтения: прошлую переписку не выдаём за новый ответ
+      this.state.operatorReadCount = initialCount;
+      this.state.operatorNoticeDismissed = false;
+      try {
+        const saved = JSON.parse(window.localStorage.getItem(this.operatorReadKey()) || "null");
+        if (Number.isSafeInteger(saved?.read) && saved.read >= 0) this.state.operatorReadCount = saved.read;
+        this.state.operatorNoticeDismissed = saved?.dismissed === true;
+      } catch (_) {}
+      this.saveOperatorReadState();
+    }
+
+    saveOperatorReadState() {
+      if (!this.state.sessionId) return;
+      try {
+        window.localStorage.setItem(this.operatorReadKey(), JSON.stringify({
+          read: this.state.operatorReadCount, dismissed: this.state.operatorNoticeDismissed,
+        }));
+      } catch (_) {}
+    }
+
+    markOperatorMessagesRead() {
+      this.state.operatorReadCount = this.state.operatorMessageCount;
+      this.state.operatorNoticeDismissed = false;
+      this.saveOperatorReadState();
+      this.el.operatorNotice.classList.remove("visible");
+      this.el.unread.classList.remove("visible");
+    }
+
+    updateOperatorNotice() {
+      const unread = this.state.operatorMessageCount > this.state.operatorReadCount;
+      if (this.state.open && !document.hidden) {
+        this.markOperatorMessagesRead();
+        return;
+      }
+      if (unread) {
+        this.dismissTeaser();
+        this.el.launcher.classList.add("collapsed");
+        this.el.unread.classList.add("visible");
+      }
+      this.el.operatorNotice.classList.toggle("visible", unread && !this.state.open && !this.state.operatorNoticeDismissed);
+    }
+
+    recordOperatorMessage() {
+      this.state.operatorMessageCount += 1;
+      this.updateOperatorNotice();
+    }
+
     snoozeTeaser() {
       try { window.localStorage.setItem(this.teaserSnoozeKey(), String(Date.now())); } catch (_) {}
     }
 
     // только пока отвечает бот: при переписке с администратором «Узнать цену» ушло бы ему, а не боту
     canShowTeaser() {
+      if (this.state.operatorMessageCount > this.state.operatorReadCount) return false;
       if (this.state.open || !this.state.companyId || this.state.status !== STATUS.AI_ACTIVE) return false;
       try {
         const snoozedAt = Number(window.localStorage.getItem(this.teaserSnoozeKey()));
@@ -2102,6 +2187,7 @@
         if (!res.ok) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); return; }
         const data = await res.json();
         if (data.company_id !== this.state.companyId) { this.clearLocalSession(); this.setStatus(STATUS.AI_ACTIVE); this.pushGreeting(); return; }
+        this.loadOperatorReadState((data.messages || []).filter(m => m.role === "operator").length);
         this.renderHistory(data.messages || []);
         this.state.leadLeft = Boolean(data.lead_requested);
         this.setStatus(data.status);
@@ -2112,9 +2198,12 @@
 
     renderHistory(msgs) {
       this.el.messages.innerHTML = "";
+      this.el.unread.classList.remove("visible");
+      this.state.operatorMessageCount = msgs.filter(m => m.role === "operator").length;
       this.state.operatorReplied = msgs.some(m => m.role === "operator");
       if (!msgs.length) { this.pushGreeting(); return; }
       for (const m of msgs) this.addMsg(m.role, m.text, true);
+      this.updateOperatorNotice();
       this.scrollBottom();
     }
 
@@ -2128,6 +2217,7 @@
       this.el.launcher.classList.toggle("hidden", this.state.open);
       this.el.unread.classList.remove("visible");
       if (this.state.open) {
+        if (!document.hidden) this.markOperatorMessagesRead();
         this.scrollBottom();
         this.el.inp.focus();
         // воронка конверсии (2026-08-27): один раз за загрузку страницы, не на каждый
@@ -2137,6 +2227,7 @@
           this.trackEvent("chat-opened");
         }
       }
+      this.updateOperatorNotice();
     }
 
     // анонимная метка браузера для воронки: один человек = один посетитель, сколько бы страниц
@@ -2207,7 +2298,8 @@
       this.el.messages.appendChild(article);
       if (!silent) this.scrollBottom();
 
-      if (!this.state.open) this.el.unread.classList.add("visible");
+      if (!silent && role === "operator") this.recordOperatorMessage();
+      else if (!silent && !this.state.open) this.el.unread.classList.add("visible");
       this.updateBookBar();
     }
 
@@ -2462,7 +2554,9 @@
         await this.hideTyping();
 
         if (data.session_id) {
+          const changedSession = this.state.sessionId !== data.session_id;
           this.state.sessionId = data.session_id;
+          if (changedSession) this.loadOperatorReadState();
           window.localStorage.setItem(this.storageKey(), data.session_id);
         }
         if (data.lead_created) this.state.leadLeft = true;
@@ -2529,6 +2623,11 @@
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;
       this.state.leadLeft = false;
+      this.state.operatorMessageCount = 0;
+      this.state.operatorReadCount = 0;
+      this.state.operatorNoticeDismissed = false;
+      this.el.operatorNotice.classList.remove("visible");
+      this.el.unread.classList.remove("visible");
     }
 
     markUnavailable(err) {

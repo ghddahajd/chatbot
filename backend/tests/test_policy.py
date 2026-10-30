@@ -1557,7 +1557,7 @@ def test_operator_request_after_hours_asks_for_contact_instead_of_soft_offer(
     assert result.action == PolicyAction.ASK_CONTACT
     assert result.reason == PolicyReason.OPERATOR_REQUESTED
     message = str(result.safe_context.get("message_to_user"))
-    assert "недоступен" in message
+    assert "не на связи" in message
     assert "нерабочее время" in message
 
 

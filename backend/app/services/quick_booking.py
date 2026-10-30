@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ..hours import is_currently_open
 from ..knowledge import normalize_text
-from ..models import ChatMessageResponse, PendingAction, Session, SessionStatus
+from ..models import ChatMessageResponse, PendingAction, PolicyReason, Session, SessionStatus
 from ..policy.constants import BOOKING_CONTACT_ALTERNATIVES, BOOKING_DAY_CHOICES, BOOKING_WHEN_TILES
 from ..routes.chat_utils import format_quick_actions
 
@@ -33,23 +33,32 @@ async def remember_card_day(session_store, session: Session, booking_day: str, c
 
 
 async def attach_form(request, company_id: str, session_id: str, response) -> None:
-    """помечает ответ карточкой, если бот ждёт номер для новой записи, а в «Настройках» она не выключена."""
+    """общая форма номера для записи и ночной просьбы позвать администратора."""
 
     if not isinstance(response, ChatMessageResponse) or response.lead_created or response.status != SessionStatus.AI_ACTIVE:
         return
     session = await request.app.state.session_store.get(session_id)
-    if session is None or session.pending_action != PendingAction.BOOKING_CONTACT.value:
+    if session is None or session.pending_action not in {
+        PendingAction.BOOKING_CONTACT.value, PendingAction.COLLECT_CONTACT.value,
+    }:
         return  # настройки клиента читаются с диска — только когда карточка вообще возможна
     resolver = request.app.state.knowledge_base_resolver
     if resolver.widget_config(company_id).get("quick_booking") != "on":
         return
     knowledge_base = resolver.get(company_id, fallback=False)
     company = knowledge_base.company
+    open_now = is_currently_open(company.working_hours_schedule, company.timezone)
+    callback = session.pending_action == PendingAction.COLLECT_CONTACT.value
+    if callback and (open_now or session.last_intent not in {
+        PolicyReason.OPERATOR_REQUESTED.value, PolicyReason.CONTACT_PROVIDED.value,
+    }):
+        return
     day_known = bool(str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip())
     # отдельного шага «оставьте номер» с этими кнопками в карточке нет — кто не хочет давать номер, звонит сам
     contacts = format_quick_actions(list(BOOKING_CONTACT_ALTERNATIVES), request, knowledge_base)
     response.booking_form = {
-        "days": [] if day_known else list(BOOKING_WHEN_TILES),
-        "open_now": is_currently_open(company.working_hours_schedule, company.timezone),
+        "purpose": "callback" if callback else "booking",
+        "days": [] if callback or day_known else list(BOOKING_WHEN_TILES),
+        "open_now": open_now,
         "contacts": [action.model_dump() for action in contacts],
     }

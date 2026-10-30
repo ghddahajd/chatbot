@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.ops_bot import OpsBot
 from app.policy.constants import BOOKING_CONTACT_ALTERNATIVES
 
@@ -45,6 +47,80 @@ def test_card_at_night_says_the_clinic_is_closed(test_client) -> None:
     payload = _chat(test_client, "хочу записаться")
 
     assert payload["booking_form"]["open_now"] is False
+
+
+@pytest.mark.parametrize("message", ["Позвать менеджера", "Хочу поговорить с администратором"])
+def test_night_operator_shows_callback_card(test_client, message) -> None:
+    _set_open(test_client, False)
+
+    payload = _chat(test_client, message)
+
+    assert payload["status"] == "AI_ACTIVE"
+    assert payload["booking_form"]["purpose"] == "callback"
+    assert payload["booking_form"]["days"] == []
+    assert payload["booking_form"]["open_now"] is False
+
+
+def test_night_callback_accepts_phone_and_stops_showing_card(test_client, managed_env) -> None:
+    _set_open(test_client, False)
+    first = _chat(test_client, "Позвать менеджера")
+    retry = _chat(test_client, "123", first["session_id"])
+    assert retry["booking_form"]["purpose"] == "callback"
+
+    sent = _chat(test_client, "+7 926 123-45-67", first["session_id"])
+
+    assert sent["lead_created"] is True
+    assert sent["booking_form"] is None
+    assert _last_lead(managed_env)["phone"] == "+79261234567"
+
+
+def test_night_callback_can_return_to_prices(test_client) -> None:
+    _set_open(test_client, False)
+    first = _chat(test_client, "Позвать менеджера")
+
+    prices = _chat(test_client, "сколько стоит чистка лица", first["session_id"])
+
+    assert prices["booking_form"] is None
+    assert "₽" in prices["answer"]
+
+
+def test_callback_card_respects_shared_setting(test_client, monkeypatch) -> None:
+    _set_open(test_client, False)
+    _quick_booking_off(test_client, monkeypatch)
+
+    assert _chat(test_client, "Позвать менеджера")["booking_form"] is None
+
+
+def test_daytime_operator_does_not_show_callback_card(test_client) -> None:
+    _set_open(test_client, True)
+
+    assert _chat(test_client, "Позвать менеджера")["booking_form"] is None
+
+
+def test_night_operator_button_opens_callback_card(test_client) -> None:
+    _set_open(test_client, False)
+    first = _chat(test_client, "сколько стоит чистка лица")
+    # ночью подпись кнопки меняется, но команда вызова администратора сохраняется
+    button = next(action for action in first["quick_actions"] if action["label"] == "Оставить телефон")
+
+    assert _chat(test_client, button["value"], first["session_id"])["booking_form"]["purpose"] == "callback"
+
+
+@pytest.mark.parametrize("message", ["не хочу жить", "после укола задыхаюсь", "хочу пожаловаться на врача", "нет, не хочу"])
+def test_night_callback_card_does_not_override_safety_or_cancel(test_client, message) -> None:
+    _set_open(test_client, False)
+    first = _chat(test_client, "Позвать менеджера")
+
+    assert _chat(test_client, message, first["session_id"])["booking_form"] is None
+
+
+def test_night_operator_with_phone_creates_lead_without_form(test_client) -> None:
+    _set_open(test_client, False)
+
+    payload = _chat(test_client, "Позовите менеджера +7 926 123-45-67")
+
+    assert payload["lead_created"] is True
+    assert payload["booking_form"] is None
 
 
 def test_day_and_phone_in_one_message_make_a_lead_with_the_day(test_client, managed_env) -> None:

@@ -2330,7 +2330,7 @@ def test_operator_request_after_hours_end_to_end_asks_for_contact_not_wait(
     ).json()
 
     assert first_payload["status"] == "AI_ACTIVE"
-    assert "недоступен" in first_payload["answer"]
+    assert "не на связи" in first_payload["answer"]
     assert "нерабочее время" in first_payload["answer"]
 
     session_id = first_payload["session_id"]
@@ -2437,7 +2437,7 @@ def test_operator_request_after_hours_on_real_client_schedule(
     ).json()
 
     assert payload["status"] == "AI_ACTIVE"
-    assert "недоступен" in payload["answer"]
+    assert "не на связи" in payload["answer"]
     assert fake_bridge.queue_cards == []
 
 

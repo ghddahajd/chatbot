@@ -2245,11 +2245,12 @@
 
     // запись карточкой: день по желанию и номер уходят одним сообщением, без лишнего шага переписки
     addBookingCard(form, actions) {
+      const callback = form.purpose === "callback";
       const days = Array.isArray(form.days) ? form.days : [];
       const card = document.createElement("div");
       card.className = "booking-card";
       card.innerHTML = `
-        <div class="bc-title">Запишу за 30 секунд</div>
+        <div class="bc-title">${callback ? "Оставьте номер для звонка" : "Запишу за 30 секунд"}</div>
         <div class="bc-sub"></div>
         <div class="bc-phone-row">
           <label class="bc-phone-wrap"><span class="bc-prefix">+7</span><input class="bc-phone" type="tel" inputmode="tel" autocomplete="tel" enterkeyhint="send" placeholder="(___) ___-__-__" aria-label="Номер телефона" /></label>
@@ -2261,8 +2262,10 @@
           <div class="bc-when-label">Когда удобнее — необязательно</div>
           <div class="bc-days"></div>
         </div>
-        <div class="bc-note">Вы ещё не записаны — номер нужен только для записи</div>`;
-      card.querySelector(".bc-sub").textContent = form.open_now === false
+        <div class="bc-note">${callback ? "Это заявка на обратный звонок, не запись на приём" : "Вы ещё не записаны — номер нужен только для записи"}</div>`;
+      card.querySelector(".bc-sub").textContent = callback
+        ? "Администратор перезвонит в рабочее время"
+        : form.open_now === false
         ? "Сейчас мы закрыты — перезвоним в рабочее время"
         : "Перезвоним и подберём удобное время";
       const phone = card.querySelector(".bc-phone");

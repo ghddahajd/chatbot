@@ -33,7 +33,7 @@ async def remember_card_day(session_store, session: Session, booking_day: str, c
 
 
 async def attach_form(request, company_id: str, session_id: str, response) -> None:
-    """общая форма номера для записи и ночной просьбы позвать администратора."""
+    """общая форма номера для записи и обратного звонка."""
 
     if not isinstance(response, ChatMessageResponse) or response.lead_created or response.status != SessionStatus.AI_ACTIVE:
         return
@@ -49,9 +49,10 @@ async def attach_form(request, company_id: str, session_id: str, response) -> No
     company = knowledge_base.company
     open_now = is_currently_open(company.working_hours_schedule, company.timezone)
     callback = session.pending_action == PendingAction.COLLECT_CONTACT.value
-    if callback and (open_now or session.last_intent not in {
-        PolicyReason.OPERATOR_REQUESTED.value, PolicyReason.CONTACT_PROVIDED.value,
-    }):
+    if callback and not (
+        session.last_intent == PolicyReason.CONTACT_PROVIDED.value
+        or (not open_now and session.last_intent == PolicyReason.OPERATOR_REQUESTED.value)
+    ):
         return
     day_known = bool(str(session.contact_draft.get(PREFERRED_TIME_KEY) or "").strip())
     # отдельного шага «оставьте номер» с этими кнопками в карточке нет — кто не хочет давать номер, звонит сам

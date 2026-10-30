@@ -39,6 +39,9 @@ WIDGET_EVENT_TYPES = {
     "booking-card-day": "booking_card_day_picked",
     "booking-card-phone": "booking_card_phone_started",
     "booking-card-sent": "booking_card_sent",
+    "idle-reminder-shown": "idle_reminder_shown",
+    "idle-reminder-callback": "idle_reminder_callback_clicked",
+    "idle-reminder-later": "idle_reminder_later_clicked",
 }
 VISITOR_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 # поисковые и служебные роботы тоже выполняют скрипты и накручивали бы «посетителей»

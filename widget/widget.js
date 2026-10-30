@@ -1471,6 +1471,8 @@
         operatorMessageCount: 0,
         operatorReadCount: 0,
         operatorNoticeDismissed: false,
+        idleReminderEligible: false,
+        idleReminderShown: false,
         typingNode: null,
         typingStartedAt: 0,
         voiceEnabled: false,
@@ -1487,6 +1489,9 @@
           booking_highlight_color: "",
           // «on» приходит из «Настроек»; пусто — запись по-старому, двумя шагами переписки
           quick_booking: "",
+          idle_reminder: "",
+          idle_reminder_seconds: "90",
+          idle_reminder_text: "Если удобнее, можем сами перезвонить и ответить на вопросы.",
           launcher_label: "Задать вопрос",
           status_online: "на связи",
           input_placeholder: "Напишите вопрос…",
@@ -1589,8 +1594,15 @@
       });
       this._onVisibilityChange = () => {
         if (this.state.open && !document.hidden) this.markOperatorMessagesRead();
+        this.scheduleIdleReminder();
       };
       document.addEventListener("visibilitychange", this._onVisibilityChange);
+      this.el.inp.addEventListener("input", () => {
+        this.cancelIdleReminder(true);
+        this.scheduleIdleReminder();
+      });
+      this.el.panel.addEventListener("pointerdown", () => this.scheduleIdleReminder());
+      this.el.messages.addEventListener("scroll", () => this.scheduleIdleReminder(), { passive: true });
       this.el.launcher.addEventListener("click", () => this.toggle());
       this.el.presencePhone.addEventListener("click", () => {
         this.el.inp.placeholder = "Ваш номер телефона";
@@ -1638,6 +1650,72 @@
     disconnectedCallback() {
       document.removeEventListener("visibilitychange", this._onVisibilityChange);
       this.dismissTeaser();
+      this.cancelIdleReminder(true);
+    }
+
+    idleReminderKey() {
+      return "ai-widget-idle-reminder:" + this.state.companyId + ":" + this.state.sessionId;
+    }
+
+    canShowIdleReminder() {
+      const s = this.state;
+      if (!s.open || document.hidden || s.status !== STATUS.AI_ACTIVE || s.sending || s.leadLeft
+        || !s.sessionId || !s.idleReminderEligible || s.idleReminderShown
+        || s.widgetConfig.idle_reminder !== "on" || s.widgetConfig.quick_booking !== "on"
+        || this.el.inp.value.trim() || this.el.messages.querySelector(".booking-card")) return false;
+      try { if (window.localStorage.getItem(this.idleReminderKey()) === "1") return false; } catch (_) {}
+      return true;
+    }
+
+    cancelIdleReminder(remove = false) {
+      window.clearTimeout(this._idleReminderTimer);
+      this._idleReminderTimer = null;
+      if (remove) this.el.messages.querySelectorAll(".idle-reminder, .idle-reminder-actions").forEach(node => node.remove());
+    }
+
+    scheduleIdleReminder() {
+      this.cancelIdleReminder();
+      if (!this.canShowIdleReminder()) return;
+      const seconds = Number(this.state.widgetConfig.idle_reminder_seconds);
+      this._idleReminderTimer = window.setTimeout(() => this.showIdleReminder(),
+        (Number.isFinite(seconds) && seconds > 0 ? seconds : 90) * 1000);
+    }
+
+    showIdleReminder() {
+      if (!this.canShowIdleReminder()) return;
+      this.state.idleReminderShown = true;
+      try { window.localStorage.setItem(this.idleReminderKey(), "1"); } catch (_) {}
+      const card = document.createElement("article");
+      card.className = "msg assistant idle-reminder";
+      const label = document.createElement("div");
+      label.className = "msg-label";
+      label.textContent = this.state.widgetConfig.avatar_emoji + " " + this.state.widgetConfig.assistant_label;
+      card.appendChild(label);
+      const text = document.createElement("div");
+      text.textContent = this.state.widgetConfig.idle_reminder_text;
+      card.appendChild(text);
+      const actions = document.createElement("div");
+      actions.className = "quick-actions idle-reminder-actions";
+      for (const [label, event] of [["Перезвоните мне", "callback"], ["Позже", "later"]]) {
+        const button = this.createQuickButton(label, event === "callback", () => {
+          this.trackEvent("idle-reminder-" + event);
+          if (event === "callback") {
+            this.cancelIdleReminder(true);
+            this.sendText("Перезвоните мне");
+          } else {
+            this.cancelIdleReminder();
+            card.className = "msg assistant";
+            actions.className = "msg system";
+            actions.replaceChildren(document.createTextNode("Хорошо, продолжим здесь"));
+            this.scrollBottom();
+          }
+        });
+        actions.appendChild(button);
+      }
+      this.el.messages.appendChild(card);
+      this.el.messages.appendChild(actions);
+      this.trackEvent("idle-reminder-shown");
+      this.scrollBottom();
     }
 
     operatorReadKey() {
@@ -1988,6 +2066,7 @@
       } finally {
         window.clearTimeout(timeoutId);
         this.state.sending = false;
+        this.scheduleIdleReminder();
       }
     }
 
@@ -2200,6 +2279,7 @@
       this.el.messages.innerHTML = "";
       this.el.unread.classList.remove("visible");
       this.state.operatorMessageCount = msgs.filter(m => m.role === "operator").length;
+      this.state.idleReminderEligible = msgs.some(m => m.role === "user") && msgs.at(-1)?.role === "assistant";
       this.state.operatorReplied = msgs.some(m => m.role === "operator");
       if (!msgs.length) { this.pushGreeting(); return; }
       for (const m of msgs) this.addMsg(m.role, m.text, true);
@@ -2228,6 +2308,8 @@
         }
       }
       this.updateOperatorNotice();
+      if (!this.state.open) this.cancelIdleReminder(true);
+      else this.scheduleIdleReminder();
     }
 
     // анонимная метка браузера для воронки: один человек = один посетитель, сколько бы страниц
@@ -2271,6 +2353,10 @@
     }
 
     addMsg(role, text, silent) {
+      if (!silent) {
+        this.cancelIdleReminder(true);
+        this.state.idleReminderEligible = role === "assistant";
+      }
       this.clearGreeting();
       this.el.messages.querySelectorAll(".quick-actions, .booking-card").forEach(n => n.remove());
 
@@ -2301,6 +2387,16 @@
       if (!silent && role === "operator") this.recordOperatorMessage();
       else if (!silent && !this.state.open) this.el.unread.classList.add("visible");
       this.updateBookBar();
+      if (!silent) this.scheduleIdleReminder();
+    }
+
+    createQuickButton(label, primary, onClick) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "quick-btn" + (primary ? " primary" : "");
+      button.textContent = label;
+      button.addEventListener("click", onClick);
+      return button;
     }
 
     addQuickActions(actions, { plain = false } = {}) {
@@ -2313,14 +2409,10 @@
       for (const a of actions) {
         const norm = typeof a === "string" ? {label:a,type:"message",value:a} : a;
         if (!norm?.label?.trim()) continue;
-        const btn = document.createElement("button");
         // первая кнопка группы — самый вероятный next-step, визуально выделяем;
         // позиция в массиве, а не текст лейбла (тот приходит из phrasebook и
         // может отличаться у клиента).
-        btn.className = "quick-btn" + (wrap.childElementCount === 0 && !plain ? " primary" : "");
-        btn.type = "button";
-        btn.textContent = norm.label;
-        btn.addEventListener("click", () => {
+        const btn = this.createQuickButton(norm.label, wrap.childElementCount === 0 && !plain, () => {
           if (norm.type === "link") {
             // звонок — переходом, не новой вкладкой: иначе часть телефонов открывает пустую страницу
             if (String(norm.value).startsWith("tel:")) { this.trackEvent("contact-call"); window.location.href = norm.value; return; }
@@ -2469,6 +2561,7 @@
     setStatus(status) {
       const previous = this.state.status;
       this.state.status = status;
+      if (status !== STATUS.AI_ACTIVE) this.cancelIdleReminder(true);
       // новая передача администратору — ждём его первого ответа заново
       if (status === STATUS.WAITING_OPERATOR && previous !== STATUS.WAITING_OPERATOR && previous !== STATUS.HUMAN_ACTIVE) {
         this.state.operatorReplied = false;
@@ -2503,6 +2596,7 @@
       this.el.send.disabled = isClosed || isUnavail;
       if (this.el.mic) this.el.mic.disabled = isClosed || isUnavail;
       this.updateBookBar();
+      this.scheduleIdleReminder();
     }
 
     async submit() {
@@ -2586,6 +2680,7 @@
         this.state.bookingPending = false;
         this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
         this.updateBookBar();
+        this.scheduleIdleReminder();
       }
     }
 
@@ -2619,6 +2714,9 @@
     }
 
     clearLocalSession() {
+      this.cancelIdleReminder(true);
+      this.state.idleReminderEligible = false;
+      this.state.idleReminderShown = false;
       if (this.state.companyId) window.localStorage.removeItem(this.storageKey());
       this.state.sessionId = "";
       this.state.status = STATUS.AI_ACTIVE;

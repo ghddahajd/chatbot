@@ -1230,6 +1230,15 @@ class AnalyticsService:
             )
         }
 
+        idle_reminder = {
+            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+            for kind, event_type in (
+                ("shown", "idle_reminder_shown"),
+                ("callback", "idle_reminder_callback_clicked"),
+                ("later", "idle_reminder_later_clicked"),
+            )
+        }
+
         stages = [
             {"label": "Посетители с виджетом", "count": impressions, "page_loads": len(impression_events)},
             {"label": "Открыли чат", "count": chat_opened},
@@ -1278,6 +1287,7 @@ class AnalyticsService:
             "contact_clicks": contact_clicks,
             "teaser": teaser,
             "booking_card": booking_card,
+            "idle_reminder": idle_reminder,
             "pages": _widget_pages(
                 impression_events,
                 opened_events,

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка напоминания</title>
+<style>
+  body { margin: 32px; background: #f4f5f0; color: #182823; font: 17px system-ui; }
+  main { max-width: 620px; } button { padding: 10px; margin: 4px; font: inherit; }
+</style>
+<main>
+  <h1>Напоминание в чате</h1>
+  <p>Здесь задержка 3 секунды, на сайте — 90. Искусственная переписка, без запросов к серверу и Telegram.</p>
+  <button id="answer">Ответ бота</button>
+  <button id="new">Новый диалог</button>
+  <button id="toggle">Открыть / свернуть</button>
+  <button id="operator">Подключить администратора</button>
+  <button id="callback">Нажать «Перезвоните мне»</button>
+  <button id="later">Нажать «Позже»</button>
+</main>
+<script src="../widget.js"></script>
+<script>
+  const Widget = customElements.get('ai-chat-widget');
+  Widget.prototype.bootstrap = async function () {
+    this.state.companyId = 'reminder-preview';
+    this.state.sessionId = 'preview-dialog';
+    Object.assign(this.state.widgetConfig, { quick_booking: 'on', idle_reminder: 'on', idle_reminder_seconds: '3' });
+    this.toggle();
+    this.addMsg('user', 'Подскажите про консультации');
+    this.addMsg('assistant', 'Могу подсказать стоимость и помочь оставить заявку.');
+  };
+  Widget.prototype.trackEvent = () => {};
+  Widget.prototype.connectWS = () => {};
+  Widget.prototype.sendText = async function (text) {
+    this.addMsg('user', text);
+    if (text === 'Перезвоните мне') {
+      this.addMsg('assistant', 'Оставьте номер — администратор перезвонит.');
+      this.addBookingCard({ purpose: 'callback', days: [], open_now: true, contacts: [] }, []);
+    } else this.addMsg('assistant', 'Тестовое сообщение принято.');
+  };
+  window.addEventListener('load', () => {
+    const widget = document.querySelector('ai-chat-widget');
+    document.querySelector('#answer').onclick = () => widget.addMsg('assistant', 'Могу подсказать стоимость и помочь оставить заявку.');
+    document.querySelector('#toggle').onclick = () => widget.toggle();
+    document.querySelector('#operator').onclick = () => widget.setStatus('HUMAN_ACTIVE');
+    document.querySelector('#callback').onclick = () => widget.el.messages.querySelector('.idle-reminder-actions .quick-btn')?.click();
+    document.querySelector('#later').onclick = () => widget.el.messages.querySelectorAll('.idle-reminder-actions .quick-btn')[1]?.click();
+    document.querySelector('#new').onclick = () => {
+      widget.clearLocalSession();
+      widget.state.sessionId = 'preview-' + Date.now();
+      widget.el.messages.innerHTML = '';
+      widget.setStatus('AI_ACTIVE');
+      if (!widget.state.open) widget.toggle();
+      widget.addMsg('assistant', 'Новый диалог. Напоминание появится через 3 секунды.');
+    };
+  });
+</script>
+</html>

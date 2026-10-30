@@ -68,6 +68,9 @@ class WidgetInput(BaseModel):
     assistant_label: Optional[str] = Field(default=None, min_length=1, max_length=30)
     ai_badge: Optional[str] = None
     quick_booking: Optional[str] = None
+    idle_reminder: Optional[str] = None
+    idle_reminder_seconds: Optional[str] = None
+    idle_reminder_text: Optional[str] = Field(default=None, min_length=1, max_length=300)
     booking_highlight_color: Optional[str] = None
     launcher_label: Optional[str] = Field(default=None, min_length=1, max_length=30)
     status_online: Optional[str] = Field(default=None, min_length=1, max_length=30)
@@ -81,11 +84,18 @@ class WidgetInput(BaseModel):
             raise ValueError(f"ai_badge: ожидалось пусто или show, получено {value!r}")
         return value
 
-    @field_validator("quick_booking")
+    @field_validator("quick_booking", "idle_reminder")
     @classmethod
     def _validate_quick_booking(cls, value: Optional[str]) -> Optional[str]:
         if value not in (None, "", "on"):
             raise ValueError(f"quick_booking: ожидалось пусто или on, получено {value!r}")
+        return value
+
+    @field_validator("idle_reminder_seconds")
+    @classmethod
+    def _validate_reminder_seconds(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and (not value.isascii() or not value.isdigit() or not 15 <= int(value) <= 3600):
+            raise ValueError("Задержка напоминания: от 15 до 3600 секунд")
         return value
 
     @field_validator("booking_highlight_color")

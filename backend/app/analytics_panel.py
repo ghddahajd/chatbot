@@ -786,6 +786,15 @@ def render_analytics_panel(
                 </div>
                 <label class="settings-checkbox span-2"><input type="checkbox" id="settingsAiBadge" /> Показывать в шапке кнопку «с ИИ»</label>
                 <label class="settings-checkbox span-2"><input type="checkbox" id="settingsQuickBooking" /> Быстрая запись: карточка «день + номер» и кнопка «Записаться» у поля ввода</label>
+                <label class="settings-checkbox span-2"><input type="checkbox" id="settingsIdleReminder" /> Один раз предложить обратный звонок, если посетитель замолчал</label>
+                <div class="settings-field">
+                  <label for="settingsIdleReminderSeconds">Задержка напоминания, секунд</label>
+                  <input type="number" id="settingsIdleReminderSeconds" min="15" max="3600" value="90" />
+                </div>
+                <div class="settings-field span-2">
+                  <label for="settingsIdleReminderText">Текст напоминания</label>
+                  <textarea id="settingsIdleReminderText" maxlength="300" rows="2"></textarea>
+                </div>
               </div>
               <aside class="widget-preview" aria-label="Как чат выглядит на сайте">
                 <div class="wp-caption">Как увидят на сайте</div>
@@ -1111,6 +1120,10 @@ def render_analytics_panel(
       const cardLine = card.shown
         ? `<p class="card-hint funnel-teaser">Карточка записи: показали ${fmt(card.shown)} · выбрали день ${fmt(card.day)} · начали вводить номер ${fmt(card.phone)} · отправили ${fmt(card.sent)}</p>`
         : "";
+      const reminder = funnel.idle_reminder || {};
+      const reminderLine = reminder.shown
+        ? `<p class="card-hint funnel-teaser">Напоминание в чате: показали ${fmt(reminder.shown)} · «Перезвоните мне» ${fmt(reminder.callback)} · «Позже» ${fmt(reminder.later)}</p>`
+        : "";
       return `
         <div class="card">
           <h2>Воронка конверсии</h2>
@@ -1120,6 +1133,7 @@ def render_analytics_panel(
           ${tier(stages.slice(2))}
           ${teaserLine}
           ${cardLine}
+          ${reminderLine}
         </div>
       `;
     }
@@ -1840,6 +1854,9 @@ def render_analytics_panel(
         document.getElementById("settingsHighlightColor").value = data.widget.booking_highlight_color || "";
         document.getElementById("settingsAiBadge").checked = data.widget.ai_badge === "show";
         document.getElementById("settingsQuickBooking").checked = data.widget.quick_booking === "on";
+        document.getElementById("settingsIdleReminder").checked = data.widget.idle_reminder === "on";
+        document.getElementById("settingsIdleReminderSeconds").value = data.widget.idle_reminder_seconds || "90";
+        document.getElementById("settingsIdleReminderText").value = data.widget.idle_reminder_text || "";
         document.getElementById("factOms").checked = Boolean(data.facts.oms);
         document.getElementById("factDms").checked = Boolean(data.facts.dms);
         document.getElementById("factAmbulance").checked = Boolean(data.facts.ambulance_brings);
@@ -1890,6 +1907,9 @@ def render_analytics_panel(
           assistant_label: document.getElementById("settingsAssistantLabel").value.trim() || "Ассистент",
           ai_badge: document.getElementById("settingsAiBadge").checked ? "show" : "",
           quick_booking: document.getElementById("settingsQuickBooking").checked ? "on" : "",
+          idle_reminder: document.getElementById("settingsIdleReminder").checked ? "on" : "",
+          idle_reminder_seconds: document.getElementById("settingsIdleReminderSeconds").value,
+          idle_reminder_text: document.getElementById("settingsIdleReminderText").value,
           booking_highlight_color: document.getElementById("settingsHighlightColor").value.trim(),
           launcher_label: document.getElementById("settingsLauncherLabel").value.trim() || "Задать вопрос",
           status_online: document.getElementById("settingsStatusOnline").value.trim() || "на связи",

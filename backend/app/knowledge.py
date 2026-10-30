@@ -46,6 +46,9 @@ DEFAULT_WIDGET_CONFIG = {
     "booking_highlight_color": "",
     # "on" — запись карточкой (день + номер) и кнопка «Записаться» у поля ввода; пусто — как раньше
     "quick_booking": "on",
+    "idle_reminder": "on",
+    "idle_reminder_seconds": "90",
+    "idle_reminder_text": "Если удобнее, можем сами перезвонить и ответить на вопросы.",
     "launcher_label": "Задать вопрос",
     "status_online": "на связи",
     "input_placeholder": "Напишите вопрос…",
@@ -53,7 +56,7 @@ DEFAULT_WIDGET_CONFIG = {
 }
 HEX_COLOR_PATTERN = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$")
 # для этих полей пустая строка — осмысленное «выключить», а не «не задано»
-WIDGET_KEYS_EMPTY_MEANS_OFF = {"ai_badge", "booking_highlight_color", "quick_booking"}
+WIDGET_KEYS_EMPTY_MEANS_OFF = {"ai_badge", "booking_highlight_color", "quick_booking", "idle_reminder"}
 DEFAULT_DOMAIN_PROFILE = {
     "type": "generic",
     "safety_level": "normal",
@@ -1251,7 +1254,7 @@ class KnowledgeBaseResolver:
         if isinstance(raw_widget, dict):
             for key in config:
                 value = raw_widget.get(key)
-                if isinstance(value, str) and value.strip():
+                if isinstance(value, str) and (value.strip() or key == "idle_reminder"):
                     config[key] = value.strip()
 
         if self.overrides_dir is not None:
@@ -1269,6 +1272,11 @@ class KnowledgeBaseResolver:
             config["ai_badge"] = ""
         if config["quick_booking"] != "on":
             config["quick_booking"] = ""
+        if config["idle_reminder"] != "on":
+            config["idle_reminder"] = ""
+        seconds = str(config["idle_reminder_seconds"])
+        if not seconds.isascii() or not seconds.isdigit() or not 15 <= int(seconds) <= 3600:
+            config["idle_reminder_seconds"] = DEFAULT_WIDGET_CONFIG["idle_reminder_seconds"]
         # цвет уходит прямо в стиль виджета на сайте клиента — пропускаем только hex
         if not HEX_COLOR_PATTERN.fullmatch(str(config["booking_highlight_color"])):
             config["booking_highlight_color"] = ""

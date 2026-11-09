@@ -12,7 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
 from .. import config_overrides
-from ..auth import verify_operator_token
+from ..auth import authorize_company
 from ..editable_texts import (
     EDITABLE_TEXTS,
     FORBIDDEN_PATTERN,
@@ -295,7 +295,7 @@ async def get_company_settings(
     company_id: str = Query(...),
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict[str, object]:
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     resolver = request.app.state.knowledge_base_resolver
     try:
         knowledge_base = resolver.get(company_id, fallback=False)
@@ -311,7 +311,7 @@ async def save_company_settings(
     company_id: str = Query(...),
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict[str, object]:
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     resolver = request.app.state.knowledge_base_resolver
     try:
         resolver.get(company_id, fallback=False)
@@ -373,7 +373,7 @@ async def reset_company_settings_block(
     save_overrides_atomic пишет на каждое сохранение). Другие блоки не трогает, даже если их
     сохраняли позже."""
 
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     if block not in _RESET_BLOCK_NAMES:
         raise HTTPException(status_code=422, detail=f"unknown block: {block!r}")
 

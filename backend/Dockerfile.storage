@@ -4,6 +4,7 @@ COPY backend/requirements-db.txt ./
 RUN pip install --no-cache-dir -r requirements-db.txt pydantic==2.11.7 pydantic-settings==2.10.1 PyYAML==6.0.2
 COPY backend/app ./app
 COPY backend/scripts/db_admin.py ./scripts/db_admin.py
+COPY backend/scripts/client_accounts.py ./scripts/client_accounts.py
 COPY backend/alembic.ini ./
 COPY backend/migrations ./migrations
 COPY backend/tests/test_db_foundation.py ./tests/test_db_foundation.py

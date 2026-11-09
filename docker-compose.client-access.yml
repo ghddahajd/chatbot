@@ -1,0 +1,20 @@
+# Подключать явно после миграций и настройки отдельной runtime-роли БД.
+services:
+  backend:
+    network_mode: !reset null
+    build:
+      target: client-access
+    environment:
+      CLIENT_LOGIN_ENABLED: "true"
+      DATABASE_URL: ""
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: chatbot_client_runtime
+      PGPASSWORD: ${CLIENT_DB_PASSWORD:?Задайте пароль runtime-роли БД}
+      PGDATABASE: chatbot_storage
+    networks: [default, storage]
+
+networks:
+  default: {}
+  storage:
+    internal: true

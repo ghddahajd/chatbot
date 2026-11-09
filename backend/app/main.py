@@ -3,17 +3,18 @@
 import asyncio
 import contextlib
 import logging
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analytics import AnalyticsService, archive_old_analytics_events
 from .analytics_panel import render_analytics_panel
-from .auth import OPERATOR_COOKIE_NAME, verify_operator_token
+from .auth import CLIENT_COOKIE_NAME, OPERATOR_COOKIE_NAME, authenticate, require_same_origin, verify_operator_token
 from .config import get_settings
 from .login_panel import render_login_page, sanitize_next_path
 from .delivery import DeliveryService
@@ -24,7 +25,7 @@ from .llm import build_llm_client, get_system_prompt
 from .logging_setup import configure_logging, log_event
 from .policy import analyze_message
 from .preflight import DEFAULT_OPERATOR_TOKEN, code_fingerprint
-from .rate_limit import RateLimiter
+from .rate_limit import RateLimiter, client_ip
 from .routes import analytics, chat, debug, delivery, leads, operator, widget, ws
 from .routes import settings as settings_routes
 from .sessions import SessionStore, archive_session
@@ -143,6 +144,14 @@ async def lifespan(app: FastAPI):
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
 
     app.state.settings = settings
+    app.state.client_access = None
+    app.state.login_rate_limiter = RateLimiter(limit=10)
+    if settings.client_login_enabled:
+        try:
+            from .services.client_access import ClientAccessService
+            app.state.client_access = ClientAccessService(settings.client_login_hours)
+        except Exception as error:
+            logger.error("client login unavailable error=%s", type(error).__name__)
     app.state.knowledge_base_resolver = KnowledgeBaseResolver(
         data_dir=settings.data_dir,
         clients_data_dir=settings.clients_data_dir,
@@ -328,6 +337,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if app.state.client_access is not None:
+            await app.state.client_access.close()
         for bridge_task in (telegram_bridge_task, telegram_resend_task, watchdog_task, ops_bot_task):
             if bridge_task is not None:
                 bridge_task.cancel()
@@ -428,14 +439,19 @@ async def analytics_page(request: Request):
     # страницу в браузере. verify_operator_token по-прежнему принимает header/query для
     # прямых API-вызовов — тут просто не даём ей кинуть исключение наружу.
     try:
-        verify_operator_token(request, None)
-    except Exception:
+        principal = await authenticate(request)
+    except HTTPException as error:
+        if error.status_code == 503:
+            raise
         return RedirectResponse(url=f"/login?next={request.url.path}")
     resolver = request.app.state.knowledge_base_resolver
     company_ids = resolver.company_ids()
     default_company_id = settings.analytics_default_company_id
     if default_company_id not in company_ids:
         default_company_id = resolver.default_company_id
+    if not principal.owner:
+        default_company_id = principal.company_id
+        company_ids = [principal.company_id]
     return HTMLResponse(
         render_analytics_panel(
             default_company_id=default_company_id,
@@ -449,9 +465,13 @@ async def analytics_page(request: Request):
 async def backstage_page(request: Request):
     # Полный список нужен владельцу для переключения между зарегистрированными клиентами.
     try:
-        verify_operator_token(request, None)
-    except Exception:
+        principal = await authenticate(request)
+    except HTTPException as error:
+        if error.status_code == 503:
+            raise
         return RedirectResponse(url=f"/login?next={request.url.path}")
+    if not principal.owner:
+        raise HTTPException(status_code=403, detail="Только для владельца")
     resolver = request.app.state.knowledge_base_resolver
     company_ids = resolver.company_ids()
     default_company_id = settings.backstage_default_company_id
@@ -469,35 +489,65 @@ async def backstage_page(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request) -> str:
     next_path = sanitize_next_path(request.query_params.get("next") or "/analytics")
-    return render_login_page(next_path=next_path)
+    return render_login_page(next_path=next_path, client_login_enabled=settings.client_login_enabled)
 
 
 @app.post("/login")
 async def login_submit(request: Request):
+    if not request.app.state.login_rate_limiter.allow(client_ip(request, trusted_proxy_count=settings.trusted_proxy_count)):
+        raise HTTPException(status_code=429, detail="Слишком много попыток входа. Попробуйте позже.")
+    if settings.client_login_enabled:
+        require_same_origin(request)
     form = await request.form()
     password = str(form.get("password") or "")
+    username = str(form.get("username") or "").strip()
     next_path = sanitize_next_path(str(form.get("next") or "/analytics"))
-    if password != settings.operator_token:
-        return HTMLResponse(render_login_page(error=True, next_path=next_path), status_code=401)
+    token = None
+    if username and settings.client_login_enabled:
+        service = request.app.state.client_access
+        if service is None:
+            raise HTTPException(status_code=503, detail="Вход сотрудников временно недоступен")
+        try:
+            token = await service.login(username, password)
+        except Exception:
+            raise HTTPException(status_code=503, detail="Вход сотрудников временно недоступен") from None
+        valid = token is not None
+    else:
+        valid = not username and bool(settings.operator_token) and hmac.compare_digest(password.encode(), settings.operator_token.encode())
+    if not valid:
+        return HTMLResponse(render_login_page(error=True, next_path=next_path,
+                            client_login_enabled=settings.client_login_enabled), status_code=401)
 
-    response = RedirectResponse(url=next_path, status_code=303)
+    response = RedirectResponse(url="/analytics" if token else next_path, status_code=303)
+    response.delete_cookie(OPERATOR_COOKIE_NAME if token else CLIENT_COOKIE_NAME)
     response.set_cookie(
-        key=OPERATOR_COOKIE_NAME,
-        value=settings.operator_token,
+        key=CLIENT_COOKIE_NAME if token else OPERATOR_COOKIE_NAME,
+        value=token or settings.operator_token,
         httponly=True,
         samesite="lax",
         # secure только когда реально пришли по https (прод за nginx) — иначе локальный http
         # тест (localhost:8000) браузер бы просто тихо не принял куку, залогиниться нельзя.
-        secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
-        max_age=60 * 60 * 24 * 30,
+        secure=(bool(token) and not settings.dev_mode) or request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
+        max_age=settings.client_login_hours * 3600 if token else 60 * 60 * 24 * 30,
     )
     return response
 
 
 @app.post("/logout")
-async def logout_submit() -> RedirectResponse:
+async def logout_submit(request: Request) -> RedirectResponse:
+    if settings.client_login_enabled:
+        require_same_origin(request)
     response = RedirectResponse(url="/login", status_code=303)
+    token = request.cookies.get(CLIENT_COOKIE_NAME)
+    if token and settings.client_login_enabled:
+        try:
+            if request.app.state.client_access is None:
+                raise RuntimeError
+            await request.app.state.client_access.logout(token)
+        except Exception:
+            response = JSONResponse(status_code=503, content={"detail": "Не удалось отозвать сессию. Попробуйте позже."})
     response.delete_cookie(OPERATOR_COOKIE_NAME)
+    response.delete_cookie(CLIENT_COOKIE_NAME)
     return response
 
 

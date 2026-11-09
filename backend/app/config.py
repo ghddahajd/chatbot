@@ -130,6 +130,8 @@ class Settings(BaseSettings):
     # перед Render) — увеличить до 2, иначе rate-limit снова обходится подменой заголовка.
     trusted_proxy_count: int = 1
     operator_token: str = "demo-operator-token"
+    client_login_enabled: bool = False
+    client_login_hours: int = Field(default=24, ge=1, le=168)
     allowed_origins: str = "http://localhost:8000"
     default_company_id: str = "rosh_demo"
     # /analytics (клиентская страница) и /backstage (внутренняя, с переключателем) — раньше эти

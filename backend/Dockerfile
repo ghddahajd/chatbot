@@ -1,7 +1,7 @@
 # mirror.gcr.io, не docker.io напрямую (живой баг, 2026-08-26): анонимные пуллы Docker Hub
 # рейт-лимитятся по IP (~100/6ч) — новый Floating IP сервера унаследовал чужой лимит и сразу
 # ловил 429 на первой же сборке. Google-зеркало отдаёт тот же образ без этого ограничения.
-FROM mirror.gcr.io/library/python:3.12-slim
+FROM mirror.gcr.io/library/python:3.12-slim AS runtime
 
 WORKDIR /app
 
@@ -28,3 +28,10 @@ EXPOSE 8000
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM runtime AS client-access
+COPY backend/requirements-db.txt ./requirements-db.txt
+RUN pip install --no-cache-dir -r requirements-db.txt
+
+# Обычная сборка сохраняет файловый runtime без обязательных SQL-зависимостей.
+FROM runtime AS default

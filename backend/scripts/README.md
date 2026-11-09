@@ -14,6 +14,7 @@
 | `onboard_client.py` | публикует проверенную KB клиента в рабочую папку и печатает embed |
 | `client_launch_check.py` | проверяет готовность опубликованного клиента к запуску |
 | `db_admin.py` | отдельная проверка PostgreSQL и повторяемая регистрация клиентских KB; не переключает runtime |
+| `client_accounts.py` | создание, отключение и сброс пароля сотрудника; отдельная роль БД для клиентского входа |
 | `crawl_article_batch.py` | краулит staging batch статей и режет текст на chunks для будущего RAG |
 | `import_articles_registry.py` | импортирует реестр статей клиента в staging без публикации в runtime KB |
 

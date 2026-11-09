@@ -21,9 +21,16 @@ def sanitize_next_path(value: str, *, default: str = "/analytics") -> str:
     return candidate
 
 
-def render_login_page(*, error: bool = False, next_path: str = "/analytics") -> str:
+def render_login_page(*, error: bool = False, next_path: str = "/analytics", client_login_enabled: bool = False) -> str:
+    username_block = (
+        '<label for="username">Логин сотрудника</label>'
+        '<input id="username" name="username" autocomplete="username" maxlength="64" autofocus />'
+        '<p class="subtitle">Для входа владельца оставьте логин пустым.</p>'
+        if client_login_enabled else ""
+    )
+    error_text = "Неверный логин или пароль" if client_login_enabled else "Неверный пароль"
     error_block = (
-        '<p class="error-text">Неверный пароль</p>' if error else ""
+        f'<p class="error-text">{error_text}</p>' if error else ""
     )
     # Живой баг (код-ревью, 2026-08-27): next_path раньше шёл в атрибут value="" сырым
     # f-string'ом без экранирования — "/login?next="><script>..." закрывал атрибут и
@@ -108,8 +115,9 @@ def render_login_page(*, error: bool = False, next_path: str = "/analytics") -> 
     <h1>Аналитика</h1>
     <p class="subtitle">Введите пароль, чтобы посмотреть дашборд</p>
     {error_block}
+    {username_block}
     <label for="password">Пароль</label>
-    <input id="password" name="password" type="password" autofocus required />
+    <input id="password" name="password" type="password" autocomplete="current-password" {"" if client_login_enabled else "autofocus"} required />
     <input type="hidden" name="next" value="{safe_next_path}" />
     <button type="submit">Войти</button>
   </form>

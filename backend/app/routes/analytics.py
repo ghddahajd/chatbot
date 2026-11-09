@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..auth import verify_operator_token
+from ..auth import authenticate, authorize_company
 from ..logging_setup import log_event
 from ..rate_limit import client_ip
 
@@ -101,7 +101,7 @@ async def analytics_summary(
     limit: int = Query(default=20, ge=1, le=100),
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict:
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     sessions = await request.app.state.session_store.list_all()
     return request.app.state.analytics_service.summary(
         sessions=sessions,
@@ -116,7 +116,7 @@ async def analytics_operators(
     company_id: Optional[str] = Query(default=None),
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict:
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     return request.app.state.analytics_service.operator_summary(company_id=company_id)
 
 
@@ -158,7 +158,7 @@ async def analytics_chats(
     исходу. scope: all | bot_only | operator | lead. Период — тот же, что у дашборда сверху;
     total — сколько всего за период, для «Показать ещё»."""
 
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     start, end, _label = _resolve_date_range(days, start_date, end_date)
     live_sessions = await request.app.state.session_store.list_all()
     return request.app.state.analytics_service.conversations_page(
@@ -191,7 +191,7 @@ async def analytics_chats_export(
     """Полные диалоги одним JSON-файлом (2026-09-22) — для разбора и для корпуса проверок.
     Телефоны замаскированы, лишних полей нет (см. AnalyticsService.export_conversations)."""
 
-    verify_operator_token(request, x_operator_token)
+    payload.company_id = await authorize_company(request, x_operator_token, payload.company_id)
     live_sessions = await request.app.state.session_store.list_all()
     conversations = request.app.state.analytics_service.export_conversations(
         live_sessions,
@@ -230,10 +230,10 @@ async def analytics_chat_detail(
     request: Request,
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict:
-    verify_operator_token(request, x_operator_token)
+    principal = await authenticate(request, x_operator_token)
     live_sessions = await request.app.state.session_store.list_all()
     conversation = request.app.state.analytics_service.get_conversation(session_id, live_sessions)
-    if conversation is None:
+    if conversation is None or (not principal.owner and conversation.get("company_id") != principal.company_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
 
@@ -255,7 +255,7 @@ async def analytics_dashboard(
     start_date/end_date (2026-08-30) — кастомный период, оба вместе, побеждают `days`, если
     заданы (см. _resolve_date_range)."""
 
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     analytics_service = request.app.state.analytics_service
     sessions = await request.app.state.session_store.list_all()
 
@@ -366,7 +366,7 @@ async def analytics_leads(
     и не отдаются, это не сокрытие на фронте). service_id резолвится в человекочитаемое имя
     так же, как в /dashboard's top_services."""
 
-    verify_operator_token(request, x_operator_token)
+    company_id = await authorize_company(request, x_operator_token, company_id)
     analytics_service = request.app.state.analytics_service
     start, end, range_label = _resolve_date_range(days, start_date, end_date)
 

@@ -1,0 +1,43 @@
+# Самостоятельный локальный контур; основной Compose его не подключает.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: storage_owner
+      POSTGRES_DB: chatbot_storage
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте отдельный пароль локальной БД}
+    volumes:
+      - storage_data:/var/lib/postgresql/data
+    networks: [storage]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U storage_owner -d chatbot_storage"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: "no"
+
+  db-tools:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.storage
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: storage_owner
+      PGDATABASE: chatbot_storage
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Задайте отдельный пароль локальной БД}
+      CLIENTS_DATA_DIR: /clients
+      DEFAULTS_DATA_DIR: /workspace/backend/data/defaults
+    volumes:
+      - ./rosh-client-data/clients:/clients:ro
+    networks: [storage]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  storage:
+    internal: true
+volumes:
+  storage_data:

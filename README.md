@@ -6,6 +6,9 @@
 
 Если нужно быстро понять, где что лежит: [PROJECT_MAP.md](PROJECT_MAP.md).
 
+Опциональный локальный PostgreSQL-контур: [STORAGE_FOUNDATION.md](STORAGE_FOUNDATION.md).
+Он запускается отдельно и пока не меняет хранение данных приложения или права доступа.
+
 ## Что внутри
 
 - `Vanilla JS` виджет на `Shadow DOM`

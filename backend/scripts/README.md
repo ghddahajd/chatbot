@@ -13,6 +13,7 @@
 | `validate_kb.py` | проверяет клиентскую базу знаний без запуска backend и зависимостей |
 | `onboard_client.py` | публикует проверенную KB клиента в рабочую папку и печатает embed |
 | `client_launch_check.py` | проверяет готовность опубликованного клиента к запуску |
+| `db_admin.py` | отдельная проверка PostgreSQL и повторяемая регистрация клиентских KB; не переключает runtime |
 | `crawl_article_batch.py` | краулит staging batch статей и режет текст на chunks для будущего RAG |
 | `import_articles_registry.py` | импортирует реестр статей клиента в staging без публикации в runtime KB |
 

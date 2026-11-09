@@ -427,40 +427,41 @@ async def analytics_page(request: Request):
     # куки/токена просто уводим на /login, а не отдаём голую JSON-ошибку на попытку открыть
     # страницу в браузере. verify_operator_token по-прежнему принимает header/query для
     # прямых API-вызовов — тут просто не даём ей кинуть исключение наружу.
-    #
-    # 2026-08-29: дропдаун компаний скрыт (show_company_selector=False) — эта страница для
-    # клиента (если/когда отдадим доступ), он не должен знать, что вообще существует
-    # отдельный company_id для нашего тестового трафика (rosh_test, см. /backstage ниже).
     try:
         verify_operator_token(request, None)
     except Exception:
         return RedirectResponse(url=f"/login?next={request.url.path}")
+    resolver = request.app.state.knowledge_base_resolver
+    company_ids = resolver.company_ids()
+    default_company_id = settings.analytics_default_company_id
+    if default_company_id not in company_ids:
+        default_company_id = resolver.default_company_id
     return HTMLResponse(
         render_analytics_panel(
-            default_company_id=settings.analytics_default_company_id,
+            default_company_id=default_company_id,
             show_company_selector=False,
+            known_company_ids=company_ids,
         )
     )
 
 
 @app.get("/backstage")
 async def backstage_page(request: Request):
-    # 2026-08-29: та же панель 1-в-1 (не копия кода — один render_analytics_panel), просто
-    # смотрит по умолчанию на rosh_test (наш тестовый company_id для scratchwidgettestsite.
-    # vercel.app, изолированный от реальной аналитики клиента) и показывает дропдаун — только
-    # для внутреннего использования, нигде не ссылаемся на этот путь.
+    # Полный список нужен владельцу для переключения между зарегистрированными клиентами.
     try:
         verify_operator_token(request, None)
     except Exception:
         return RedirectResponse(url=f"/login?next={request.url.path}")
+    resolver = request.app.state.knowledge_base_resolver
+    company_ids = resolver.company_ids()
+    default_company_id = settings.backstage_default_company_id
+    if default_company_id not in company_ids:
+        default_company_id = resolver.default_company_id
     return HTMLResponse(
         render_analytics_panel(
-            default_company_id=settings.backstage_default_company_id,
+            default_company_id=default_company_id,
             show_company_selector=True,
-            known_company_ids=[
-                settings.backstage_default_company_id,
-                settings.analytics_default_company_id,
-            ],
+            known_company_ids=company_ids,
         )
     )
 

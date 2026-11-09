@@ -8,30 +8,20 @@
 
 def render_analytics_panel(
     *,
-    default_company_id: str = "rosh_import_demo",
+    default_company_id: str = "",
     show_company_selector: bool = True,
     known_company_ids: list[str] | None = None,
 ) -> str:
-    """default_company_id/show_company_selector (2026-08-29) — /analytics (для клиента,
-    когда/если отдадим доступ) вызывает это с show_company_selector=False: дропдаун скрыт,
-    клиент никогда не узнает, что вообще существует второй company_id для тестового трафика
-    (см. /backstage в main.py). Сам JS-код (loadChats/load/companySelect-listener) не тронут —
-    он как читал .value у #companySelect, так и читает; при show_company_selector=False это
-    просто select с одним вариантом и без визуального намёка на выбор.
+    """Скрытый селектор задаёт фильтр, но не заменяет серверные права доступа."""
 
-    known_company_ids (2026-09-22) — раньше список из двух id РОШ был вписан прямо сюда;
-    теперь main.py передаёт его из настроек, дефолт здесь только на случай вызова без
-    аргумента (сохраняет прежнее поведение)."""
+    ids = list(dict.fromkeys(known_company_ids if known_company_ids is not None else [default_company_id]))
+    ids = [company_id for company_id in ids if company_id]
+    if default_company_id not in ids:
+        default_company_id = ids[0] if ids else ""
 
     if show_company_selector:
-        # Живой баг (найден при живой проверке в браузере, 2026-08-29): раньше "rosh_test"
-        # было захардкожено вторым вариантом безусловно — при default_company_id="rosh_test"
-        # (ровно случай /backstage) это давало ДВЕ одинаковые опции и ни одной для
-        # rosh_import_demo. Теперь берём оба известных id, ставим default_company_id первым/
-        # выбранным, остальные — следом, без дублей независимо от того, что передали дефолтом.
-        known_company_ids = known_company_ids or ["rosh_test", "rosh_import_demo"]
-        ordered_ids = [default_company_id] + [
-            company_id for company_id in known_company_ids if company_id != default_company_id
+        ordered_ids = ([default_company_id] if default_company_id else []) + [
+            company_id for company_id in ids if company_id != default_company_id
         ]
         options_html = "".join(
             f'<option value="{company_id}"{" selected" if company_id == default_company_id else ""}>'
@@ -1824,7 +1814,9 @@ def render_analytics_panel(
     document.getElementById("doctorAddBtn").addEventListener("click", addDoctorRow);
 
     function settingsCompanyId() {
-      return document.getElementById("companySelect").value || "rosh_import_demo";
+      const companyId = document.getElementById("companySelect").value;
+      if (!companyId) throw new Error("Выберите клинику для настройки");
+      return companyId;
     }
 
     async function loadSettings() {

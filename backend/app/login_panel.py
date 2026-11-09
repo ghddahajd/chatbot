@@ -105,7 +105,7 @@ def render_login_page(*, error: bool = False, next_path: str = "/analytics") -> 
 </head>
 <body>
   <form class="card" method="post" action="/login">
-    <h1>Аналитика ROSH</h1>
+    <h1>Аналитика</h1>
     <p class="subtitle">Введите пароль, чтобы посмотреть дашборд</p>
     {error_block}
     <label for="password">Пароль</label>

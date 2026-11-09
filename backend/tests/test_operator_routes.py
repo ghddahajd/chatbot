@@ -230,14 +230,12 @@ def test_backstage_page_requires_auth_same_as_analytics(test_client) -> None:
     assert response.headers["location"].startswith("/login")
 
 
-def test_backstage_page_shows_selector_defaulting_to_rosh_test(test_client) -> None:
-    """Тот же render_analytics_panel, что и /analytics (не копия кода) — просто по умолчанию
-    смотрит на rosh_test и показывает дропдаун, только для внутреннего использования."""
+def test_backstage_page_shows_registered_clients(test_client) -> None:
 
     response = test_client.get("/backstage?token=demo-operator-token")
     assert response.status_code == 200
-    assert "rosh_test" in response.text
-    assert "rosh_import_demo" in response.text
+    assert 'value="rosh_demo" selected' in response.text
+    assert 'value="dup_two"' in response.text
     assert "Аналитика" in response.text
 
 
@@ -247,8 +245,8 @@ def test_backstage_dropdown_has_no_duplicate_options(test_client) -> None:
     "rosh_import_demo". Считаем реальные <option> в дропдауне, не просто ищем подстроку."""
 
     response = test_client.get("/backstage?token=demo-operator-token")
-    assert response.text.count('<option value="rosh_test"') == 1
-    assert response.text.count('<option value="rosh_import_demo"') == 1
+    assert response.text.count('<option value="rosh_demo"') == 1
+    assert response.text.count('<option value="dup_two"') == 1
 
 
 def test_analytics_and_backstage_default_companies_come_from_settings(test_client, monkeypatch) -> None:
@@ -257,16 +255,16 @@ def test_analytics_and_backstage_default_companies_come_from_settings(test_clien
 
     from app import main as main_module
 
-    monkeypatch.setattr(main_module.settings, "analytics_default_company_id", "demo_alt")
-    monkeypatch.setattr(main_module.settings, "backstage_default_company_id", "test_client")
+    monkeypatch.setattr(main_module.settings, "analytics_default_company_id", "dup_one")
+    monkeypatch.setattr(main_module.settings, "backstage_default_company_id", "dup_two")
 
     analytics = test_client.get("/analytics?token=demo-operator-token")
     backstage = test_client.get("/backstage?token=demo-operator-token")
 
-    assert 'value="demo_alt" selected' in analytics.text
-    assert "test_client" not in analytics.text  # клиент не должен видеть второй company_id
-    assert backstage.text.count('<option value="test_client"') == 1
-    assert backstage.text.count('<option value="demo_alt"') == 1
+    assert 'value="dup_one" selected' in analytics.text
+    assert 'value="dup_two"' not in analytics.text
+    assert 'value="dup_two" selected' in backstage.text
+    assert backstage.text.count('<option value="dup_one"') == 1
 
 
 def test_login_page_renders(test_client) -> None:

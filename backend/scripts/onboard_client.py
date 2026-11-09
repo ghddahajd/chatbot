@@ -19,6 +19,7 @@ DEFAULT_CLIENTS_DIR = REPO_ROOT / "backend" / "data" / "clients"
 DEFAULT_DRAFTS_DIR = REPO_ROOT / "new" / "kb_drafts"
 DEFAULT_API_BASE = "https://api.example.com"
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+OPTIONAL_FILES = ("config.yaml", "faq_quick_answers.json", "article_service_map.yaml", "symptom_service_map.yaml")
 
 
 def _resolve_target(clients_dir: Path, company_id: str) -> Path:
@@ -59,17 +60,23 @@ def _resolve_source_dir(source: Path) -> Path:
 
 
 def _copy_required_files(source_dir: Path, target_dir: Path, *, force: bool) -> None:
+    if source_dir == target_dir:
+        raise ValueError("Исходная и рабочая папки клиента совпадают")
+    files = list(REQUIRED_FILES)
+    for name in OPTIONAL_FILES:
+        path = source_dir / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"Ожидается обычный файл клиента: {name}")
+        if path.is_file():
+            files.append(name)
     if target_dir.exists():
         if not force:
             raise FileExistsError(f"клиент уже существует: {target_dir}. Добавь --force для перезаписи.")
         shutil.rmtree(target_dir)
 
     target_dir.mkdir(parents=True)
-    for file_name in REQUIRED_FILES:
+    for file_name in files:
         shutil.copy2(source_dir / file_name, target_dir / file_name)
-    optional_config = source_dir / "config.yaml"
-    if optional_config.exists() and optional_config.is_file():
-        shutil.copy2(optional_config, target_dir / "config.yaml")
 
 
 def _embed_blocks(api_base: str, company_id: str) -> tuple[str, str]:

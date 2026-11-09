@@ -1172,6 +1172,12 @@ class KnowledgeBaseResolver:
             return False
         return all((client_dir / file_name).exists() for file_name in KB_REQUIRED_FILES)
 
+    def company_ids(self) -> list[str]:
+        """Только зарегистрированные клиентские папки в пределах resolver."""
+        if not self.clients_data_dir.is_dir():
+            return []
+        return sorted(item.name for item in self.clients_data_dir.iterdir() if self.client_exists(item.name))
+
     def get(self, company_id: str | None, *, fallback: bool = True) -> KnowledgeBase:
         requested_company_id = (company_id or "").strip()
         if company_id is not None and not requested_company_id and not fallback:

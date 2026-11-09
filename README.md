@@ -257,6 +257,8 @@ python3 backend/scripts/onboard_client.py new/kb_drafts/client_id \
 
 - проверит KB;
 - скопирует только runtime-файлы в `backend/data/clients/<company_id>/`;
+- сохранит дополнительные `config.yaml`, `faq_quick_answers.json`, `article_service_map.yaml`
+  и `symptom_service_map.yaml`, если они есть; посторонние файлы не публикуются;
 - напечатает явный embed с `data-company-id`;
 - напечатает autodetect embed без `data-company-id`.
 

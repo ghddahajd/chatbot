@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REQUIRED_FILES = ("company.yaml", "services.json", "prices.json", "faq.md")
@@ -31,6 +33,14 @@ def test_onboard_client_publishes_required_files(tmp_path: Path) -> None:
     source_dir = tmp_path / "medical_sample"
     clients_dir = tmp_path / "clients"
     shutil.copytree(BACKEND_DIR / "data" / "client_template" / "medical_sample", source_dir)
+    optional_files = {
+        "faq_quick_answers.json": '[]\n',
+        "article_service_map.yaml": '{}\n',
+        "symptom_service_map.yaml": '{}\n',
+    }
+    for name, content in optional_files.items():
+        (source_dir / name).write_text(content, encoding="utf-8")
+    (source_dir / "private-notes.txt").write_text("Не публиковать", encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -52,6 +62,9 @@ def test_onboard_client_publishes_required_files(tmp_path: Path) -> None:
     assert all((target_dir / file_name).exists() for file_name in REQUIRED_FILES)
     assert (target_dir / "config.yaml").exists()
     assert "widget:" in (target_dir / "config.yaml").read_text(encoding="utf-8")
+    for name, content in optional_files.items():
+        assert (target_dir / name).read_text(encoding="utf-8") == content
+    assert not (target_dir / "private-notes.txt").exists()
     assert 'data-company-id="medical_sample"' in result.stdout
     assert "Autodetect embed:" in result.stdout
 
@@ -153,3 +166,39 @@ def test_onboard_client_publish_refuses_blockers(tmp_path: Path) -> None:
     assert "БЛОКЕРЫ готовности" in result.stderr
     assert "allowed_domains пустой" in result.stderr
     assert not (clients_dir / "medical_sample").exists()
+
+
+@pytest.mark.parametrize("invalid_optional", [False, True])
+def test_force_publish_replaces_optional_files_safely(tmp_path, invalid_optional):
+    source = tmp_path / "draft" / "medical_sample"
+    target = tmp_path / "clients" / "medical_sample"
+    template = BACKEND_DIR / "data/client_template" / "medical_sample"
+    shutil.copytree(template, source)
+    shutil.copytree(template, target)
+    previous_faq = '[{"id":"old"}]'
+    (target / "faq_quick_answers.json").write_text(previous_faq)
+    if invalid_optional:
+        external = tmp_path / "external.json"
+        external.write_text("[]")
+        (source / "faq_quick_answers.json").symlink_to(external)
+    result = subprocess.run([sys.executable, str(BACKEND_DIR / "scripts/onboard_client.py"),
+                             str(source), "--clients-dir", str(target.parent), "--force"],
+                            capture_output=True, text=True)
+    if invalid_optional:
+        assert result.returncode == 1
+        assert "Ожидается обычный файл" in result.stderr
+        assert (target / "faq_quick_answers.json").read_text() == previous_faq
+    else:
+        assert result.returncode == 0, result.stderr
+        assert not (target / "faq_quick_answers.json").exists()
+
+
+def test_force_publish_cannot_delete_its_source(tmp_path):
+    source = tmp_path / "medical_sample"
+    shutil.copytree(BACKEND_DIR / "data/client_template/medical_sample", source)
+    result = subprocess.run([sys.executable, str(BACKEND_DIR / "scripts/onboard_client.py"),
+                             str(source), "--clients-dir", str(tmp_path), "--force"],
+                            capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "папки клиента совпадают" in result.stderr
+    assert all((source / name).exists() for name in REQUIRED_FILES)

@@ -457,6 +457,8 @@ async def analytics_page(request: Request):
             default_company_id=default_company_id,
             show_company_selector=False,
             known_company_ids=company_ids,
+            company_contexts={cid: resolver.get(cid, fallback=False).company.model_dump(
+                include={"company_name", "website_url", "allowed_domains"}) for cid in company_ids},
         )
     )
 
@@ -482,6 +484,8 @@ async def backstage_page(request: Request):
             default_company_id=default_company_id,
             show_company_selector=True,
             known_company_ids=company_ids,
+            company_contexts={cid: resolver.get(cid, fallback=False).company.model_dump(
+                include={"company_name", "website_url", "allowed_domains"}) for cid in company_ids},
         )
     )
 

@@ -5,12 +5,16 @@
 (широкий встроенный woff2 не тащим ради внутреннего инструмента). Цвета данных в графиках —
 из проверенной валидатором дефолтной палитры дата-виз скилла (CVD-safe, не "на глаз")."""
 
+import json
+from urllib.parse import urlsplit
+
 
 def render_analytics_panel(
     *,
     default_company_id: str = "",
     show_company_selector: bool = True,
     known_company_ids: list[str] | None = None,
+    company_contexts: dict[str, dict] | None = None,
 ) -> str:
     """Скрытый селектор задаёт фильтр, но не заменяет серверные права доступа."""
 
@@ -18,6 +22,30 @@ def render_analytics_panel(
     ids = [company_id for company_id in ids if company_id]
     if default_company_id not in ids:
         default_company_id = ids[0] if ids else ""
+    contexts = {}
+    for company_id in ids:
+        company = (company_contexts or {}).get(company_id, {})
+        domains = []
+        for value in company.get("allowed_domains") or []:
+            if not value:
+                continue
+            try:
+                domain = urlsplit(value if "://" in value else "//" + value).hostname
+            except ValueError:
+                continue
+            if domain and domain not in domains:
+                domains.append(domain)
+        website = company.get("website_url") or ""
+        try:
+            website_domain = urlsplit(website if "://" in website else "//" + website).hostname
+        except ValueError:
+            website_domain = None
+        if website_domain and (not domains or website_domain in domains):
+            domains = [website_domain, *(domain for domain in domains if domain != website_domain)]
+        primary = next((domain for domain in domains if domain not in {"localhost", "127.0.0.1", "0.0.0.0"}),
+                       domains[0] if domains else "Домен не указан")
+        contexts[company_id] = {"name": company.get("company_name") or company_id,
+                                "domain": primary, "domains": domains}
 
     if show_company_selector:
         ordered_ids = ([default_company_id] if default_company_id else []) + [
@@ -84,6 +112,10 @@ def render_analytics_panel(
     h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0; }
     .subtitle { color: var(--text-secondary); font-size: 14px; margin-top: 4px; }
     .header-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .clinic-context { flex: 1; min-width: 180px; text-align: center; overflow-wrap: anywhere; }
+    .clinic-context-name { display: block; font-size: 15px; font-weight: 700; }
+    .clinic-context-domain { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 13px; }
+    @media (max-width: 1000px) { .clinic-context { order: 3; flex-basis: 100%; } }
     .logout-btn {
       font: inherit;
       font-size: 13px;
@@ -589,6 +621,10 @@ def render_analytics_panel(
         <h1>Аналитика</h1>
         <div class="subtitle">Операторы, лиды, конверсия</div>
       </div>
+      <div class="clinic-context" id="clinicContext" aria-live="polite">
+        <span class="clinic-context-name" id="clinicContextName"></span>
+        <span class="clinic-context-domain" id="clinicContextDomain"></span>
+      </div>
       <div class="header-controls">
         <select class="company-select" id="daysSelect">
           <option value="1">Сегодня</option>
@@ -872,6 +908,16 @@ def render_analytics_panel(
   </main>
 
   <script>
+
+    const CLINIC_CONTEXTS = __CLINIC_CONTEXTS__;
+    function updateClinicContext() {
+      const companyId = document.getElementById("companySelect").value;
+      const context = CLINIC_CONTEXTS[companyId];
+      document.getElementById("clinicContextName").textContent = companyId ? (context?.name || companyId) : "Все клиники";
+      document.getElementById("clinicContextDomain").textContent = companyId ? (context?.domain || "Домен не указан") : "";
+      document.getElementById("clinicContext").title = context ? context.domains.join("\\n") : "";
+    }
+    updateClinicContext();
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -2189,6 +2235,7 @@ def render_analytics_panel(
     }
 
     document.getElementById("companySelect").addEventListener("change", () => {
+      updateClinicContext();
       reloadDashboardIfVisible();
       if (document.getElementById("chatsContent").style.display !== "none") loadChats();
       if (document.getElementById("leadsContent").style.display !== "none") loadLeads();
@@ -2320,4 +2367,5 @@ def render_analytics_panel(
         html.replace("__COMPANY_SELECT_HTML__", company_select_html)
         .replace("__CHAT_EXPORT_HTML__", chat_export_html)
         .replace("__CHAT_EXPORT_ENABLED__", "true" if show_company_selector else "false")
+        .replace("__CLINIC_CONTEXTS__", json.dumps(contexts, ensure_ascii=False).replace("<", "\\u003c"))
     )

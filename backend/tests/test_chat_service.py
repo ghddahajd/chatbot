@@ -1156,8 +1156,9 @@ def test_regulated_instant_override_enqueues_operator_requested_event(
     assert events[-1]["event_type"] == "operator_requested"
     assert events[-1]["payload"]["last_message"] == "у меня воспаление что делать"
     operator_url = events[-1]["payload"]["operator_url"]
-    assert "/operator?token=" in operator_url
-    assert "demo-operator-token" in operator_url
+    assert operator_url.endswith("/operator")
+    assert "token=" not in operator_url
+    assert "demo-operator-token" not in operator_url
 
 
 def test_operator_second_request_transfers_after_soft_offer(test_client) -> None:

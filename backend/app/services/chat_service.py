@@ -10,6 +10,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from ..delivery import _escape_markdown, _lead_short_id
+from .delivery_enqueue import operator_event_failed
 from ..hours import is_currently_open
 from ..logging_setup import log_event
 from ..leads import build_lead_from_contact, classify_lead_reason, lead_trigger_for, recent_messages_for
@@ -379,11 +380,10 @@ class ChatService:
             base_url = str(self.request.url_for("operator_page"))
         except Exception:
             base_url = "/operator"
-        token = getattr(self.request.app.state.settings, "operator_token", "")
-        return f"{base_url}?token={token}"
+        return base_url
 
     def _operator_session_url(self, session_id: str) -> str:
-        return f"{self._operator_url()}&session_id={session_id}"
+        return f"{self._operator_url()}?session_id={session_id}"
 
     def _looks_like_partial_phone(self, message: str) -> bool:
         digits = re.sub(r"\D", "", message)
@@ -1079,29 +1079,13 @@ class ChatService:
         """True/False — ушла ли карточка оператору в Telegram; None — Telegram не подключён или
         тема уже есть (тогда отправлять было нечего)."""
 
-        delivery_service = getattr(self.request.app.state, "delivery_service", None)
-        if delivery_service is not None:
-            try:
-                await delivery_service.enqueue_event(
-                    event_type="operator_requested",
-                    company_id=company_id,
-                    session_id=session_id,
-                    payload={
-                        "last_message": message,
-                        "operator_url": self._operator_url(),
-                    },
-                )
-            except Exception as error:
-                logger.warning(
-                    "operator delivery enqueue failed company_id=%s session_id=%s error=%s",
-                    company_id,
-                    session_id,
-                    type(error).__name__,
-                )
+        generic_failed = await operator_event_failed(
+            self.request, company_id=company_id, session_id=session_id, message=message, operator_url=self._operator_url(),
+        )
 
         bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
         if bridge is None or not bridge.enabled:
-            return None
+            return False if generic_failed else None
         try:
             session = await self.request.app.state.session_store.get(session_id)
             if session is not None and session.telegram_topic_id is not None:

@@ -141,10 +141,12 @@ def fake_pg_modules(monkeypatch):
     connection.make_engine = lambda prefix="": engine_calls.append(prefix)
     postgres = ModuleType("app.storage.postgres")
     postgres.PostgresLeadOutboxStore = lambda engine: store
+    receipts = ModuleType("app.storage.postgres_receipts")
+    receipts.PostgresRequestReceipts = lambda store: SimpleNamespace()
     adapters = ModuleType("app.services.postgres_delivery")
     adapters.PostgresDeliveryService = lambda **kwargs: SimpleNamespace(**kwargs)
     adapters.PostgresLeadService = lambda **kwargs: SimpleNamespace(**kwargs)
-    for module in (connection, postgres, adapters):
+    for module in (connection, postgres, adapters, receipts):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     return store, engine_calls
 

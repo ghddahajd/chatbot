@@ -58,3 +58,4 @@ class ClientLoginSession(SQLModel, table=True):
 
 # Alembic must see the opt-in storage tables even when runtime storage stays file-based.
 from . import lead_models  # noqa: E402, F401
+from . import request_models  # noqa: E402, F401

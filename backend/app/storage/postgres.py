@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..db.models import Tenant
 from ..db.lead_models import delivery_outbox as outbox, leads
+from ..db.request_models import chat_requests
 
 
 def _required(value, name):
@@ -69,7 +70,8 @@ class PostgresLeadOutboxStore:
             """))).mappings().all()
             expected = {("tenants", "SELECT"), ("leads", "SELECT"), ("leads", "INSERT"),
                         ("delivery_outbox", "SELECT"), ("delivery_outbox", "INSERT"),
-                        ("delivery_outbox", "UPDATE")}
+                        ("delivery_outbox", "UPDATE"), ("chat_requests", "SELECT"),
+                        ("chat_requests", "INSERT"), ("chat_requests", "UPDATE")}
             found = set()
             for row in permissions:
                 key = (row["relname"], row["privilege"])
@@ -83,6 +85,7 @@ class PostgresLeadOutboxStore:
             # These reads verify every required column without granting access to alembic_version.
             await session.execute(sa.select(leads).limit(0))
             await session.execute(sa.select(outbox).limit(0))
+            await session.execute(sa.select(chat_requests).limit(0))
             migrated = await session.scalar(sa.text("""
                 SELECT count(*) = 2 FROM pg_constraint
                 WHERE (conrelid='public.delivery_outbox'::regclass AND conname='fk_outbox_tenant_lead')
@@ -90,6 +93,16 @@ class PostgresLeadOutboxStore:
             """))
             if not migrated:
                 raise RuntimeError("Lead/outbox migration constraints are missing")
+            receipts_migrated = await session.scalar(sa.text("""
+                SELECT count(*) = 8 FROM pg_constraint
+                WHERE conrelid='public.chat_requests'::regclass
+                  AND conname IN ('chat_requests_pkey', 'chat_requests_tenant_id_fkey',
+                    'fk_chat_requests_tenant_lead', 'ck_chat_requests_fingerprint',
+                    'ck_chat_requests_status', 'ck_chat_requests_response',
+                    'ck_chat_requests_done', 'ck_chat_requests_lead_response')
+            """))
+            if not receipts_migrated:
+                raise RuntimeError("Request receipt migration constraints are missing")
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -156,12 +169,16 @@ class PostgresLeadOutboxStore:
                     raise ValueError("Delivery ID reused for a different event")
 
     async def save_lead(self, *, lead_id: str, event_type: str, payload: dict,
-                        records: list[dict]) -> None:
+                        records: list[dict], request_receipt=None) -> None:
         _required(lead_id, "lead_id")
         _required(event_type, "event_type")
         cid = payload.get("company_id")
         self._payload(payload, cid)
         sid = _required(payload.get("session_id"), "session_id")
+        if request_receipt is not None:
+            ctx, response = request_receipt
+            if ctx.receipts.lead_store is not self or ctx.company_id != cid:
+                raise ValueError("Request receipt store or tenant mismatch")
         async with self.sessions() as session, session.begin():
             tenant_id = await self._tenant(session, cid)
             inserted = await session.scalar(insert(leads).values(
@@ -176,9 +193,13 @@ class PostgresLeadOutboxStore:
                 if any(r.get("company_id") != cid or r.get("event_type") != event_type
                        or r.get("session_id") != sid for r in records):
                     raise ValueError("Lead/outbox identity mismatch")
+                if request_receipt is not None:
+                    await ctx.receipts.checkpoint_lead(session, ctx, lead_id, response)
                 return
             await self._enqueue(session, records, lead_id=lead_id, company_id=cid,
                                 event_type=event_type, session_id=sid)
+            if request_receipt is not None:
+                await ctx.receipts.checkpoint_lead(session, ctx, lead_id, response)
 
     async def enqueue(self, records: list[dict]) -> None:
         async with self.sessions() as session, session.begin():

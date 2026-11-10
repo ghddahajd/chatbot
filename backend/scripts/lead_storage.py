@@ -43,6 +43,7 @@ async def grant_runtime(password):
             await connection.execute(text("GRANT SELECT ON public.tenants TO chatbot_lead_runtime"))
             await connection.execute(text("GRANT SELECT, INSERT ON public.leads TO chatbot_lead_runtime"))
             await connection.execute(text("GRANT SELECT, INSERT, UPDATE ON public.delivery_outbox TO chatbot_lead_runtime"))
+            await connection.execute(text("GRANT SELECT, INSERT, UPDATE ON public.chat_requests TO chatbot_lead_runtime"))
     finally:
         await engine.dispose()
 
@@ -68,7 +69,7 @@ def main():
         if not password or password != getpass.getpass("Повторите пароль: "):
             raise ValueError("Passwords must match and be nonempty")
         asyncio.run(manage(args, password))
-        print("Права роли выдавались только для tenants, leads и delivery_outbox; проверьте initialize().")
+        print("Права роли выдавались только для tenants, leads, delivery_outbox и chat_requests; проверьте initialize().")
     except Exception as error:
         print(f"Операция не выполнена ({type(error).__name__}). Проверьте миграции и права владельца БД.", file=sys.stderr)
         return 1

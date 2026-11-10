@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тестовая клиника — обычный чат</title>
+<style>
+  body { margin: 0; padding: 48px 24px; background: #f4f5f0; color: #182823; font: 16px system-ui; }
+  main { max-width: 560px; }
+  h1 { font-size: clamp(28px, 5vw, 40px); margin: 0 0 16px; }
+  p { line-height: 1.6; }
+  button { background: #080e0d; border: 1px solid #080e0d; border-radius: 24px; color: white;
+    padding: 12px 18px; margin: 8px 6px 0 0; font: inherit; cursor: pointer; }
+  button + button { background: transparent; color: #080e0d; }
+</style>
+<main>
+  <h1>Тестовая клиника</h1>
+  <p>Консультации и уход за кожей. Узнайте стоимость или оставьте заявку на приём.</p>
+  <button id="price">Узнать стоимость</button>
+  <button id="booking">Записаться</button>
+</main>
+<script src="../widget.js"></script>
+<script>
+  const Widget = customElements.get('ai-chat-widget');
+  const receipts = new Map();
+  const counts = { messages: 0, checks: 0 };
+  const action = (label, value = label) => ({ label, type: 'message', value });
+  const json = (data, status = 200) => new Response(JSON.stringify(data), {
+    status, headers: { 'Content-Type': 'application/json' },
+  });
+  window.fetch = async (url, options = {}) => {
+    const path = new URL(url, location.href).pathname;
+    if (path === '/api/chat/message/result') {
+      counts.checks++;
+      const body = JSON.parse(options.body);
+      const response = receipts.get(body.request_id);
+      return json(response ? { state: 'done', response, durable: false }
+        : { state: 'unknown', durable: false, retry_allowed: false });
+    }
+    if (path === '/api/chat/message') {
+      counts.messages++;
+      const body = JSON.parse(options.body);
+      if (receipts.has(body.request_id)) return json(receipts.get(body.request_id));
+      await new Promise(resolve => setTimeout(resolve, 650));
+      const text = body.message.toLowerCase();
+      const response = { session_id: body.session_id || 'normal-preview-session', status: 'AI_ACTIVE',
+        action: 'answer', answer: 'Могу подсказать стоимость консультации или помочь оставить заявку.',
+        lead_created: false, quick_actions: [action('Узнать стоимость', 'Сколько стоит консультация?'),
+          action('Записаться', 'Хочу записаться')] };
+      if (/\+7[\s\d-]{10,}/.test(body.message)) {
+        Object.assign(response, { action: 'ask_contact', lead_created: true, quick_actions: [],
+          answer: 'Спасибо! Заявка получена. Администратор свяжется с вами, чтобы согласовать время.' });
+      } else if (/запис|перезвон/.test(text)) {
+        Object.assign(response, { action: 'ask_contact',
+          answer: 'Оставьте номер — администратор перезвонит и поможет с записью.',
+          quick_actions: [], booking_form: { purpose: 'booking', open_now: true,
+            days: ['Сегодня', 'Завтра'], contacts: [] } });
+      } else if (/цен|стои|консультац/.test(text)) {
+        response.answer = 'Консультация — 2 000 ₽. Оставить заявку на запись?';
+        response.quick_actions = [action('Записаться', 'Хочу записаться')];
+      } else if (/привет|здравств/.test(text)) {
+        response.answer = 'Здравствуйте! Подскажу стоимость консультации и помогу с записью.';
+      }
+      receipts.set(body.request_id, response);
+      return json(response);
+    }
+    if (path.endsWith('/cancel')) return json({ status: 'CLOSED' });
+    throw new Error('Сетевые запросы отключены на локальной странице');
+  };
+  Widget.prototype.trackEvent = () => {};
+  Widget.prototype.connectWS = () => {};
+  Widget.prototype.acceptConsent = () => {};
+  Widget.prototype.bootstrap = async function () {
+    this.state.companyId = 'normal-chat-preview';
+    this.state.sessionId = '';
+    this.state.widgetConfig.quick_booking = 'on';
+    this.state.widgetConfig.idle_reminder = '';
+    this.state.greeting = 'Здравствуйте! Подскажу стоимость консультации и помогу с записью.';
+    this.addMsg('assistant', this.state.greeting);
+    if (!this.state.open) this.toggle();
+  };
+  window.addEventListener('load', () => {
+    const widget = document.querySelector('ai-chat-widget');
+    document.querySelector('#price').onclick = () => widget.sendText('Сколько стоит консультация?');
+    document.querySelector('#booking').onclick = () => widget.sendText('Хочу записаться');
+    window.normalChatPreview = { counts };
+  });
+</script>
+</html>

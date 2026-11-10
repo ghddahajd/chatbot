@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from .logging_setup import log_event
 from .models import Lead, Session
 from .storage.leads import FileLeadStore
+from .storage.request_context import prepare_lead_receipt, mark_lead_committed
 from .utils.jsonl import read_jsonl
 
 if TYPE_CHECKING:
@@ -103,7 +104,14 @@ class LeadService:
         self.delivery_service = delivery_service
 
     async def save(self, lead: Lead, event_type: str = "lead_created") -> None:
+        receipt = await prepare_lead_receipt(lead, event_type)
+        if receipt is not None:
+            receipt[0].receipts.checkpoint_ready(receipt[0])
         self.store.append(lead_to_payload(lead))
+        if receipt is not None:
+            operation, response = receipt
+            operation.receipts.checkpoint_lead(operation, lead.storage_id, response)
+            mark_lead_committed(receipt)
         log_event(
             logger,
             logging.INFO,

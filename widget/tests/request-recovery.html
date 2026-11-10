@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка восстановления отправки</title>
+<style>
+  body { margin: 24px; background: #f4f5f0; color: #182823; font: 16px system-ui; }
+  main { max-width: 620px; } button, select { padding: 10px; margin: 4px 0; font: inherit; max-width: 100%; }
+  label { display: block; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<main>
+  <h1>Восстановление отправки</h1>
+  <p>Все ответы искусственные. Fetch перехвачен целиком: сервер, Telegram и аналитика не вызываются.</p>
+  <label>Сценарий
+    <select id="scenario">
+      <option value="lost">Ответ потерялся → результат найден</option>
+      <option value="resend">Надёжное хранилище разрешает один повтор</option>
+      <option value="safe-fallback">Автоповтор потерялся → кнопка безопасного повтора</option>
+      <option value="fallback">Неопределённость → кнопка проверки</option>
+      <option value="processing">Обработка → ограниченное ожидание</option>
+      <option value="old">Старый backend: проверка недоступна</option>
+      <option value="conflict">Конфликт 409: повтор запрещён</option>
+      <option value="booking">Карточка → ручная проверка → заявка</option>
+    </select>
+  </label>
+  <button id="run">Начать сценарий</button>
+  <button id="ready">Результат теперь готов</button>
+  <button id="reset">Сбросить диалог</button>
+  <p>Автопроверки — через 1, 2 и 4 секунды. Для ручного сценария дождитесь кнопки в чате,
+    нажмите «Результат теперь готов», затем «Проверить отправку». В карточке введите тестовый номер и выберите день.</p>
+  <p>Журнал содержит только тип запроса и UUID. Текст и номер в хранилище браузера не записываются.</p>
+  <pre id="log" aria-live="polite"></pre>
+</main>
+<script src="../widget.js"></script>
+<script>
+  const Widget = customElements.get('ai-chat-widget');
+  let scenario = 'lost', ready = false, generation = 0;
+  const records = new Map();
+  const log = text => { document.querySelector('#log').textContent += text + '\n'; };
+  const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+  const normal = body => ({ session_id: body.session_id || 'preview-session-' + generation,
+    company_id: body.company_id, status: 'AI_ACTIVE', answer: body.booking_day || scenario === 'booking'
+      ? 'Заявка на звонок получена. Администратор свяжется с вами в рабочее время.' : 'Сообщение получено. Ответ восстановлен.',
+    lead_created: scenario === 'booking', quick_actions: [] });
+  window.fetch = async (url, options = {}) => {
+    if (!String(url).endsWith('/api/chat/message') && !String(url).endsWith('/api/chat/message/result')) {
+      throw new Error('Внешний запрос заблокирован в демо');
+    }
+    const body = JSON.parse(options.body);
+    const result = String(url).endsWith('/result');
+    log((result ? 'Проверка' : body.retry ? 'Безопасный повтор' : 'Отправка') + ': ' + body.request_id);
+    if (!records.has(body.request_id)) records.set(body.request_id, { body: { ...body }, retries: 0 });
+    const record = records.get(body.request_id);
+    const original = record.body;
+    const comparable = { ...body }; delete comparable.retry;
+    if (JSON.stringify(comparable) !== JSON.stringify(original)) return json({ detail: 'mismatch' }, 409);
+    if (scenario === 'conflict') return json({ detail: 'mismatch' }, 409);
+    if (!result) {
+      if (body.retry) {
+        record.retries++;
+        if (scenario === 'safe-fallback' && record.retries === 1) throw new TypeError('Автоповтор не дошёл');
+        return json(normal(original));
+      }
+      throw new TypeError('Искусственно потерян ответ');
+    }
+    if (scenario === 'old') return json({ detail: 'not found' }, 404);
+    if (scenario === 'lost' || ready) return json({ state: 'done', response: normal(original), durable: true });
+    if (scenario === 'resend' || scenario === 'safe-fallback') return json({ state: 'unknown', durable: true, retry_allowed: true });
+    if (scenario === 'processing') return json({ state: 'processing', durable: true });
+    return json({ state: 'uncertain', durable: false, retry_allowed: false });
+  };
+  Widget.prototype.trackEvent = function (event) { if (event === 'booking-card-sent') log('Событие: ' + event); };
+  Widget.prototype.connectWS = () => {};
+  Widget.prototype.acceptConsent = () => {};
+  Widget.prototype.bootstrap = async function () {
+    this.state.companyId = 'request-recovery-preview';
+    this.state.sessionId = '';
+    this.state.widgetConfig.quick_booking = 'on';
+    this.state.widgetConfig.idle_reminder = '';
+    this.toggle();
+    this.addMsg('assistant', 'Выберите сценарий и нажмите «Начать сценарий».');
+  };
+  window.addEventListener('load', () => {
+    const widget = document.querySelector('ai-chat-widget');
+    const reset = () => {
+      generation++; ready = false; records.clear(); widget.clearLocalSession();
+      widget.el.messages.innerHTML = ''; widget.setStatus('AI_ACTIVE');
+      document.querySelector('#log').textContent = '';
+      if (!widget.state.open) widget.toggle();
+    };
+    const run = () => {
+      reset(); scenario = document.querySelector('#scenario').value;
+      if (scenario === 'booking') widget.addBookingCard({ purpose: 'callback', days: ['Сегодня', 'Завтра'], open_now: true }, []);
+      else widget.sendText('Тестовое сообщение');
+    };
+    document.querySelector('#run').onclick = run;
+    document.querySelector('#ready').onclick = () => { ready = true; log('Результат готов — можно проверить отправку в чате.'); };
+    document.querySelector('#reset').onclick = reset;
+    // Browser QA: window.recoveryDemo.widget, run(), reset(), ready(), records, log only UUIDs.
+    window.recoveryDemo = { widget, run, reset, records, ready: () => { ready = true; } };
+  });
+</script>
+</html>

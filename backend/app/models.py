@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -251,6 +251,8 @@ class PolicyResult(BaseModel):
 
 
 class ChatMessageRequest(BaseModel):
+    request_id: Optional[UUID] = None
+    retry: bool = False
     session_id: Optional[str] = None
     company_id: str
     # без ограничения принимался текст любой длины — попадал в историю сессии, в промпт LLM

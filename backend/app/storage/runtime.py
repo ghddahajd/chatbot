@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
 from .errors import LeadStorageError
+from .request_receipts import MemoryRequestReceipts
 
 
 LEADS_SNAPSHOT = ContextVar("postgres_leads_snapshot", default=None)
@@ -31,6 +32,7 @@ async def leads_snapshot(service, company_id=None):
 async def initialize_lead_storage(app):
     settings = app.state.settings
     app.state.postgres_lead_store = None
+    app.state.request_receipts = MemoryRequestReceipts()
     if settings.lead_storage_backend != "postgres":
         return
     if not settings.delivery_retry_enabled:
@@ -54,6 +56,8 @@ async def initialize_lead_storage(app):
         app.state.lead_service = PostgresLeadService(store=store, delivery_service=delivery)
         app.state.delivery_service = delivery
         app.state.postgres_lead_store = store
+        from .postgres_receipts import PostgresRequestReceipts
+        app.state.request_receipts = PostgresRequestReceipts(store)
     except BaseException as error:
         if store is not None:
             try:

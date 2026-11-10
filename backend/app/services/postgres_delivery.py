@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import uuid4, uuid5, NAMESPACE_URL
 
 from ..delivery import (
     DeliveryService, MAX_DELIVERY_ATTEMPTS, _iso, _utcnow,
@@ -15,6 +15,7 @@ from ..delivery import (
 from ..leads import lead_to_payload
 from ..models import Lead
 from ..storage.errors import LeadStorageError
+from ..storage.request_context import prepare_lead_receipt, mark_lead_committed
 
 logger = logging.getLogger(__name__)
 
@@ -157,10 +158,16 @@ class PostgresLeadService:
     async def save(self, lead: Lead, event_type="lead_created"):
         payload = lead_to_payload(lead)
         try:
+            receipt = await prepare_lead_receipt(lead, event_type)
+            if receipt is not None:
+                operation, _ = receipt
+                lead.storage_id = str(uuid5(NAMESPACE_URL, f"chat:{operation.company_id}:{operation.request_id}"))
             records = self.delivery_service.prepare_event(
                 event_type=event_type, company_id=lead.company_id, session_id=lead.session_id, payload=payload)
+            kwargs = {"request_receipt": receipt} if receipt is not None else {}
             await self.store.save_lead(lead_id=lead.storage_id, event_type=event_type,
-                                       payload=payload, records=records)
+                                       payload=payload, records=records, **kwargs)
+            mark_lead_committed(receipt)
         except Exception as error:
             logger.error("lead save failed company_id=%s error=%s", lead.company_id, type(error).__name__)
             raise LeadStorageError("Не удалось сохранить заявку") from None

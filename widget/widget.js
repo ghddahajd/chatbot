@@ -1648,6 +1648,7 @@
     }
 
     disconnectedCallback() {
+      this.cancelRequest();
       document.removeEventListener("visibilitychange", this._onVisibilityChange);
       this.dismissTeaser();
       this.cancelIdleReminder(true);
@@ -2020,6 +2021,7 @@
       if (this.state.sending || !this.state.companyId) return;
       if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
 
+      this.cancelRequest();
       this.acceptConsent();
       // Список отключаем на время запроса — двойной клик не должен задвоить вопрос в истории.
       listEl.querySelectorAll(".faq-row").forEach(r => { r.disabled = true; });
@@ -2029,10 +2031,10 @@
 
       this.state.sending = true;
       this.showTyping();
-      await nextFrame();
-
       const timeoutController = new AbortController();
       const timeoutId = window.setTimeout(() => timeoutController.abort(), SEND_TIMEOUT_MS);
+      const faq = this._faq = { controller: timeoutController, timeoutId, companyId: this.state.companyId };
+      const current = () => this._faq === faq && faq.companyId === this.state.companyId;
       try {
         const res = await fetch(API_BASE + "/api/chat/faq-answer", {
           method: "POST",
@@ -2046,7 +2048,9 @@
         });
         if (!res.ok) throw new Error("request failed");
         const data = await res.json();
-        await this.hideTyping();
+        if (!current()) return;
+        this.validateChatResponse(data);
+        this.finishRequest();
 
         if (data.session_id) {
           this.state.sessionId = data.session_id;
@@ -2055,7 +2059,8 @@
         this.setStatus(data.status);
         if (data.answer) this.addMsg("assistant", data.answer);
       } catch (err) {
-        await this.hideTyping();
+        if (!current()) return;
+        this.finishRequest();
         const isTimeout = err && err.name === "AbortError";
         this.addMsg(
           "system",
@@ -2065,8 +2070,10 @@
         );
       } finally {
         window.clearTimeout(timeoutId);
-        this.state.sending = false;
-        this.scheduleIdleReminder();
+        if (current()) {
+          this._faq = null;
+          this.finishRequest();
+        }
       }
     }
 
@@ -2084,6 +2091,7 @@
         const res = await fetch(url.toString());
         if (!res.ok) throw await this.buildBootstrapError(res);
         const data = await res.json();
+        this.cancelRequest();
         this.state.companyId = data.company_id || EMBED_COMPANY_ID;
         if (!this.state.companyId) throw new Error("company not resolved");
         this.trackEvent("impression"); // воронка конверсии — верхняя стадия, "виджет загружен"
@@ -2352,13 +2360,13 @@
       } catch (_) { /* не критично для работы чата */ }
     }
 
-    addMsg(role, text, silent) {
+    addMsg(role, text, silent, preserveBooking = false) {
       if (!silent) {
         this.cancelIdleReminder(true);
         this.state.idleReminderEligible = role === "assistant";
       }
       this.clearGreeting();
-      this.el.messages.querySelectorAll(".quick-actions, .booking-card").forEach(n => n.remove());
+      this.el.messages.querySelectorAll(preserveBooking ? ".quick-actions" : ".quick-actions, .booking-card").forEach(n => n.remove());
 
       const isSystem = role === "system";
       const isHandoff = (role === "assistant" || isSystem) && (
@@ -2461,6 +2469,7 @@
       const counted = new Set();
       const step = (kind) => { if (!counted.has(kind)) { counted.add(kind); this.trackEvent(kind); } };
       let day = "";
+      let lastSubmission;
       for (const label of days) {
         const chip = document.createElement("button");
         chip.type = "button";
@@ -2493,6 +2502,7 @@
         error.hidden = !tooLong;
       });
       const send = () => {
+        if (this.state.sending) return;
         const d = digits;
         if (d.length !== 10) {
           error.textContent = d.length > 10 ? PHONE_TOO_LONG : PHONE_TOO_SHORT;
@@ -2502,9 +2512,15 @@
           return;
         }
         const number = "+7 " + d.slice(0, 3) + " " + d.slice(3, 6) + "-" + d.slice(6, 8) + "-" + d.slice(8);
+        const key = d + ":" + day;
+        if (lastSubmission?.key === key) {
+          if (!lastSubmission.op.applied && this.requestCurrent(lastSubmission.op)) this.recoverRequest(lastSubmission.op, true);
+          return;
+        }
         // «отправили» — когда сервер принял номер и завёл заявку, а не при нажатии: таймаут или отказ не в счёт
-        this.sendText(number, { bookingDay: day, display: day ? day + " · " + number : number })
-          .then((data) => { if (data && data.lead_created) step("booking-card-sent"); });
+        this.sendText(number, { bookingDay: day, display: day ? day + " · " + number : number,
+          onSuccess: (data) => { if (data.lead_created) step("booking-card-sent"); } });
+        if (this._request) lastSubmission = { key, op: this._request };
       };
       submit.addEventListener("click", send);
       phone.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
@@ -2559,6 +2575,8 @@
     }
 
     setStatus(status) {
+      if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(status)
+        || (status === STATUS.HUMAN_ACTIVE && (this._request?.status !== STATUS.HUMAN_ACTIVE || this.state.ws))) this.cancelRequest();
       const previous = this.state.status;
       this.state.status = status;
       if (status !== STATUS.AI_ACTIVE) this.cancelIdleReminder(true);
@@ -2606,13 +2624,14 @@
       this.sendText(text);
     }
 
-    async sendText(text, { bookingDay = "", display = "" } = {}) {
+    async sendText(text, { bookingDay = "", display = "", onSuccess } = {}) {
       if (!text || this.state.sending || !this.state.companyId) return;
       if ([STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status)) return;
 
+      this.cancelRequest();
       this.acceptConsent();
       this.el.inp.value = "";
-      this.addMsg("user", display || text);
+      this.addMsg("user", display || text, false, Boolean(onSuccess));
 
       if (this.state.status === STATUS.HUMAN_ACTIVE && this.state.ws) {
         this.state.ws.send(text);
@@ -2621,67 +2640,222 @@
         return;
       }
 
+      let requestId;
+      try {
+        requestId = window.crypto.randomUUID ? window.crypto.randomUUID() :
+          Array.from(window.crypto.getRandomValues(new Uint8Array(16)), (v, i) => {
+            if (i === 6) v = (v & 15) | 64;
+            if (i === 8) v = (v & 63) | 128;
+            return ([4, 6, 8, 10].includes(i) ? "-" : "") + v.toString(16).padStart(2, "0");
+          }).join("");
+      } catch (_) {
+        this.addMsg("system", "Не удалось безопасно отправить сообщение. Свяжитесь с клиникой по телефону.");
+        return;
+      }
+      const op = this._request = {
+        body: Object.freeze({ session_id: this.state.sessionId || null, company_id: this.state.companyId,
+          message: text, page: window.location.pathname, booking_day: bookingDay, request_id: requestId }),
+        status: this.state.status, onSuccess, applied: false, resent: false, processing: false,
+      };
       this.state.sending = true;
       this.state.bookingPending = text === BOOKING_QUESTION || text === BOOK_BAR_QUESTION;
       this.el.send.disabled = true;
       this.updateBookBar();
       this.showTyping();
-      await nextFrame();
-
-      const timeoutController = new AbortController();
-      const timeoutId = window.setTimeout(() => timeoutController.abort(), SEND_TIMEOUT_MS);
       try {
-        const res = await fetch(API_BASE + "/api/chat/message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: this.state.sessionId || null,
-            company_id: this.state.companyId,
-            message: text,
-            page: window.location.pathname,
-            booking_day: bookingDay,
-          }),
-          signal: timeoutController.signal,
-        });
-        if (!res.ok) throw new Error("request failed");
-        const data = await res.json();
-        await this.hideTyping();
-
-        if (data.session_id) {
-          const changedSession = this.state.sessionId !== data.session_id;
-          this.state.sessionId = data.session_id;
-          if (changedSession) this.loadOperatorReadState();
-          window.localStorage.setItem(this.storageKey(), data.session_id);
-        }
-        if (data.lead_created) this.state.leadLeft = true;
-        const before = this.state.status;
-        this.setStatus(data.status);
-        if (data.answer) {
-          // событием в ленте — только сам момент передачи; ответы бота, пока ждём, — обычные сообщения, их надо прочитать
-          const isHandoff = data.status === STATUS.WAITING_OPERATOR && ![STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(before);
-          this.addMsg(isHandoff ? "system" : "assistant", data.answer);
-        }
-        if (data.booking_form && this.state.widgetConfig.quick_booking === "on") this.addBookingCard(data.booking_form, data.quick_actions);
-        else this.addQuickActions(data.quick_actions);
-        if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
-        return data;
+        const data = await this.requestJSON(op, false);
+        if (!this.requestCurrent(op)) return;
+        if (!data.state) return this.applyChatResponse(op, data);
+        this.noteRequestState(op, data);
       } catch (err) {
-        await this.hideTyping();
-        const isTimeout = err && err.name === "AbortError";
-        this.addMsg(
-          "system",
-          isTimeout
-            ? "Сервер отвечает дольше обычного. Попробуйте отправить сообщение ещё раз через минуту."
-            : "Не удалось отправить. Попробуйте ещё раз."
-        );
-      } finally {
-        window.clearTimeout(timeoutId);
-        this.state.sending = false;
-        this.state.bookingPending = false;
-        this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
-        this.updateBookBar();
-        this.scheduleIdleReminder();
+        if (!this.requestCurrent(op)) return;
+        if (err.final) { this.requestFailure(op, true); return; }
       }
+      if (this.requestCurrent(op)) await this.recoverRequest(op);
+      return op.response;
+    }
+
+    requestCurrent(op) {
+      if (!op || this._request !== op || op.applied) return false;
+      const compatible = op.body.company_id === this.state.companyId
+        && (([STATUS.AI_ACTIVE, STATUS.WAITING_OPERATOR].includes(this.state.status)
+          && (op.status === STATUS.AI_ACTIVE || this.state.status === op.status))
+          || (op.status === STATUS.HUMAN_ACTIVE && this.state.status === STATUS.HUMAN_ACTIVE && !this.state.ws));
+      if (!compatible) this.cancelRequest();
+      return compatible;
+    }
+
+    clearRequestUI(op) {
+      op?.notice?.remove();
+      op?.actions?.remove();
+    }
+
+    finishRequest() {
+      this.state.typingNode?.remove();
+      this.state.typingNode = null;
+      this.state.sending = false;
+      this.state.bookingPending = false;
+      this.el.send.disabled = [STATUS.CLOSED, STATUS.UNAVAILABLE].includes(this.state.status);
+      this.updateBookBar();
+      this.scheduleIdleReminder();
+    }
+
+    cancelRequest() {
+      const op = this._request;
+      const faq = this._faq;
+      this._faq = null;
+      faq?.controller.abort();
+      window.clearTimeout(faq?.timeoutId);
+      this._request = null;
+      if (!op && !faq) return;
+      if (!op) { this.finishRequest(); return; }
+      op.controller?.abort();
+      op.wake?.();
+      window.clearTimeout(op.deadline);
+      this.clearRequestUI(op);
+      this.finishRequest();
+    }
+
+    async requestJSON(op, result, retry = false) {
+      const controller = op.controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), result || op.recovering ? 2000 : SEND_TIMEOUT_MS);
+      try {
+        const res = await fetch(API_BASE + "/api/chat/message" + (result ? "/result" : ""), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(retry ? { ...op.body, retry: true } : op.body), signal: controller.signal,
+        });
+        if (!res.ok) {
+          const err = new Error("request failed");
+          err.final = res.status >= 400 && res.status < 500;
+          err.unavailable = result && res.status === 404;
+          throw err;
+        }
+        return await res.json();
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    noteRequestState(op, data) {
+      if (data.state === "processing") op.processing = true;
+      op.safeRetry = data.state === "unknown" && data.durable === true && data.retry_allowed === true
+        && !op.processing && op.status !== STATUS.HUMAN_ACTIVE && this.state.status === op.status;
+    }
+
+    requestFailure(op, final = false, unavailable = false) {
+      if (!this.requestCurrent(op)) return;
+      this.clearRequestUI(op);
+      this.finishRequest();
+      const notice = op.notice = document.createElement("div");
+      notice.className = "msg system";
+      notice.textContent = final ? "Не удалось отправить сообщение. Свяжитесь с клиникой по телефону."
+        : unavailable ? "Проверка отправки недоступна. Свяжитесь с клиникой, чтобы уточнить получение сообщения."
+        : "Пока не удалось подтвердить отправку сообщения.";
+      this.el.messages.appendChild(notice);
+      if (!final) {
+        const actions = op.actions = document.createElement("div");
+        actions.className = "quick-actions request-recovery";
+        actions.appendChild(this.createQuickButton(op.safeRetry && !unavailable ? "Повторить отправку" : "Проверить отправку", false,
+          () => { if (this.requestCurrent(op) && !op.recovering) this.recoverRequest(op, true); }));
+        this.el.messages.appendChild(actions);
+      }
+      this.scrollBottom();
+    }
+
+    async recoverRequest(op, manual = false) {
+      if (!this.requestCurrent(op) || op.recovering) return;
+      op.recovering = true;
+      this.clearRequestUI(op);
+      this.finishRequest();
+      op.notice = document.createElement("div");
+      op.notice.className = "msg system";
+      op.notice.textContent = "Проверяем отправку…";
+      this.el.messages.appendChild(op.notice);
+      let expired = false, final = false, unavailable = false;
+      let resent = !manual && op.resent;
+      op.deadline = window.setTimeout(() => {
+        expired = true;
+        op.controller?.abort();
+        op.wake?.();
+      }, 11000);
+      try {
+        for (const delay of [1000, 2000, 4000]) {
+          await new Promise(resolve => {
+            const timer = window.setTimeout(() => { op.wake = null; resolve(); }, delay);
+            op.wake = () => { window.clearTimeout(timer); op.wake = null; resolve(); };
+          });
+          if (expired || !this.requestCurrent(op)) break;
+          try {
+            const data = await this.requestJSON(op, true);
+            if (expired || !this.requestCurrent(op)) break;
+            if (data.state === "done") return this.applyChatResponse(op, data.response);
+            this.noteRequestState(op, data);
+            if (op.safeRetry && !resent) {
+              resent = true;
+              if (!manual) op.resent = true;
+              op.safeRetry = false;
+              const response = await this.requestJSON(op, false, true);
+              if (expired || !this.requestCurrent(op)) break;
+              if (!response.state) return this.applyChatResponse(op, response);
+              this.noteRequestState(op, response);
+            }
+          } catch (err) {
+            op.safeRetry = false;
+            if (err.final) { final = !err.unavailable; unavailable = err.unavailable; break; }
+          }
+        }
+      } finally {
+        window.clearTimeout(op.deadline);
+        op.recovering = false;
+        if (this.requestCurrent(op)) this.requestFailure(op, final, unavailable);
+      }
+    }
+
+    validateChatResponse(data) {
+      const object = value => value && typeof value === "object" && !Array.isArray(value);
+      const action = value => object(value) && typeof value.label === "string" && value.label.trim()
+        && ["message", "link"].includes(value.type) && typeof value.value === "string";
+      const form = data?.booking_form;
+      if (!object(data) || typeof data.session_id !== "string" || !data.session_id.trim()
+        || ![STATUS.AI_ACTIVE, STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE, STATUS.CLOSED].includes(data.status)
+        || typeof data.answer !== "string"
+        || (data.action !== undefined && typeof data.action !== "string")
+        || (data.lead_created !== undefined && typeof data.lead_created !== "boolean")
+        || (data.quick_actions !== undefined && (!Array.isArray(data.quick_actions) || !data.quick_actions.every(action)))
+        || (form != null && (!object(form)
+          || (form.days !== undefined && (!Array.isArray(form.days) || !form.days.every(day => typeof day === "string")))
+          || (form.contacts !== undefined && (!Array.isArray(form.contacts) || !form.contacts.every(action)))
+          || (form.open_now !== undefined && typeof form.open_now !== "boolean")
+          || (form.purpose !== undefined && typeof form.purpose !== "string")))) throw new Error("Invalid chat response");
+    }
+
+    applyChatResponse(op, data) {
+      if (!this.requestCurrent(op)) return;
+      this.validateChatResponse(data);
+      op.applied = true;
+      op.response = data;
+      this.clearRequestUI(op);
+      this.finishRequest();
+      if (data.session_id) {
+        const changedSession = this.state.sessionId !== data.session_id;
+        this.state.sessionId = data.session_id;
+        if (changedSession) this.loadOperatorReadState();
+        // Хранилище браузера необязательно: подтверждённый ответ показываем и при отказе записи.
+        try { window.localStorage.setItem(this.storageKey(), data.session_id); } catch (_) {}
+      }
+      if (data.lead_created) this.state.leadLeft = true;
+      const before = this.state.status;
+      this.setStatus(data.status);
+      if (data.answer) {
+        // событием в ленте — только сам момент передачи; ответы бота, пока ждём, — обычные сообщения, их надо прочитать
+        const isHandoff = data.status === STATUS.WAITING_OPERATOR && ![STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(before);
+        this.addMsg(isHandoff ? "system" : "assistant", data.answer);
+      }
+      if (data.booking_form && this.state.widgetConfig.quick_booking === "on") this.addBookingCard(data.booking_form, data.quick_actions);
+      else this.addQuickActions(data.quick_actions);
+      if ([STATUS.WAITING_OPERATOR, STATUS.HUMAN_ACTIVE].includes(data.status)) this.connectWS();
+      op.onSuccess?.(data);
+      return data;
     }
 
     openResetConfirm() {
@@ -2714,6 +2888,7 @@
     }
 
     clearLocalSession() {
+      this.cancelRequest();
       this.cancelIdleReminder(true);
       this.state.idleReminderEligible = false;
       this.state.idleReminderShown = false;

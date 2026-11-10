@@ -14,6 +14,7 @@ from ..models import (
 )
 from ..rate_limit import client_ip
 from ..services.chat_service import ChatService
+from ..services.request_recovery import recoverable_message, request_status
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -58,13 +59,17 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> ChatMes
         limiter = request.app.state.chat_rate_limiter
         if not limiter.allow(client_ip(request, trusted_proxy_count=settings.trusted_proxy_count)):
             raise HTTPException(status_code=429, detail="Too many chat messages. Please wait.")
-    return await ChatService(request).handle_message(
-        company_id=payload.company_id,
-        session_id=payload.session_id,
-        message=payload.message,
-        page=payload.page,
-        booking_day=payload.booking_day,
-    )
+    return await recoverable_message(request, payload, ChatService(request))
+
+
+@router.post("/message/result")
+async def message_result(payload: ChatMessageRequest, request: Request) -> dict:
+    settings = request.app.state.settings
+    if settings.chat_rate_limit_enabled and not request.app.state.track_rate_limiter.allow(
+        client_ip(request, trusted_proxy_count=settings.trusted_proxy_count)
+    ):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    return await request_status(request, payload)
 
 
 @router.post("/faq-answer", response_model=ChatMessageResponse)

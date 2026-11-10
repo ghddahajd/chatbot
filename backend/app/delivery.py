@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from collections import Counter
@@ -18,7 +17,7 @@ from .logging_setup import log_event
 from .knowledge import KnowledgeBaseResolver
 from .leads import REASON_LABELS, lead_to_payload
 from .models import Lead
-from .utils.jsonl import read_jsonl
+from .storage.outbox import FileOutboxStore
 
 
 logger = logging.getLogger(__name__)
@@ -207,11 +206,11 @@ class DeliveryService:
         telegram_dm_enabled: bool = False,
     ) -> None:
         self.outbox_file = outbox_file
+        self.store = FileOutboxStore(outbox_file)
         self.knowledge_base_resolver = knowledge_base_resolver
         self.telegram_bot_token = telegram_bot_token
         self.telegram_chat_id = telegram_chat_id
         self.telegram_dm_enabled = telegram_dm_enabled
-        self._lock = asyncio.Lock()
 
     async def enqueue_lead(self, lead: Lead) -> list[dict[str, Any]]:
         """ставит событие создания лида в generic delivery outbox."""
@@ -527,18 +526,10 @@ class DeliveryService:
         return service.name if service is not None else str(service_id)
 
     async def _append_record(self, record: dict[str, Any]) -> None:
-        async with self._lock:
-            self.outbox_file.parent.mkdir(parents=True, exist_ok=True)
-            with self.outbox_file.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        await self.store.append(record)
 
     def _latest_records(self) -> dict[str, dict[str, Any]]:
-        latest: dict[str, dict[str, Any]] = {}
-        for record in read_jsonl(self.outbox_file):
-            delivery_id = str(record.get("delivery_id") or "")
-            if delivery_id:
-                latest[delivery_id] = record
-        return latest
+        return self.store.latest()
 
     @staticmethod
     def _backoff_seconds(attempts: int) -> int:

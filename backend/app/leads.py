@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from .logging_setup import log_event
 from .models import Lead, Session
-from .utils.jsonl import append_jsonl, read_jsonl
+from .storage.leads import FileLeadStore
+from .utils.jsonl import read_jsonl
 
 if TYPE_CHECKING:
     from .delivery import DeliveryService
@@ -98,10 +99,11 @@ class LeadService:
         delivery_service: Optional[DeliveryService] = None,
     ) -> None:
         self.leads_file = leads_file
+        self.store = FileLeadStore(leads_file)
         self.delivery_service = delivery_service
 
     async def save(self, lead: Lead, event_type: str = "lead_created") -> None:
-        append_jsonl(self.leads_file, lead_to_payload(lead))
+        self.store.append(lead_to_payload(lead))
         log_event(
             logger,
             logging.INFO,

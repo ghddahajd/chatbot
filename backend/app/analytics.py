@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from .hours import _resolve_timezone
 from .logging_setup import redact_phones
 from .models import MessageRole, PolicyAction, PolicyReason, PolicyResult, Session
+from .storage.leads import FileLeadStore
 from .utils.jsonl import read_jsonl
 
 
@@ -141,6 +142,7 @@ class AnalyticsService:
         # из "горячего" файла (см. archive_old_leads в leads.py), но не удалённые.
         self.rollup_file = rollup_file
         self.leads_archive_file = leads_archive_file
+        self.lead_store = FileLeadStore(leads_file, leads_archive_file)
         # 2026-08-29: полная переписка сессий, уже эвиктнутых из памяти — см.
         # sessions.archive_session. list_conversations/get_conversation читают отсюда то,
         # чего уже нет в live session_store (вкладка "Чаты" смотрит и туда, и сюда разом).
@@ -152,10 +154,7 @@ class AnalyticsService:
         только archive_old_leads реально начинает что-то переносить (живой баг, 2026-08-27:
         замечен на графике "Лиды по месяцам", когда система проработает полгода)."""
 
-        leads = read_jsonl(self.leads_file)
-        if self.leads_archive_file is not None:
-            leads = leads + read_jsonl(self.leads_archive_file)
-        return leads
+        return self.lead_store.read_all()
 
     def _new_client_leads(self) -> list[dict[str, Any]]:
         return [lead for lead in self._all_leads() if str(lead.get("reason") or "") not in NOT_NEW_CLIENT_LEAD_REASONS]

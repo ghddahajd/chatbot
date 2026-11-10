@@ -50,6 +50,8 @@ def _build_delivery_service():
     from app.knowledge import KnowledgeBaseResolver  # noqa: WPS433
 
     settings = get_settings()
+    if settings.lead_storage_backend != "files":
+        raise ValueError("Этот инструмент работает только с файловой очередью")
     resolver = KnowledgeBaseResolver(
         data_dir=settings.data_dir,
         clients_data_dir=settings.clients_data_dir,

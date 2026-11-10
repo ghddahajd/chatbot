@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -66,7 +66,8 @@ def _parse_datetime(value: Any) -> Optional[datetime]:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
     except ValueError:
         return None
 
@@ -193,6 +194,72 @@ def _event_enabled(config: dict[str, Any], event_type: str) -> bool:
     return event_type in {str(event) for event in events}
 
 
+def _outbox_health_from_records(latest: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """текущее состояние outbox для /health — без сети, только чтение файла на диске.
+
+    "dead" считается активной проблемой только внутри DEAD_EVENT_HEALTH_WINDOW — старые
+    мёртвые записи остаются в истории (see summary()) но не держат /health "degraded"
+    бесконечно.
+    """
+
+    records = latest.values()
+    pending = sum(1 for record in records if record.get("status") in {"pending", "failed"})
+    cutoff = _utcnow() - DEAD_EVENT_HEALTH_WINDOW
+    dead_total = 0
+    dead_recent = 0
+    for record in records:
+        if record.get("status") != "dead":
+            continue
+        dead_total += 1
+        timestamp = _parse_datetime(record.get("timestamp"))
+        if timestamp is None or timestamp >= cutoff:
+            dead_recent += 1
+    return {
+        "status": "degraded" if dead_recent > 0 else "ok",
+        "pending_events": pending,
+        "dead_events": dead_recent,
+        "dead_events_total": dead_total,
+    }
+
+def _outbox_summary_from_records(
+    latest: dict[str, dict[str, Any]],
+    *,
+    company_id: Optional[str] = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    records = [
+        record
+        for record in latest.values()
+        if company_id is None or record.get("company_id") == company_id
+    ]
+    records.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+
+    by_status = Counter(str(record.get("status") or "unknown") for record in records)
+    by_destination = Counter(str(record.get("destination_type") or "unknown") for record in records)
+    recent = [
+        {
+            "timestamp": record.get("timestamp"),
+            "delivery_id": record.get("delivery_id"),
+            "company_id": record.get("company_id"),
+            "session_id": record.get("session_id"),
+            "destination_type": record.get("destination_type"),
+            "status": record.get("status"),
+            "attempts": record.get("attempts"),
+            "next_attempt_at": record.get("next_attempt_at"),
+            "last_error": record.get("last_error"),
+            "response_status": record.get("response_status"),
+        }
+        for record in records[:limit]
+    ]
+    return {
+        "company_id": company_id,
+        "total": len(records),
+        "by_status": dict(by_status),
+        "by_destination": dict(by_destination),
+        "recent": recent,
+    }
+
+
 class DeliveryService:
     """пишет outbox и доставляет лиды в Telegram/webhook с retry metadata."""
 
@@ -285,31 +352,13 @@ class DeliveryService:
         }
 
     def outbox_health(self) -> dict[str, Any]:
-        """текущее состояние outbox для /health — без сети, только чтение файла на диске.
+        return _outbox_health_from_records(self._latest_records())
 
-        "dead" считается активной проблемой только внутри DEAD_EVENT_HEALTH_WINDOW — старые
-        мёртвые записи остаются в истории (see summary()) но не держат /health "degraded"
-        бесконечно.
-        """
+    async def get_health(self) -> dict[str, Any]:
+        return self.outbox_health()
 
-        records = self._latest_records().values()
-        pending = sum(1 for record in records if record.get("status") in {"pending", "failed"})
-        cutoff = _utcnow() - DEAD_EVENT_HEALTH_WINDOW
-        dead_total = 0
-        dead_recent = 0
-        for record in records:
-            if record.get("status") != "dead":
-                continue
-            dead_total += 1
-            timestamp = _parse_datetime(record.get("timestamp"))
-            if timestamp is None or timestamp >= cutoff:
-                dead_recent += 1
-        return {
-            "status": "degraded" if dead_recent > 0 else "ok",
-            "pending_events": pending,
-            "dead_events": dead_recent,
-            "dead_events_total": dead_total,
-        }
+    async def get_summary(self, *, company_id: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
+        return self.summary(company_id=company_id, limit=limit)
 
     async def run_retry_loop(self, interval_seconds: int) -> None:
         """периодически повторяет due-доставки, пока задачу не отменят."""
@@ -323,43 +372,8 @@ class DeliveryService:
             except Exception as error:
                 logger.warning("delivery retry loop error=%s", type(error).__name__)
 
-    def summary(
-        self,
-        *,
-        company_id: Optional[str] = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        records = [
-            record
-            for record in self._latest_records().values()
-            if company_id is None or record.get("company_id") == company_id
-        ]
-        records.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
-
-        by_status = Counter(str(record.get("status") or "unknown") for record in records)
-        by_destination = Counter(str(record.get("destination_type") or "unknown") for record in records)
-        recent = [
-            {
-                "timestamp": record.get("timestamp"),
-                "delivery_id": record.get("delivery_id"),
-                "company_id": record.get("company_id"),
-                "session_id": record.get("session_id"),
-                "destination_type": record.get("destination_type"),
-                "status": record.get("status"),
-                "attempts": record.get("attempts"),
-                "next_attempt_at": record.get("next_attempt_at"),
-                "last_error": record.get("last_error"),
-                "response_status": record.get("response_status"),
-            }
-            for record in records[:limit]
-        ]
-        return {
-            "company_id": company_id,
-            "total": len(records),
-            "by_status": dict(by_status),
-            "by_destination": dict(by_destination),
-            "recent": recent,
-        }
+    def summary(self, *, company_id: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
+        return _outbox_summary_from_records(self._latest_records(), company_id=company_id, limit=limit)
 
     def _destinations_for(self, *, company_id: str, event_type: str) -> list[dict[str, str]]:
         destinations: list[dict[str, str]] = []

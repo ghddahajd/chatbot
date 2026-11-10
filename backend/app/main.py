@@ -18,6 +18,8 @@ from .auth import CLIENT_COOKIE_NAME, OPERATOR_COOKIE_NAME, authenticate, requir
 from .config import get_settings
 from .login_panel import render_login_page, sanitize_next_path
 from .delivery import DeliveryService
+from .storage.errors import LeadStorageError
+from .storage.runtime import close_lead_storage, delivery_health, initialize_lead_storage, lead_storage_error_handler
 from .health_checks import client_rag_statuses, collect_health_checks, overall_status, rag_index_check
 from .knowledge import KnowledgeBaseResolver
 from .leads import LeadService, archive_old_leads
@@ -131,7 +133,7 @@ async def _run_analytics_prune_loop(
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _lifespan(app: FastAPI):
     settings = get_settings()
     # раньше это было только предупреждением в preflight — приложение спокойно поднималось
     # с открытым токеном на боевом хосте, если кто-то забыл переопределить OPERATOR_TOKEN.
@@ -180,20 +182,23 @@ async def lifespan(app: FastAPI):
     snapshot_file = Path(settings.session_snapshot_file) if settings.session_snapshot_file else None
     if snapshot_file is not None:
         await app.state.session_store.restore_from(snapshot_file)
-    app.state.delivery_service = DeliveryService(
-        outbox_file=settings.delivery_outbox_file,
-        knowledge_base_resolver=app.state.knowledge_base_resolver,
-        telegram_bot_token=settings.telegram_bot_token,
-        telegram_chat_id=settings.telegram_chat_id,
-        telegram_dm_enabled=settings.telegram_dm_enabled,
-    )
-    app.state.lead_service = LeadService(leads_file=settings.leads_file, delivery_service=app.state.delivery_service)
+    await initialize_lead_storage(app)
+    if settings.lead_storage_backend == "files":
+        app.state.delivery_service = DeliveryService(
+            outbox_file=settings.delivery_outbox_file,
+            knowledge_base_resolver=app.state.knowledge_base_resolver,
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+            telegram_dm_enabled=settings.telegram_dm_enabled,
+        )
+        app.state.lead_service = LeadService(leads_file=settings.leads_file, delivery_service=app.state.delivery_service)
     app.state.analytics_service = AnalyticsService(
         analytics_file=settings.analytics_file,
         leads_file=settings.leads_file,
         rollup_file=settings.analytics_rollup_file,
         leads_archive_file=settings.leads_archive_file,
         conversations_archive_file=settings.conversations_archive_file,
+        postgres_lead_store=app.state.postgres_lead_store,
     )
     app.state.llm_client = build_llm_client(
         provider=settings.llm_provider,
@@ -262,7 +267,7 @@ async def lifespan(app: FastAPI):
         else None
     )
     leads_archive_task = None
-    if settings.leads_archive_enabled:
+    if settings.leads_archive_enabled and settings.lead_storage_backend == "files":
         leads_archive_task = asyncio.create_task(
             _run_leads_archive_loop(
                 settings.leads_file,
@@ -381,7 +386,19 @@ async def lifespan(app: FastAPI):
                         )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.postgres_lead_store = None
+    app.state.background_tasks = {}
+    try:
+        async with _lifespan(app):
+            yield
+    finally:
+        await close_lead_storage(app)
+
+
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)
+app.add_exception_handler(LeadStorageError, lead_storage_error_handler)
 settings = get_settings()
 configure_logging(settings.log_level)
 
@@ -426,7 +443,7 @@ async def healthcheck() -> JSONResponse:
     Сама логика проверок — в health_checks.py (общая с /api/debug/preflight).
     """
 
-    checks = collect_health_checks(app)
+    checks = collect_health_checks(app, delivery_check=await delivery_health(app))
     overall, http_status = overall_status(checks)
 
     return JSONResponse(status_code=http_status, content={"status": overall, "checks": checks})

@@ -35,6 +35,7 @@ from .models import SessionStatus
 from .policy.extractors import extract_phone
 from .runtime_stats import STATS
 from .utils.jsonl import read_jsonl
+from .storage.runtime import delivery_health
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,8 @@ def _phone_selftest() -> list[str]:
 
 
 def check_leads(settings: Any) -> dict[str, Any]:
+    if getattr(settings, "lead_storage_backend", "files") == "postgres":
+        return _item("error", "Async lead storage check required", source="postgres")
     path = Path(settings.leads_file)
     writable = _writable(path)
     size = path.stat().st_size if path.exists() else 0
@@ -401,6 +404,9 @@ def check_storage(settings: Any) -> dict[str, Any]:
         "delivery_outbox_file",
         "telegram_bridge_failures_file",
     ):
+        if (getattr(settings, "lead_storage_backend", "files") == "postgres"
+                and name in {"leads_file", "leads_archive_file", "delivery_outbox_file"}):
+            continue
         path = getattr(settings, name, None)
         if path is not None and Path(path).exists():
             files[Path(path).name] = _mb(Path(path).stat().st_size)
@@ -452,6 +458,9 @@ def check_background_tasks(app: FastAPI) -> dict[str, Any]:
     bridge = getattr(app.state, "telegram_bridge_service", None)
     tasks: list[dict[str, Any]] = []
     for name, flag in BACKGROUND_TASKS:
+        if name == "leads_archive" and getattr(settings, "lead_storage_backend", "files") == "postgres":
+            tasks.append({"name": name, "status": "skip", "detail": "лиды остаются в Postgres"})
+            continue
         if not getattr(settings, flag, False):
             tasks.append({"name": name, "status": "skip", "detail": "отключено настройкой"})
             continue
@@ -838,20 +847,20 @@ def _with_detail(name: str, item: dict[str, Any]) -> dict[str, Any]:
     return {**item, "detail": detail}
 
 
-def _collect_sync(app: FastAPI) -> dict[str, dict[str, Any]]:
+def _collect_sync(app: FastAPI, *, delivery_check=None, leads_check=None) -> dict[str, dict[str, Any]]:
     settings = app.state.settings
     checks: dict[str, dict[str, Any]] = {}
     checks["app"] = _safe("app", lambda: check_app(settings))
     checks["operator_token"] = _safe("operator_token", lambda: check_operator_token(settings))
     try:
-        for name, item in collect_health_checks(app).items():
+        for name, item in collect_health_checks(app, delivery_check=delivery_check).items():
             checks[name] = _with_detail(name, item)
     except Exception as error:
         logger.warning("preflight check_failed name=health error=%s", type(error).__name__)
         checks["health"] = _item("error", f"проверка упала: {type(error).__name__}")
     checks["clients"] = _safe("clients", lambda: check_clients(app))
     checks["domains"] = _safe("domains", lambda: check_domains(app))
-    checks["leads"] = _safe("leads", lambda: check_leads(settings))
+    checks["leads"] = leads_check if leads_check is not None else _safe("leads", lambda: check_leads(settings))
     checks["analytics"] = _safe("analytics", lambda: check_analytics(settings))
     checks["storage"] = _safe("storage", lambda: check_storage(settings))
     checks["resources"] = _safe("resources", lambda: check_resources(settings))
@@ -873,7 +882,25 @@ def _flatten_statuses(checks: dict[str, dict[str, Any]]) -> list[str]:
 
 
 async def run_preflight(app: FastAPI, *, include_network: bool = True) -> dict[str, Any]:
-    checks = await asyncio.to_thread(_collect_sync, app)
+    leads_check = None
+    if getattr(app.state.settings, "lead_storage_backend", "files") == "postgres":
+        try:
+            rows = await app.state.postgres_lead_store.read_leads()
+            dated = [(_parse_ts(row.get("timestamp")), row) for row in rows]
+            last_at, latest = max(
+                (item for item in dated if item[0] is not None), key=lambda item: item[0], default=(None, {}),
+            )
+            failures = _phone_selftest()
+            leads_check = _item(
+                "error" if failures else "ok", "источник лидов — Postgres",
+                source="postgres", count=len(rows), last_lead_at=_iso(last_at) if last_at else None,
+                last_lead_company=latest.get("company_id"), phone_selftest_failed=len(failures),
+            )
+        except Exception:
+            leads_check = _item("error", "Lead storage unavailable", source="postgres")
+    checks = await asyncio.to_thread(
+        _collect_sync, app, delivery_check=await delivery_health(app), leads_check=leads_check,
+    )
     try:
         checks["sessions"] = await check_sessions(app)
     except Exception as error:

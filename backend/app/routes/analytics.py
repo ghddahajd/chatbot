@@ -5,7 +5,7 @@ import logging
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,16 @@ from ..logging_setup import log_event
 from ..rate_limit import client_ip
 
 
-router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+async def _lead_snapshot(request: Request, x_operator_token: Optional[str] = Header(default=None)):
+    if request.method != "GET" or request.url.path.rsplit("/", 1)[-1] not in {"summary", "operators", "dashboard", "leads"}:
+        yield
+        return
+    company_id = await authorize_company(request, x_operator_token, request.query_params.get("company_id"))
+    async with request.app.state.analytics_service.leads_snapshot(company_id=company_id):
+        yield
+
+
+router = APIRouter(prefix="/api/analytics", tags=["analytics"], dependencies=[Depends(_lead_snapshot)])
 logger = logging.getLogger(__name__)
 
 # Предохранитель от случайного огромного диапазона (не про производительность на текущих

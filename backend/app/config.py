@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     # http://user:pass@host:port) чинит именно эту точку. Пусто — прокси не используется,
     # как раньше.
     telegram_proxy_url: str = ""
+    lead_storage_backend: Literal["files", "postgres"] = "files"
     delivery_retry_enabled: bool = True
     delivery_retry_interval_seconds: int = 60
     session_ttl_seconds: int = 86400

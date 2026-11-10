@@ -162,7 +162,8 @@ class OpsBot:
         return f"✅ Нейросеть отвечает, {int(duration_ms)} мс"
 
     async def _cmd_today(self) -> str:
-        return await asyncio.to_thread(self._today_text, datetime.now(timezone.utc))
+        async with self.app.state.analytics_service.leads_snapshot():
+            return await asyncio.to_thread(self._today_text, datetime.now(timezone.utc))
 
     def _today_text(self, now: datetime) -> str:
         analytics = self.app.state.analytics_service
@@ -190,7 +191,8 @@ class OpsBot:
         return "\n".join(lines)
 
     async def _cmd_funnel(self) -> str:
-        return await asyncio.to_thread(self._funnel_text)
+        async with self.app.state.analytics_service.leads_snapshot():
+            return await asyncio.to_thread(self._funnel_text)
 
     def _funnel_text(self) -> str:
         analytics = self.app.state.analytics_service
@@ -220,7 +222,8 @@ class OpsBot:
         return "\n".join(lines) if len(lines) > 1 else f"🔻 {self.project} — за 7 дней данных нет"
 
     async def _cmd_leads(self) -> str:
-        return await asyncio.to_thread(self._leads_text)
+        async with self.app.state.analytics_service.leads_snapshot():
+            return await asyncio.to_thread(self._leads_text)
 
     def _leads_text(self) -> str:
         resolver = self.app.state.knowledge_base_resolver

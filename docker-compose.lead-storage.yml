@@ -1,0 +1,22 @@
+# Подключать явно после миграций, регистрации клиник и настройки отдельной роли.
+services:
+  backend:
+    network_mode: !reset null
+    build:
+      target: client-access
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000"]
+    environment:
+      LEAD_STORAGE_BACKEND: postgres
+      LEAD_DATABASE_URL: ""
+      LEAD_PGHOST: postgres
+      LEAD_PGPORT: "5432"
+      LEAD_PGUSER: chatbot_lead_runtime
+      LEAD_PGPASSWORD: ${LEAD_DB_PASSWORD:?Задайте пароль отдельной роли лидов}
+      LEAD_PGDATABASE: chatbot_storage
+      DELIVERY_RETRY_ENABLED: "true"
+    networks: [default, storage]
+
+networks:
+  default: {}
+  storage:
+    internal: true

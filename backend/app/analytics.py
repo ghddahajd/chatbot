@@ -17,6 +17,8 @@ from .hours import _resolve_timezone
 from .logging_setup import redact_phones
 from .models import MessageRole, PolicyAction, PolicyReason, PolicyResult, Session
 from .storage.leads import FileLeadStore
+from .storage.runtime import LEADS_SNAPSHOT, leads_snapshot
+from .storage.errors import LeadStorageError
 from .utils.jsonl import read_jsonl
 
 
@@ -132,8 +134,10 @@ class AnalyticsService:
         rollup_file: Optional[Path] = None,
         leads_archive_file: Optional[Path] = None,
         conversations_archive_file: Optional[Path] = None,
+        postgres_lead_store=None,
     ) -> None:
         self.analytics_file = analytics_file
+        self.postgres_lead_store = postgres_lead_store
         self.leads_file = leads_file
         # Оба опциональны (None в части тестов, которые их не касаются) — нужны только для
         # трендов, переживающих ретеншн: rollup_file хранит дневные+часовые счётчики после
@@ -154,7 +158,15 @@ class AnalyticsService:
         только archive_old_leads реально начинает что-то переносить (живой баг, 2026-08-27:
         замечен на графике "Лиды по месяцам", когда система проработает полгода)."""
 
+        if self.postgres_lead_store is not None:
+            snapshot = LEADS_SNAPSHOT.get()
+            if snapshot is None or snapshot[0] is not self:
+                raise LeadStorageError("Postgres lead snapshot required")
+            return snapshot[1]
         return self.lead_store.read_all()
+
+    def leads_snapshot(self, company_id=None):
+        return leads_snapshot(self, company_id)
 
     def _new_client_leads(self) -> list[dict[str, Any]]:
         return [lead for lead in self._all_leads() if str(lead.get("reason") or "") not in NOT_NEW_CLIENT_LEAD_REASONS]

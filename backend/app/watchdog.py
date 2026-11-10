@@ -334,8 +334,9 @@ async def run_watchdog_loop(app: FastAPI) -> None:
             await watchdog.evaluate(report)
             app.state.watchdog_status = {"problems": watchdog.problems(), "checked_at": datetime.now(timezone.utc).isoformat()}
             if watchdog.digest_due(hour_msk=settings.ops_digest_hour_msk):
-                leads = await asyncio.to_thread(app.state.analytics_service._all_leads)
-                await watchdog.send_digest(await asyncio.to_thread(yesterday_activity, settings.analytics_file, leads))
+                async with app.state.analytics_service.leads_snapshot():
+                    leads = await asyncio.to_thread(app.state.analytics_service._all_leads)
+                    await watchdog.send_digest(await asyncio.to_thread(yesterday_activity, settings.analytics_file, leads))
         except Exception as error:  # noqa: BLE001 — один неудачный прогон не должен останавливать сторожа
             logger.warning("watchdog run_failed error=%s", type(error).__name__)
         await asyncio.sleep(settings.watchdog_interval_seconds)

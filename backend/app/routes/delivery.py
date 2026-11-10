@@ -18,7 +18,7 @@ async def delivery_outbox(
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict[str, Any]:
     verify_operator_token(request, x_operator_token)
-    return request.app.state.delivery_service.summary(company_id=company_id, limit=limit)
+    return await request.app.state.delivery_service.get_summary(company_id=company_id, limit=limit)
 
 
 @router.post("/retry")

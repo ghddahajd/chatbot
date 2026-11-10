@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from .llm.mock import MockLLMClient
 
 
-def collect_health_checks(app: FastAPI) -> dict[str, dict[str, Any]]:
+def collect_health_checks(app: FastAPI, *, delivery_check=None) -> dict[str, dict[str, Any]]:
     """собирает проверки компонентов из app.state (тот же набор, что раньше был внутри /health)."""
 
     settings = app.state.settings
@@ -57,11 +57,16 @@ def collect_health_checks(app: FastAPI) -> dict[str, dict[str, Any]]:
         }
 
     delivery_service = getattr(app.state, "delivery_service", None)
-    checks["delivery"] = (
-        delivery_service.outbox_health()
-        if delivery_service is not None
-        else {"status": "ok", "pending_events": 0, "dead_events": 0}
-    )
+    if delivery_check is not None:
+        checks["delivery"] = delivery_check
+    elif getattr(settings, "lead_storage_backend", "files") == "postgres":
+        checks["delivery"] = {"status": "error", "detail": "Async delivery check required"}
+    else:
+        checks["delivery"] = (
+            delivery_service.outbox_health()
+            if delivery_service is not None
+            else {"status": "ok", "pending_events": 0, "dead_events": 0}
+        )
 
     return checks
 

@@ -41,7 +41,7 @@ async def run(command, clients):
             async with engine.connect() as connection:
                 await connection.execute(text("SELECT 1"))
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                if revision != "0002_client_access":
+                if revision != "0003_leads_outbox":
                     raise ValueError("Примените миграции до текущей версии")
             print("БД доступна, миграция реестра применена")
         else:

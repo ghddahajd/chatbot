@@ -11,6 +11,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ if not importlib.util.find_spec("sqlmodel") or os.environ.get("DB_INTEGRATION_TE
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
+from app import __file__ as app_file
 from app.db.models import Tenant
 from app.db.connection import make_engine
 from app.db.lead_models import leads, delivery_outbox as outbox
@@ -86,6 +88,61 @@ class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
         for changed in ({**payload, "name": "Other"}, self.payload(1)):
             with self.assertRaises(ValueError):
                 await self.store.save_lead(lead_id=lead_id, event_type="lead_created", payload=changed, records=[])
+
+    async def test_import_history_dry_run_errors_then_repeat_without_delivery(self):
+        with TemporaryDirectory() as temp:
+            hot = Path(temp) / "leads.jsonl"
+            archive = Path(temp) / "archive.jsonl"
+            first = {**self.payload(0), "reason": "booking", "phone": "SYNTHETIC_PHONE",
+                     "operator_url": "https://example.invalid/operator?token=SYNTHETIC_TOKEN"}
+            older = {**self.payload(0), "timestamp": "2026-10-15T13:20:00+03:00"}
+            other = self.payload(1)
+            archive.write_text(json.dumps(first, sort_keys=True) + "\n" + json.dumps(older) + "\n")
+            script = Path(app_file).resolve().parents[1] / "scripts/import_lead_history.py"
+            env = dict(os.environ)
+            if "TEST_LEAD_DATABASE_URL" in env:
+                env["LEAD_DATABASE_URL"] = env["TEST_LEAD_DATABASE_URL"]
+
+            async def cli(*args, code=0):
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, str(script), "--leads", str(hot), "--archive", str(archive), *args,
+                    env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await process.communicate()
+                self.assertEqual(process.returncode, code, stderr.decode())
+                for value in (b"SYNTHETIC_PHONE", b"SYNTHETIC_TOKEN", b"unregistered-fixture"):
+                    self.assertNotIn(value, stdout + stderr)
+                return json.loads(stdout)
+
+            valid = json.dumps(first) + "\n" + json.dumps(other) + "\n"
+            hot.write_text(valid + "{broken\n" + json.dumps({**other, "company_id": "unregistered-fixture"}) + "\n"
+                           + json.dumps({**other, "timestamp": "yesterday"}) + "\n")
+            invalid = await cli("--apply", code=1)
+            self.assertEqual(invalid["errors"], [
+                {"source": "leads", "line": 3, "reason": "invalid_json"},
+                {"source": "leads", "line": 4, "reason": "unknown_company"},
+                {"source": "leads", "line": 5, "reason": "invalid_timestamp"},
+            ])
+            self.assertEqual(await self.store.read_leads(self.cids[0]), [])
+            self.assertEqual(await self.store.read_leads(self.cids[1]), [])
+
+            hot.write_text(valid)
+            report = await cli()
+            self.assertEqual(report["by_company"], {self.cids[0]: 2, self.cids[1]: 1})
+            self.assertEqual(report["duplicates"], [{"source": "archive", "line": 1}])
+            self.assertEqual(await self.store.read_leads(self.cids[0]), [])
+            self.assertEqual((await cli("--apply"))["inserted"], 3)
+            hot.write_text(json.dumps(other) + "\n")
+            repeated = await cli("--apply")
+            self.assertEqual((repeated["inserted"], repeated["already_present"]), (0, 3))
+            saved = await self.store.read_leads(self.cids[0])
+            self.assertEqual(saved, [older, {key: value for key, value in first.items() if key != "operator_url"}])
+            self.assertEqual(await self.store.read_leads(self.cids[1]), [other])
+            october = await self.store.reports.leads_feed(company_id=self.cids[0],
+                end=datetime(2026, 10, 31, tzinfo=timezone.utc))
+            self.assertEqual([row["timestamp"] for row in october], ["2026-10-15T10:20:00"])
+            for company in self.cids:
+                self.assertEqual(await self.store.outbox_records(company), [])
 
     async def test_bridge_delivers_saved_leads_after_restart(self):
         with TemporaryDirectory() as temp:

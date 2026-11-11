@@ -98,6 +98,7 @@ class Sandbox:
             "session_store": SessionStore(),
             "policy_analyzer": analyzer,
             "lead_service": _Recorder("lead", self.effects),
+            "postgres_lead_store": None,
             "analytics_service": _Recorder("analytics", self.effects),
             "delivery_service": _Recorder("webhook", self.effects),
             # «доставлено»: иначе передача администратору пошла бы по ветке «Telegram недоступен»

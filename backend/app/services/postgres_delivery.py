@@ -17,6 +17,7 @@ from ..storage.errors import LeadStorageError
 from ..storage.request_context import prepare_lead_receipt, mark_lead_committed
 
 logger = logging.getLogger(__name__)
+TELEGRAM_LEAD_CARD = "telegram_lead_card"
 
 
 class PostgresDeliveryService(DeliveryService):
@@ -27,6 +28,7 @@ class PostgresDeliveryService(DeliveryService):
         self.telegram_bot_token = telegram_bot_token
         self.telegram_chat_id = telegram_chat_id
         self.telegram_dm_enabled = telegram_dm_enabled
+        self.telegram_bridge = None
         self._wakeup = asyncio.Event()
 
     def prepare_event(self, *, event_type, company_id, session_id, payload):
@@ -98,6 +100,12 @@ class PostgresDeliveryService(DeliveryService):
         return updated if saved else {**updated, "status": "processing"}
 
     async def _send(self, record):
+        if record["destination_type"] == TELEGRAM_LEAD_CARD:
+            if self.telegram_bridge is None:
+                return 503
+            return await self.telegram_bridge.send_outbox_lead_card(
+                company_id=record["company_id"], session_id=record["session_id"], card=record["payload"],
+            )
         # Время события неизменно, время последней попытки хранится отдельно.
         return await super()._send({**record, "timestamp": record.get("event_timestamp") or record["timestamp"]})
 
@@ -144,7 +152,7 @@ class PostgresLeadService:
         self.store = store
         self.delivery_service = delivery_service
 
-    async def save(self, lead: Lead, event_type="lead_created"):
+    async def save(self, lead: Lead, event_type="lead_created", *, telegram_card=None):
         payload = lead_to_payload(lead)
         try:
             receipt = await prepare_lead_receipt(lead, event_type)
@@ -153,6 +161,12 @@ class PostgresLeadService:
                 lead.storage_id = str(uuid5(NAMESPACE_URL, f"chat:{operation.company_id}:{operation.request_id}"))
             records = self.delivery_service.prepare_event(
                 event_type=event_type, company_id=lead.company_id, session_id=lead.session_id, payload=payload)
+            if telegram_card is not None:
+                records.append({
+                    "delivery_id": str(uuid5(NAMESPACE_URL, f"telegram-lead:{lead.storage_id}")),
+                    "event_type": event_type, "company_id": lead.company_id, "session_id": lead.session_id,
+                    "destination_type": TELEGRAM_LEAD_CARD, "payload": telegram_card,
+                })
             kwargs = {"request_receipt": receipt} if receipt is not None else {}
             await self.store.save_lead(lead_id=lead.storage_id, event_type=event_type,
                                        payload=payload, records=records, **kwargs)

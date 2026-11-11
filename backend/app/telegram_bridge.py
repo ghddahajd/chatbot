@@ -334,7 +334,8 @@ class TelegramBridgeService:
         return getattr(session, "telegram_group_id", None) or self.routing.legacy_group_id or None
 
     async def _call(
-        self, method: str, *, _http_timeout: float | None = None, _max_retries: int | None = None, **params: Any
+        self, method: str, *, _http_timeout: float | None = None, _max_retries: int | None = None,
+        _retry_rate_limit: bool = True, **params: Any
     ) -> dict[str, Any]:
         """Telegram лимитирует примерно 1 сообщение/сек в один и тот же чат — все карточки
         очереди операторов идут в одну группу, так что под конкурентной нагрузкой 429 ("Too
@@ -381,7 +382,7 @@ class TelegramBridgeService:
                 return data
 
             retry_after = _telegram_retry_after(data)
-            if retry_after is not None and rate_limit_attempt < _MAX_RATE_LIMIT_RETRIES:
+            if _retry_rate_limit and retry_after is not None and rate_limit_attempt < _MAX_RATE_LIMIT_RETRIES:
                 logger.warning(
                     "telegram_bridge rate_limited method=%s retry_after=%ss attempt=%s/%s",
                     method,
@@ -475,6 +476,50 @@ class TelegramBridgeService:
             return {"status": "error", "detail": f"бот больше не в группе (status={member_status})"}
         return {"status": "ok", "detail": f"доступ есть, status={member_status}"}
 
+    @staticmethod
+    def _operator_card_params(session_id: str, reason: str, last_message: str, client_label: str) -> dict:
+        return {
+            "text": (
+                f"{reason} — *{_escape_markdown(client_label)}*\n\n"
+                f"💬 \"{_escape_markdown(last_message)}\"\n\n"
+                "Нажмите «Взять в работу», чтобы начать переписку."
+            ),
+            "reply_markup": {"inline_keyboard": [
+                [{"text": "Взять в работу", "callback_data": f"{CLAIM_CALLBACK_PREFIX}{session_id}"}]
+            ]},
+        }
+
+    async def send_outbox_lead_card(self, *, company_id: str, session_id: str, card: dict) -> int:
+        """SQL tracks delivery attempts and owns retries for this card."""
+        if not self.enabled:
+            return 503
+        target = self.routing.target_for(company_id)
+        if target is None:
+            return 422
+        session = await self.session_store.get(session_id) if card["offer_claim"] else None
+        if (
+            session is not None and session.company_id == company_id
+            and session.status not in {SessionStatus.HUMAN_ACTIVE, SessionStatus.CLOSED}
+            and not (session.telegram_topic_id or session.operator_requested or session.telegram_claimed_by)
+        ):
+            params = self._operator_card_params(session_id, card["reason"], card["summary"], card["client_label"])
+        elif target.clients_topic_id:
+            params = {"text": card["text"], "message_thread_id": int(target.clients_topic_id)}
+        elif card["needs_operator"]:
+            # Без настроенной темы контакт можно передать в ту же группу.
+            params = {"text": card["text"]}
+        else:
+            return 422
+        data = await asyncio.wait_for(
+            self._call("sendMessage", chat_id=target.group_id, parse_mode="Markdown",
+                       _max_retries=0, _retry_rate_limit=False, **params),
+            timeout=HTTP_TIMEOUT_SECONDS + 5,
+        )
+        if data.get("ok"):
+            return 200
+        code = data.get("error_code")
+        return code if isinstance(code, int) and 400 <= code < 600 else 503
+
     async def post_operator_queue_card(
         self,
         *,
@@ -497,24 +542,13 @@ class TelegramBridgeService:
         target = self._new_card_target(session, kind="operator_queue_card")
         if target is None:
             return False
-        card_text = (
-            f"{reason} — *{_escape_markdown(client_label)}*\n\n"
-            f"💬 \"{_escape_markdown(last_message)}\"\n\n"
-            "Нажмите «Взять в работу», чтобы начать переписку."
-        )
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "Взять в работу", "callback_data": f"{CLAIM_CALLBACK_PREFIX}{session_id}"}]
-            ]
-        }
         data = await self._call(
             "sendMessage",
             chat_id=target.group_id,
-            text=card_text,
             parse_mode="Markdown",
-            reply_markup=keyboard,
             _http_timeout=FAST_SEND_TIMEOUT_SECONDS if fast else None,
             _max_retries=1 if fast else None,
+            **self._operator_card_params(session_id, reason, last_message, client_label),
         )
         if data.get("ok"):
             return True

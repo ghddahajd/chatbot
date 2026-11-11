@@ -707,7 +707,6 @@ class ChatService:
         self,
         *,
         session_store,
-        lead_service,
         session,
         message: str,
         knowledge_base,
@@ -871,15 +870,11 @@ class ChatService:
             operator_url=self._operator_session_url(session.session_id),
         )
         await self._finalize_lead_summary(lead_session, lead)
-        await lead_service.save(
+        await self._save_chat_lead(
             lead,
             event_type="booking_created" if is_booking_request else "lead_created",
-        )
-        await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
-        await self._clear_contact_state(session_store, session.session_id)
-        await self._notify_telegram_for_lead(
-            lead,
             reason=self._lead_card_title(lead, is_booking_request=is_booking_request),
+            clear_contact=True,
         )
         answer = self._lead_success_answer(lead, is_booking_request=is_booking_request, knowledge_base=knowledge_base)
         await session_store.append_message(session.session_id, MessageRole.ASSISTANT, answer)
@@ -1168,9 +1163,7 @@ class ChatService:
             operator_url=self._operator_session_url(session.session_id),
         )
         await self._finalize_lead_summary(session, lead)
-        await request.app.state.lead_service.save(lead)
-        await request.app.state.session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
-        await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
+        await self._save_chat_lead(lead, reason="🔔 Новый лид")
 
     def _lead_service(self, lead):
         if not lead.service_id:
@@ -1212,64 +1205,59 @@ class ChatService:
             "Спасибо. Передали ваши контакты менеджеру. С вами свяжутся для уточнения деталей.",
         )
 
-    async def _notify_telegram_for_lead(self, lead, *, reason: str) -> None:
-        """Лид с needs_operator=True, для которого ЕЩЁ нет сигнала в очереди — реально ждёт
-        живого человека впервые, карточка в General с клеймом (как operator_requested).
-        Если сигнал уже есть (тема создана при клейме, ИЛИ уже висит неразобранная карточка
-        "⚡️ Запросил оператора") — заново звать оператора не нужно, но контакт всё равно
-        новый, поэтому падает вниз, в тот же путь, что обычный лид/запись: простая карточка
-        в тему "Клиенты", без клейма и без своей темы, просто лог для оператора."""
+    def _lead_card_text(self, lead, reason: str) -> str:
+        short_id = _lead_short_id(lead.session_id)
+        id_tag = f" · #{short_id}" if short_id else ""
+        name = _given_name(lead)
+        service = self._lead_service(lead)
+        return (
+            f"{reason}{id_tag}\n\n"
+            + (f"Имя: {_escape_markdown(name)}\n" if name else "")
+            + f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n"
+            + (f"Услуга: {_escape_markdown(service.name)}\n" if service else "")
+            + (f"Когда удобно: {_escape_markdown(lead.preferred_time)}\n" if lead.preferred_time else "")
+            + f"\n{_escape_markdown(lead.summary)}"
+        )
 
+    async def _save_chat_lead(self, lead, *, reason: str, event_type=None, clear_contact=False):
+        state = self.request.app.state
+        bridge = getattr(state, "telegram_bridge_service", None)
+        sql = getattr(state, "postgres_lead_store", None) is not None
+        kwargs = {"event_type": event_type} if event_type is not None else {}
+        if sql and bridge is not None and bridge.enabled:
+            session = await state.session_store.get(lead.session_id) if lead.needs_operator else None
+            kwargs["telegram_card"] = {
+                "reason": reason, "summary": lead.summary, "needs_operator": lead.needs_operator,
+                "offer_claim": session is not None and not (
+                    session.operator_requested or session.telegram_topic_id or session.telegram_claimed_by
+                ),
+                "client_label": _given_name(lead) or lead.phone or f"Сессия {lead.session_id[:8]}",
+                "text": self._lead_card_text(lead, reason),
+            }
+        await state.lead_service.save(lead, **kwargs)
+        await state.session_store.set_lead_requested(lead.session_id, True, phone=lead.phone)
+        if clear_contact:
+            await self._clear_contact_state(state.session_store, lead.session_id)
+        if not sql:
+            await self._notify_telegram_for_lead(lead, reason=reason)
+
+    async def _notify_telegram_for_lead(self, lead, *, reason: str) -> None:
         bridge = getattr(self.request.app.state, "telegram_bridge_service", None)
         if bridge is None or not bridge.enabled:
             return
         try:
-            needs_fresh_queue_card = lead.needs_operator
-            if needs_fresh_queue_card:
-                session = await self.request.app.state.session_store.get(lead.session_id)
-                # Живой баг (ручное тестирование пользователем, 2026-08-28): "Хочу оператора"
-                # сразу ставит operator_requested=True и шлёт карточку "⚡️ Запросил оператора"
-                # в General — задолго до появления telegram_topic_id (тема появляется только
-                # при клейме, см. post_operator_queue_card). Если клиент даёт контакт, ПОКА
-                # ждёт оператора, эта же сессия раньше слала ВТОРУЮ карточку "🔔 Новый лид" с
-                # ещё одной кнопкой "Взять в работу" — визуально дублируется. operator_requested
-                # уже значит "карточка в очереди уже есть", даже без темы — не дублируем клейм,
-                # но карточку с контактом всё равно шлём (просто без кнопки, см. ниже).
-                if session is not None and (
-                    session.telegram_topic_id is not None or session.operator_requested
-                ):
-                    needs_fresh_queue_card = False
-            if needs_fresh_queue_card:
-                # contact_draft уже очищен к этому моменту (_clear_contact_state отрабатывает
-                # до вызова этого метода) — берём имя/телефон с самого lead, не с сессии.
-                client_label = _given_name(lead) or lead.phone or f"Сессия {lead.session_id[:8]}"
+            session = await self.request.app.state.session_store.get(lead.session_id) if lead.needs_operator else None
+            # Уже открытая тема или запрос оператора не требуют второй кнопки «Взять».
+            if lead.needs_operator and (session is None or not (session.telegram_topic_id or session.operator_requested)):
                 await bridge.post_operator_queue_card(
                     session_id=lead.session_id,
                     reason=reason,
                     last_message=lead.summary,
-                    client_label=client_label,
+                    client_label=_given_name(lead) or lead.phone or f"Сессия {lead.session_id[:8]}",
                     is_lead=True,
                 )
             else:
-                # Живой баг (ручное тестирование пользователем, 2026-08-26): короткий id
-                # добавили в delivery.py (_telegram_text), но реальные карточки лидов уходят
-                # через ЭТОТ, отдельный путь (telegram_bridge.post_client_lead_card) — outbox
-                # из delivery.py тут вообще не используется, файл delivery_outbox.jsonl даже
-                # не создаётся. Тег строился в неправильном месте — в живом Telegram он не
-                # появлялся ни разу, хотя прямой вызов _telegram_text() в тестах работал.
-                short_id = _lead_short_id(lead.session_id)
-                id_tag = f" · #{short_id}" if short_id else ""
-                name = _given_name(lead)
-                service = self._lead_service(lead)
-                card_text = (
-                    f"{reason}{id_tag}\n\n"
-                    + (f"Имя: {_escape_markdown(name)}\n" if name else "")
-                    + f"Телефон: {_escape_markdown(lead.phone or 'не указан')}\n"
-                    + (f"Услуга: {_escape_markdown(service.name)}\n" if service else "")
-                    + (f"Когда удобно: {_escape_markdown(lead.preferred_time)}\n" if lead.preferred_time else "")
-                    + f"\n{_escape_markdown(lead.summary)}"
-                )
-                await bridge.post_client_lead_card(card_text, session_id=lead.session_id)
+                await bridge.post_client_lead_card(self._lead_card_text(lead, reason), session_id=lead.session_id)
         except Exception as error:
             logger.warning(
                 "telegram_bridge lead notify failed session_id=%s error=%s",
@@ -1386,7 +1374,6 @@ class ChatService:
                 content={"error": "unknown_company", "detail": "Use widget bootstrap first"},
             )
         self._phrasebook = getattr(knowledge_base, "phrasebook", {})
-        lead_service = request.app.state.lead_service
         analytics_service = request.app.state.analytics_service
 
         session = await session_store.get_or_create(session_id, company_id)
@@ -1433,7 +1420,6 @@ class ChatService:
 
         pending_contact_response = await self._handle_pending_contact(
             session_store=session_store,
-            lead_service=lead_service,
             session=session,
             message=message,
             knowledge_base=knowledge_base,
@@ -1529,9 +1515,7 @@ class ChatService:
                     operator_url=self._operator_session_url(session.session_id),
                 )
                 await self._finalize_lead_summary(session, lead)
-                await lead_service.save(lead)
-                await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
-                await self._notify_telegram_for_lead(lead, reason=self._lead_card_title(lead, is_booking_request=False))
+                await self._save_chat_lead(lead, reason=self._lead_card_title(lead, is_booking_request=False))
                 answer = self._lead_success_answer(
                     lead,
                     is_booking_request=False,
@@ -1700,17 +1684,13 @@ class ChatService:
                     operator_url=self._operator_session_url(session.session_id),
                 )
                 await self._finalize_lead_summary(lead_session, lead)
-                await lead_service.save(
+                await self._save_chat_lead(
                     lead,
                     event_type="booking_created" if is_booking_request else "lead_created",
+                    reason=self._lead_card_title(lead, is_booking_request=is_booking_request),
+                    clear_contact=True,
                 )
                 lead_created = True
-                await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
-                await self._clear_contact_state(session_store, session.session_id)
-                await self._notify_telegram_for_lead(
-                    lead,
-                    reason=self._lead_card_title(lead, is_booking_request=is_booking_request),
-                )
                 answer = self._lead_success_answer(
                     lead,
                     is_booking_request=is_booking_request,
@@ -1761,10 +1741,8 @@ class ChatService:
                         operator_url=self._operator_session_url(session.session_id),
                     )
                     await self._finalize_lead_summary(session, lead)
-                    await lead_service.save(lead)
+                    await self._save_chat_lead(lead, reason="🔔 Новый лид")
                     lead_created = True
-                    await session_store.set_lead_requested(session.session_id, True, phone=lead.phone)
-                    await self._notify_telegram_for_lead(lead, reason="🔔 Новый лид")
                 response_action, answer, response_quick_actions = await self._regulated_soft_offer_response(
                     session_store=session_store,
                     session=session,

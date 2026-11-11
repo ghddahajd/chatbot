@@ -9,9 +9,14 @@ No HTTP requests or external delivery are performed.
 
 import asyncio
 import importlib.util
+import json
 import os
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 if not importlib.util.find_spec("sqlmodel") or os.environ.get("DB_INTEGRATION_TEST") != "1":
@@ -23,6 +28,12 @@ from app.db.models import Tenant
 from app.db.connection import make_engine
 from app.db.lead_models import leads, delivery_outbox as outbox
 from app.storage.postgres import PostgresLeadOutboxStore
+from app.models import Lead, SessionStatus
+from app.services.chat_service import ChatService
+from app.services.postgres_delivery import PostgresDeliveryService, PostgresLeadService, TELEGRAM_LEAD_CARD
+from app.sessions import SessionStore
+from app.telegram_bridge import TelegramBridgeService
+from app.telegram_routing import TelegramRouting
 
 
 class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
@@ -75,6 +86,82 @@ class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
         for changed in ({**payload, "name": "Other"}, self.payload(1)):
             with self.assertRaises(ValueError):
                 await self.store.save_lead(lead_id=lead_id, event_type="lead_created", payload=changed, records=[])
+
+    async def test_bridge_delivers_saved_leads_after_restart(self):
+        with TemporaryDirectory() as temp:
+            pending = Path(temp) / "pending.jsonl"
+            routing = TelegramRouting(client_groups_raw=json.dumps({
+                self.cids[0]: {"group": "-1001", "topic": "11"},
+                self.cids[1]: {"group": "-1002", "topic": "22"},
+            }))
+            resolver = SimpleNamespace(get=lambda *args, **kwargs: None)
+
+            def bridge(sessions):
+                service = TelegramBridgeService(bot_token="stub", group_chat_id="", session_store=sessions,
+                                                ws_manager=None, routing=routing, pending_file=pending)
+                service._call = AsyncMock()
+                return service
+
+            old_sessions = SessionStore()
+            old_bridge = bridge(old_sessions)
+            delivery = PostgresDeliveryService(store=self.store, knowledge_base_resolver=resolver)
+            delivery._destinations_for = lambda **kwargs: []
+            leads_service = PostgresLeadService(store=self.store, delivery_service=delivery)
+            chat = ChatService(SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+                postgres_lead_store=self.store, lead_service=leads_service,
+                telegram_bridge_service=old_bridge, session_store=old_sessions,
+            ))))
+            first = await old_sessions.get_or_create(None, self.cids[0])
+            second = await old_sessions.get_or_create(None, self.cids[1])
+            set_lead_requested = old_sessions.set_lead_requested
+            old_sessions.set_lead_requested = AsyncMock(side_effect=asyncio.CancelledError)
+            with self.assertRaises(asyncio.CancelledError):
+                await chat._save_chat_lead(Lead(company_id=self.cids[0], session_id=first.session_id,
+                    name="First", phone="+70000000001", summary="Test", needs_operator=True), reason="Lead")
+            old_sessions.set_lead_requested = set_lead_requested
+            second_lead = Lead(company_id=self.cids[1], session_id=second.session_id,
+                               name="Second", phone="+70000000002", summary="Test", needs_operator=True)
+            for _ in range(2):
+                await chat._save_chat_lead(second_lead, reason="Lead")
+            old_bridge._call.assert_not_awaited()
+            await self.store.close()
+
+            runtime_url = os.environ.get("TEST_LEAD_DATABASE_URL")
+            engine = create_async_engine(runtime_url, hide_parameters=True) if runtime_url else make_engine("LEAD_")
+            restarted_store = PostgresLeadOutboxStore(engine)
+            self.addAsyncCleanup(restarted_store.close)
+            restarted = PostgresDeliveryService(store=restarted_store, knowledge_base_resolver=resolver)
+            # Восстановился только второй диалог.
+            restored = SessionStore()
+            await restored.get_or_create(second.session_id, self.cids[1])
+            await restored.set_status(second.session_id, SessionStatus.WAITING_OPERATOR)
+            restarted.telegram_bridge = bridge(restored)
+            send = restarted.telegram_bridge._call
+            send.side_effect = [{"ok": False, "error_code": 429}, TimeoutError(), {"ok": True}, {"ok": True}]
+            for _ in range(2):
+                result = await restarted.retry_due(company_id=self.cids[0])
+                self.assertEqual(result["failed"], 1)
+                self.assertFalse(pending.exists())
+                async with self.owner.begin() as conn:
+                    await conn.execute(outbox.update().where(outbox.c.tenant_id == self.tids[0])
+                                       .values(next_attempt_at=sa.func.now()))
+            self.assertEqual((await restarted.retry_due(company_id=self.cids[0]))["sent"], 1)
+            self.assertEqual((await restarted.retry_due(company_id=self.cids[1]))["sent"], 1)
+            self.assertEqual(await restarted.retry_due(), {"attempted": 0, "sent": 0, "failed": 0, "dead": 0})
+            fallback, throttled_retry, timeout_retry, live = [call.kwargs for call in send.await_args_list]
+            self.assertEqual(fallback, throttled_retry)
+            self.assertEqual(fallback, timeout_retry)
+            self.assertEqual((fallback["chat_id"], fallback["message_thread_id"]), ("-1001", 11))
+            self.assertIn("70000000001", fallback["text"])
+            self.assertNotIn("reply_markup", fallback)
+            self.assertEqual(live["chat_id"], "-1002")
+            self.assertEqual(live["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+                             f"claim:{second.session_id}")
+            self.assertFalse(pending.exists())
+            for cid in self.cids:
+                self.assertEqual(len(await restarted_store.read_leads(cid)), 1)
+                rows = await restarted_store.outbox_records(cid)
+                self.assertEqual([(r["destination_type"], r["status"]) for r in rows], [(TELEGRAM_LEAD_CARD, "sent")])
 
     async def test_cross_tenant_and_unknown_roll_back_everything(self):
         for bad in (self.record(1), self.record(company_id="missing_" + uuid4().hex)):

@@ -228,6 +228,8 @@ async def _lifespan(app: FastAPI):
         ),
     )
     telegram_routing = app.state.telegram_bridge_service.routing
+    if app.state.postgres_lead_store is not None:
+        app.state.delivery_service.telegram_bridge = app.state.telegram_bridge_service
     if telegram_routing.error:
         # бот продолжает работать, но новые карточки не уходят никому — это надо видеть сразу
         logger.error("telegram_client_groups invalid: %s", telegram_routing.error)

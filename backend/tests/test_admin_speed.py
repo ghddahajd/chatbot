@@ -17,6 +17,10 @@ def test_dashboard_reads_events_file_once(test_client, managed_env, monkeypatch)
     analytics_file = test_client.app.state.analytics_service.analytics_file
     append_jsonl(analytics_file, {"timestamp": datetime.utcnow().isoformat(), "company_id": "rosh_demo", "event_type": "chat_opened"})
     reads = []
+    lead_reads = []
+    service = test_client.app.state.analytics_service
+    real_lead_read = service.lead_store.read_all
+    monkeypatch.setattr(service.lead_store, "read_all", lambda: (lead_reads.append(threading.get_ident()), real_lead_read())[1])
     real_read = analytics.read_jsonl
     monkeypatch.setattr(analytics, "read_jsonl", lambda path: (reads.append(path), real_read(path))[1])
 
@@ -25,6 +29,8 @@ def test_dashboard_reads_events_file_once(test_client, managed_env, monkeypatch)
     assert response.status_code == 200
     # на проде файл ~18 МБ: раньше его разбирал каждый из ~15 подсчётов
     assert reads.count(analytics_file) == 1
+    assert len(lead_reads) == 1
+    assert lead_reads[0] != test_client.portal.call(threading.get_ident)
 
 
 def test_chat_answers_while_dashboard_is_counting(test_client, monkeypatch) -> None:

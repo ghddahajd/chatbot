@@ -10,7 +10,6 @@ from uuid import uuid4, uuid5, NAMESPACE_URL
 
 from ..delivery import (
     DeliveryService, MAX_DELIVERY_ATTEMPTS, _iso, _utcnow,
-    _outbox_health_from_records, _outbox_summary_from_records, _parse_datetime,
 )
 from ..leads import lead_to_payload
 from ..models import Lead
@@ -121,29 +120,19 @@ class PostgresDeliveryService(DeliveryService):
 
     async def get_summary(self, *, company_id=None, limit=50):
         try:
-            records = await self.store.outbox_records(company_id=company_id)
-            return _outbox_summary_from_records({item["delivery_id"]: item for item in records},
-                                                company_id=company_id, limit=limit)
+            return await self.store.reports.outbox_summary(company_id=company_id, limit=limit)
         except Exception as error:
             logger.error("delivery summary failed error=%s", type(error).__name__)
             raise LeadStorageError("Очередь недоступна") from None
 
     async def get_health(self):
         try:
-            records = await self.store.outbox_records()
-            result = _outbox_health_from_records({item["delivery_id"]: item for item in records})
-            processing = sum(item["status"] == "processing" for item in records)
-            result["pending_events"] += processing
-            now = _utcnow()
-            ages = [max(0.0, (now - due).total_seconds()) for item in records
-                    if item["status"] in {"pending", "failed", "processing"}
-                    if (due := _parse_datetime(item.get("lease_until") if item["status"] == "processing"
-                                               else item.get("next_attempt_at") or item.get("timestamp"))) is not None]
-            result["oldest_due_seconds"] = int(max(ages, default=0))
-            if result["oldest_due_seconds"] >= 300:
-                result["status"] = "degraded"
-                result["detail"] = "Очередь БД отстаёт более чем на 5 минут"
-            result["storage"] = "postgres"
+            result = await self.store.reports.outbox_health()
+            readiness = await self.store.reports.readiness()
+            result["writable"] = readiness["writable"]
+            if not readiness["writable"]:
+                result["status"] = "error"
+                result["detail"] = "БД недоступна для записи заявок и отправок"
             return result
         except Exception as error:
             logger.error("delivery health failed error=%s", type(error).__name__)

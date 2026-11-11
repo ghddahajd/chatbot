@@ -136,6 +136,9 @@ class AnalyticsService:
         conversations_archive_file: Optional[Path] = None,
         postgres_lead_store=None,
     ) -> None:
+        from .services.analytics_runner import AnalyticsRunner
+
+        self.runner = AnalyticsRunner()
         self.analytics_file = analytics_file
         self.postgres_lead_store = postgres_lead_store
         self.leads_file = leads_file
@@ -158,11 +161,11 @@ class AnalyticsService:
         только archive_old_leads реально начинает что-то переносить (живой баг, 2026-08-27:
         замечен на графике "Лиды по месяцам", когда система проработает полгода)."""
 
-        if self.postgres_lead_store is not None:
-            snapshot = LEADS_SNAPSHOT.get()
-            if snapshot is None or snapshot[0] is not self:
-                raise LeadStorageError("Postgres lead snapshot required")
+        snapshot = LEADS_SNAPSHOT.get()
+        if snapshot is not None and snapshot[0] is self:
             return snapshot[1]
+        if self.postgres_lead_store is not None:
+            raise LeadStorageError("Postgres lead snapshot required")
         return self.lead_store.read_all()
 
     def leads_snapshot(self, company_id=None):

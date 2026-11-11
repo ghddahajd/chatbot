@@ -162,8 +162,10 @@ class OpsBot:
         return f"✅ Нейросеть отвечает, {int(duration_ms)} мс"
 
     async def _cmd_today(self) -> str:
-        async with self.app.state.analytics_service.leads_snapshot():
-            return await asyncio.to_thread(self._today_text, datetime.now(timezone.utc))
+        analytics = self.app.state.analytics_service
+        return await analytics.runner.report(
+            analytics, ("ops_today",), lambda: self._today_text(datetime.now(timezone.utc)), leads=True, events=True,
+        )
 
     def _today_text(self, now: datetime) -> str:
         analytics = self.app.state.analytics_service
@@ -191,8 +193,8 @@ class OpsBot:
         return "\n".join(lines)
 
     async def _cmd_funnel(self) -> str:
-        async with self.app.state.analytics_service.leads_snapshot():
-            return await asyncio.to_thread(self._funnel_text)
+        analytics = self.app.state.analytics_service
+        return await analytics.runner.report(analytics, ("ops_funnel",), self._funnel_text, leads=True, events=True)
 
     def _funnel_text(self) -> str:
         analytics = self.app.state.analytics_service
@@ -222,8 +224,8 @@ class OpsBot:
         return "\n".join(lines) if len(lines) > 1 else f"🔻 {self.project} — за 7 дней данных нет"
 
     async def _cmd_leads(self) -> str:
-        async with self.app.state.analytics_service.leads_snapshot():
-            return await asyncio.to_thread(self._leads_text)
+        analytics = self.app.state.analytics_service
+        return await analytics.runner.report(analytics, ("ops_leads",), self._leads_text, leads=True)
 
     def _leads_text(self) -> str:
         resolver = self.app.state.knowledge_base_resolver

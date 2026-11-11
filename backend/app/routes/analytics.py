@@ -1,29 +1,20 @@
 """роуты простой аналитики managed-service mvp."""
 
-import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..auth import authenticate, authorize_company
 from ..logging_setup import log_event
 from ..rate_limit import client_ip
+from ..storage.errors import LeadStorageError
 
 
-async def _lead_snapshot(request: Request, x_operator_token: Optional[str] = Header(default=None)):
-    if request.method != "GET" or request.url.path.rsplit("/", 1)[-1] not in {"summary", "operators", "dashboard", "leads"}:
-        yield
-        return
-    company_id = await authorize_company(request, x_operator_token, request.query_params.get("company_id"))
-    async with request.app.state.analytics_service.leads_snapshot(company_id=company_id):
-        yield
-
-
-router = APIRouter(prefix="/api/analytics", tags=["analytics"], dependencies=[Depends(_lead_snapshot)])
+router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 logger = logging.getLogger(__name__)
 
 # Предохранитель от случайного огромного диапазона (не про производительность на текущих
@@ -112,10 +103,11 @@ async def analytics_summary(
 ) -> dict:
     company_id = await authorize_company(request, x_operator_token, company_id)
     sessions = await request.app.state.session_store.list_all()
-    return request.app.state.analytics_service.summary(
-        sessions=sessions,
-        company_id=company_id,
-        limit=limit,
+    service = request.app.state.analytics_service
+    return await service.runner.report(
+        service, ("summary", company_id, limit),
+        lambda: service.summary(sessions=sessions, company_id=company_id, limit=limit),
+        company_id=company_id, leads=True, events=True,
     )
 
 
@@ -126,7 +118,11 @@ async def analytics_operators(
     x_operator_token: Optional[str] = Header(default=None),
 ) -> dict:
     company_id = await authorize_company(request, x_operator_token, company_id)
-    return request.app.state.analytics_service.operator_summary(company_id=company_id)
+    service = request.app.state.analytics_service
+    return await service.runner.report(
+        service, ("operators", company_id), lambda: service.operator_summary(company_id=company_id),
+        company_id=company_id, leads=True, events=True,
+    )
 
 
 def _company_timezone(request: Request, company_id: Optional[str]) -> str:
@@ -170,15 +166,13 @@ async def analytics_chats(
     company_id = await authorize_company(request, x_operator_token, company_id)
     start, end, _label = _resolve_date_range(days, start_date, end_date)
     live_sessions = await request.app.state.session_store.list_all()
-    return request.app.state.analytics_service.conversations_page(
-        live_sessions,
-        company_id=company_id,
-        scope=scope,
-        days=days,
-        start=start,
-        end=end,
-        offset=offset,
-        limit=limit,
+    service = request.app.state.analytics_service
+    return await service.runner.report(
+        service, ("chats", company_id, scope, days, start, end, offset, limit),
+        lambda: service.conversations_page(
+            live_sessions, company_id=company_id, scope=scope, days=days, start=start,
+            end=end, offset=offset, limit=limit,
+        ),
     )
 
 
@@ -202,34 +196,32 @@ async def analytics_chats_export(
 
     payload.company_id = await authorize_company(request, x_operator_token, payload.company_id)
     live_sessions = await request.app.state.session_store.list_all()
-    conversations = request.app.state.analytics_service.export_conversations(
-        live_sessions,
-        company_id=payload.company_id or None,
-        scope=payload.scope,
-        session_ids=payload.session_ids or None,
-        limit=payload.limit,
-    )
-    exported_at = datetime.utcnow()
-    log_event(
-        logger,
-        logging.INFO,
-        "chats_exported",
-        company_id=payload.company_id,
-        scope=payload.scope,
-        selected=len(payload.session_ids),
-        count=len(conversations),
-    )
-    filename = f"chats_{exported_at:%Y-%m-%d_%H%M}.json"
-    return JSONResponse(
-        content={
-            "exported_at": exported_at.isoformat(timespec="seconds") + "Z",
-            "company_id": payload.company_id or None,
-            "scope": payload.scope,
-            "count": len(conversations),
-            "phones_masked": True,
-            "conversations": conversations,
-        },
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    service = request.app.state.analytics_service
+    def build() -> JSONResponse:
+        conversations = service.export_conversations(
+            live_sessions, company_id=payload.company_id or None, scope=payload.scope,
+            session_ids=payload.session_ids or None, limit=payload.limit,
+        )
+        exported_at = datetime.utcnow()
+        log_event(
+            logger, logging.INFO, "chats_exported", company_id=payload.company_id,
+            scope=payload.scope, selected=len(payload.session_ids), count=len(conversations),
+        )
+        filename = f"chats_{exported_at:%Y-%m-%d_%H%M}.json"
+        return JSONResponse(
+            content={
+                "exported_at": exported_at.isoformat(timespec="seconds") + "Z",
+                "company_id": payload.company_id or None,
+                "scope": payload.scope,
+                "count": len(conversations),
+                "phones_masked": True,
+                "conversations": conversations,
+            },
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    return await service.runner.report(
+        service, ("export", payload.company_id, payload.scope, tuple(payload.session_ids), payload.limit), build,
     )
 
 
@@ -241,7 +233,11 @@ async def analytics_chat_detail(
 ) -> dict:
     principal = await authenticate(request, x_operator_token)
     live_sessions = await request.app.state.session_store.list_all()
-    conversation = request.app.state.analytics_service.get_conversation(session_id, live_sessions)
+    service = request.app.state.analytics_service
+    conversation = await service.runner.report(
+        service, ("detail", principal.owner, principal.company_id, session_id),
+        lambda: service.get_conversation(session_id, live_sessions),
+    )
     if conversation is None or (not principal.owner and conversation.get("company_id") != principal.company_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
@@ -356,7 +352,10 @@ async def analytics_dashboard(
                 ),
             }
 
-    return await asyncio.to_thread(build)
+    return await analytics_service.runner.report(
+        analytics_service, ("dashboard", company_id, days, start, end), build,
+        company_id=company_id, leads=True,
+    )
 
 
 @router.get("/leads")
@@ -379,9 +378,18 @@ async def analytics_leads(
     analytics_service = request.app.state.analytics_service
     start, end, range_label = _resolve_date_range(days, start_date, end_date)
 
-    leads = analytics_service.leads_feed(
-        company_id=company_id, days=days, start=start, end=end, reason=reason, limit=limit
-    )
+    filters = dict(company_id=company_id, days=days, start=start, end=end, reason=reason, limit=limit)
+    if analytics_service.postgres_lead_store is not None:
+        try:
+            leads = await analytics_service.postgres_lead_store.reports.leads_feed(**filters)
+        except Exception:
+            raise LeadStorageError("Lead storage unavailable") from None
+    else:
+        leads = await analytics_service.runner.report(
+            analytics_service, ("leads", company_id, days, start, end, reason, limit),
+            lambda: analytics_service.leads_feed(**filters), company_id=company_id, leads=True,
+        )
+    leads = [dict(lead) for lead in leads]
     for lead in leads:
         service_id = lead.get("service_id")
         lead["service_name"] = _resolve_service_name(request, company_id, service_id) if service_id else None

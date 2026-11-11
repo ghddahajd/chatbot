@@ -45,6 +45,7 @@ function setup(handler, crypto = webcrypto, localStorage) {
   vm.runInNewContext(readFileSync(path.join(__dirname, '../widget.js'), 'utf8'), {
     document: { currentScript: null, createElement: node, createTextNode: node, removeEventListener() {} },
     HTMLElement: class {}, URL, console, AbortController, Uint8Array, setTimeout, clearTimeout,
+    Date: class extends Date { static now() { return now; } },
     window: {
       crypto, location: { origin: 'http://localhost', pathname: '/original' }, addEventListener() {},
       setTimeout, clearTimeout,
@@ -80,6 +81,7 @@ function setup(handler, crypto = webcrypto, localStorage) {
 const ok = data => ({ ok: true, status: 200, json: async () => data });
 const response = { session_id: 'new-session', status: 'AI_ACTIVE', answer: 'Получено', lead_created: true, quick_actions: [] };
 const lost = () => { throw new TypeError('lost response'); };
+const throttled = retryAfter => ({ ok: false, status: 429, headers: { get: () => retryAfter } });
 const unknown = durable => ({ state: 'unknown', durable, retry_allowed: durable });
 const messageCalls = h => h.calls.filter(c => !c.url.endsWith('/result'));
 
@@ -138,8 +140,8 @@ test('initial 202 processing never resends even if later durable unknown', async
   assert.equal(messageCalls(h).length, 1);
 });
 
-test('all initial 4xx are final; old result route 404 offers only another status check', async () => {
-  for (const status of [400, 401, 403, 404, 409, 422, 429]) {
+test('other initial 4xx are final; old result route 404 offers only another status check', async () => {
+  for (const status of [400, 401, 403, 404, 409, 422]) {
     const h = setup(() => ({ ok: false, status }));
     await h.w.sendText('hello'); await h.tick(20000);
     assert.equal(h.calls.length, 1);
@@ -152,6 +154,83 @@ test('all initial 4xx are final; old result route 404 offers only another status
   assert.match(h.w.el.messages.children.at(-2).textContent, /недоступна/);
   h.w.el.messages.querySelector('.quick-btn').click(); await h.tick(11000);
   assert.equal(messageCalls(h).length, 1);
+});
+
+test('initial POST 429 waits then checks the same original request and confirms success once', async () => {
+  for (const header of [undefined, 'invalid', '-1', '2', new Date(2000).toUTCString()]) {
+    let successes = 0;
+    const h = setup(c => c.url.endsWith('/result') ? ok({ state: 'done', response }) : throttled(header));
+    const pending = h.w.sendText('phone', { bookingDay: 'Завтра', onSuccess: () => successes++ });
+    const delay = header === '2' || header === new Date(2000).toUTCString() ? 2000 : 1000;
+    await h.tick(delay - 1);
+    assert.equal(h.calls.length, 1);
+    await h.tick(1); await pending;
+    assert.equal(h.calls.length, 2);
+    assert.deepEqual(h.calls[1].body, h.calls[0].body);
+    assert.equal(messageCalls(h).length, 1);
+    h.w.applyChatResponse(h.w._request, response);
+    assert.equal(successes, 1);
+    assert.equal(h.w.state.leadLeft, true);
+    assert.equal(h.w.el.messages.querySelector('.request-recovery'), null);
+  }
+});
+
+test('result POST 429 after a lost response stops automatic checks and retains future manual check', async () => {
+  let done = false, successes = 0;
+  const h = setup(c => c.url.endsWith('/result') ? done ? ok({ state: 'done', response }) : throttled() : lost());
+  const pending = h.w.sendText('phone', { onSuccess: () => successes++ });
+  await h.tick(1000); await pending;
+  const button = h.w.el.messages.querySelector('.quick-btn');
+  assert.equal(button.textContent, 'Проверить отправку');
+  button.click(); await h.flush();
+  assert.equal(h.w.el.messages.querySelector('.quick-btn'), button);
+  assert.equal(h.calls.length, 2);
+  await h.tick(20000);
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.timers.size, 0);
+  done = true; button.click(); button.click(); await h.tick(1000);
+  assert.equal(h.calls.length, 3);
+  assert.ok(h.calls.every(c => JSON.stringify(c.body) === JSON.stringify(h.calls[0].body)));
+  h.w.applyChatResponse(h.w._request, response);
+  assert.equal(successes, 1);
+  assert.equal(messageCalls(h).length, 1);
+});
+
+test('long Retry-After exceeds automatic budget but leaves manual checks available after delay', async () => {
+  for (const initial of [false, true]) {
+    let done = false;
+    const h = setup(c => done ? ok({ state: 'done', response }) :
+      initial || c.url.endsWith('/result') ? throttled('120') : lost());
+    const pending = h.w.sendText('phone');
+    await h.tick(1000); await pending;
+    const count = h.calls.length;
+    const button = h.w.el.messages.querySelector('.quick-btn');
+    assert.equal(button.textContent, 'Проверить отправку');
+    button.click(); await h.tick(11000);
+    assert.equal(h.calls.length, count);
+    assert.equal(h.w.el.messages.querySelector('.quick-btn'), button);
+    assert.equal(h.timers.size, 0);
+    await h.tick(120000);
+    assert.equal(h.calls.length, count);
+    done = true; button.click(); await h.tick(1000);
+    assert.equal(h.w.state.leadLeft, true);
+    assert.equal(messageCalls(h).length, 1);
+    assert.deepEqual(h.calls.at(-1).body, h.calls[0].body);
+  }
+});
+
+test('throttling permits only one automatic resend after fresh durable unknown proof', async () => {
+  for (const safe of [false, true]) {
+    const h = setup(c => c.url.endsWith('/result') ? ok(unknown(safe)) : throttled());
+    const pending = h.w.sendText('phone'); await h.tick(20000); await pending;
+    assert.equal(messageCalls(h).length, safe ? 2 : 1);
+    if (safe) {
+      assert.deepEqual(messageCalls(h)[1].body, { ...h.calls[0].body, retry: true });
+      assert.equal(h.calls.length, 3);
+    }
+    assert.equal(h.w.el.messages.querySelector('.quick-btn').textContent, 'Проверить отправку');
+    assert.equal(h.timers.size, 0);
+  }
 });
 
 test('5xx recovers, status authorization failures never resend', async () => {

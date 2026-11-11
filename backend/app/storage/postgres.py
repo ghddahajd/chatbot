@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from ..db.models import Tenant
 from ..db.lead_models import delivery_outbox as outbox, leads
 from ..db.request_models import chat_requests
+from .postgres_reports import PostgresReports
 
 
 def _required(value, name):
@@ -34,6 +35,7 @@ class PostgresLeadOutboxStore:
     def __init__(self, engine):
         self.engine = engine
         self.sessions = async_sessionmaker(engine, expire_on_commit=False)
+        self.reports = PostgresReports(self)
 
     async def initialize(self) -> None:
         """Fail closed on unmigrated schema or an overprivileged connection."""

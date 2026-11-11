@@ -14,12 +14,12 @@ LEADS_SNAPSHOT = ContextVar("postgres_leads_snapshot", default=None)
 
 @asynccontextmanager
 async def leads_snapshot(service, company_id=None):
-    """Load selected tenant history once; aggregates still run in Python, not SQL."""
+    """Load compact tenant metadata, releasing the SQL connection before CPU work."""
     if service.postgres_lead_store is None:
         yield
         return
     try:
-        rows = await service.postgres_lead_store.read_leads(company_id=company_id)
+        rows = await service.postgres_lead_store.reports.lead_metadata(company_id=company_id)
     except Exception:
         raise LeadStorageError("Lead storage unavailable") from None
     token = LEADS_SNAPSHOT.set((service, rows))

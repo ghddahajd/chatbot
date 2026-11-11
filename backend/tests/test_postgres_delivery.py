@@ -98,10 +98,28 @@ def test_stale_completion_is_not_reported_as_sent(resolver, monkeypatch):
 
 
 def test_queue_health_reports_stuck_work_without_leaking_payload(resolver):
-    store = SimpleNamespace(outbox_records=AsyncMock(return_value=[{
-        **_claimed(), "company_id": "rosh_demo", "lease_until": "2026-01-01T10:00:00+00:00",
-        "payload": {"phone": "not-for-health"},
-    }]))
+    store = SimpleNamespace(outbox_records=AsyncMock(side_effect=AssertionError("full history forbidden")),
+        reports=SimpleNamespace(outbox_health=AsyncMock(return_value={"status": "degraded", "storage": "postgres",
+            "pending_events": 1, "oldest_due_seconds": 500}), readiness=AsyncMock(return_value={"writable": True})))
     result = asyncio.run(_delivery(resolver, store).get_health())
     assert result["status"] == "degraded" and result["oldest_due_seconds"] >= 300
     assert result["pending_events"] == 1 and "not-for-health" not in str(result)
+    store.outbox_records.assert_not_awaited()
+
+
+def test_health_fails_closed_if_readable_database_cannot_write(resolver):
+    store = SimpleNamespace(reports=SimpleNamespace(
+        outbox_health=AsyncMock(return_value={"status": "ok", "storage": "postgres", "pending_events": 0}),
+        readiness=AsyncMock(return_value={"writable": False, "read_only": True})))
+    result = asyncio.run(_delivery(resolver, store).get_health())
+    assert result["status"] == "error" and not result["writable"]
+
+
+def test_delivery_summary_requests_limited_metadata_only(resolver):
+    report = {"company_id": "rosh_demo", "total": 1000, "by_status": {"sent": 1000},
+              "by_destination": {"webhook": 1000}, "recent": []}
+    store = SimpleNamespace(outbox_records=AsyncMock(side_effect=AssertionError("full history forbidden")),
+        reports=SimpleNamespace(outbox_summary=AsyncMock(return_value=report)))
+    assert asyncio.run(_delivery(resolver, store).get_summary(company_id="rosh_demo", limit=3)) == report
+    store.reports.outbox_summary.assert_awaited_once_with(company_id="rosh_demo", limit=3)
+    store.outbox_records.assert_not_awaited()

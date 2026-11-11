@@ -17,12 +17,23 @@ from app.storage.errors import LeadStorageError
 
 class Store:
     def __init__(self):
+        self.reports = self
         self.calls = []
         self.rows = [{"company_id": "dup_one", "timestamp": "2026-11-10T12:00:00", "reason": "booking_request"}]
 
     async def read_leads(self, company_id=None):
         self.calls.append(company_id)
         return [r for r in self.rows if company_id is None or r["company_id"] == company_id]
+
+    async def lead_metadata(self, company_id=None):
+        return await self.read_leads(company_id)
+
+    async def leads_feed(self, company_id=None, **filters):
+        return await self.read_leads(company_id)
+
+    async def lead_health(self):
+        return dict(count=len(self.rows), last_lead_at="2026-11-10T12:00:00Z",
+                    last_lead_company="dup_one", writable=True, read_only=False)
 
     async def close(self):
         pass
@@ -93,8 +104,32 @@ def test_client_scope_is_enforced_before_pg_read(test_client, monkeypatch):
 
 def test_read_error_returns_safe_503(test_client, monkeypatch):
     store = attach_store(test_client, monkeypatch)
-    store.read_leads = AsyncMock(side_effect=RuntimeError("private diagnostic"))
+    store.reports.lead_metadata = AsyncMock(side_effect=RuntimeError("private diagnostic"))
     response = test_client.get("/api/analytics/dashboard?token=demo-operator-token")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Lead storage unavailable"}
+
+
+def test_pg_leads_feed_uses_sql_filters_without_snapshot_or_runner(test_client, monkeypatch):
+    from datetime import datetime, time
+
+    store = attach_store(test_client, monkeypatch)
+    store.reports.lead_metadata = AsyncMock(side_effect=AssertionError("metadata not needed"))
+    store.reports.leads_feed = AsyncMock(return_value=[])
+    monkeypatch.setattr(test_client.app.state.analytics_service.runner, "report",
+                        AsyncMock(side_effect=AssertionError("SQL feed must not use CPU runner")))
+    response = test_client.get(
+        "/api/analytics/leads?company_id=dup_one&days=7&start_date=2026-01-01&end_date=2026-01-02"
+        "&reason=booking_change&limit=12", headers={"x-operator-token": "demo-operator-token"},
+    )
+    assert response.status_code == 200, response.text
+    store.reports.leads_feed.assert_awaited_once_with(
+        company_id="dup_one", days=7, start=datetime(2026, 1, 1),
+        end=datetime.combine(datetime(2026, 1, 2).date(), time.max), reason="booking_change", limit=12,
+    )
+    store.reports.lead_metadata.assert_not_awaited()
+    store.reports.leads_feed.side_effect = RuntimeError("private diagnostic")
+    response = test_client.get("/api/analytics/leads?token=demo-operator-token")
     assert response.status_code == 503
     assert response.json() == {"detail": "Lead storage unavailable"}
 
@@ -121,11 +156,11 @@ def test_pg_health_and_preflight_never_use_file_checks(test_client, monkeypatch)
     leads = result["checks"]["leads"]
     assert leads["source"] == "postgres" and leads["count"] == 1
     assert leads["last_lead_at"] == "2026-11-10T12:00:00Z"
-    assert "writable" not in leads
+    assert leads["writable"] is True
     archive = next(t for t in result["checks"]["background_tasks"]["tasks"] if t["name"] == "leads_archive")
     assert archive["status"] == "skip"
     delivery.get_health.side_effect = LeadStorageError("private diagnostic")
-    store.read_leads = AsyncMock(side_effect=LeadStorageError("private diagnostic"))
+    store.reports.lead_health = AsyncMock(side_effect=LeadStorageError("private diagnostic"))
     assert test_client.get("/health").status_code == 503
     result = test_client.portal.call(lambda: run_preflight(test_client.app, include_network=False))
     assert result["checks"]["delivery"]["status"] == "error"

@@ -390,11 +390,16 @@ async def _lifespan(app: FastAPI):
 async def lifespan(app: FastAPI):
     app.state.postgres_lead_store = None
     app.state.background_tasks = {}
+    app.state.analytics_service = None
     try:
         async with _lifespan(app):
             yield
     finally:
-        await close_lead_storage(app)
+        try:
+            if app.state.analytics_service is not None:
+                await app.state.analytics_service.runner.close()
+        finally:
+            await close_lead_storage(app)
 
 
 app = FastAPI(title="AI Chat Widget MVP", lifespan=lifespan)

@@ -2726,7 +2726,16 @@
         });
         if (!res.ok) {
           const err = new Error("request failed");
-          err.final = res.status >= 400 && res.status < 500;
+          err.final = res.status >= 400 && res.status < 500 && res.status !== 429;
+          if (res.status === 429) {
+            err.code = "THROTTLED";
+            const header = res.headers?.get("Retry-After");
+            const seconds = header?.trim() ? Number(header) : NaN;
+            const wait = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
+            // Долгую паузу оставляем ручной проверке, не держим восстановление открытым.
+            op.throttledUntil = Date.now() + (Number.isFinite(wait) && wait >= 0 ? Math.min(wait, 86400000) : 1000);
+            op.safeRetry = false;
+          }
           err.unavailable = result && res.status === 404;
           throw err;
         }
@@ -2764,6 +2773,7 @@
 
     async recoverRequest(op, manual = false) {
       if (!this.requestCurrent(op) || op.recovering) return;
+      if (manual && Date.now() < op.throttledUntil) return;
       op.recovering = true;
       this.clearRequestUI(op);
       this.finishRequest();
@@ -2773,6 +2783,7 @@
       this.el.messages.appendChild(op.notice);
       let expired = false, final = false, unavailable = false;
       let resent = !manual && op.resent;
+      const deadline = Date.now() + 11000;
       op.deadline = window.setTimeout(() => {
         expired = true;
         op.controller?.abort();
@@ -2780,8 +2791,10 @@
       }, 11000);
       try {
         for (const delay of [1000, 2000, 4000]) {
+          const wait = Math.max(delay, (op.throttledUntil || 0) - Date.now());
+          if (Date.now() + wait >= deadline) break;
           await new Promise(resolve => {
-            const timer = window.setTimeout(() => { op.wake = null; resolve(); }, delay);
+            const timer = window.setTimeout(() => { op.wake = null; resolve(); }, wait);
             op.wake = () => { window.clearTimeout(timer); op.wake = null; resolve(); };
           });
           if (expired || !this.requestCurrent(op)) break;
@@ -2801,6 +2814,7 @@
             }
           } catch (err) {
             op.safeRetry = false;
+            if (err.code === "THROTTLED") break;
             if (err.final) { final = !err.unavailable; unavailable = err.unavailable; break; }
           }
         }

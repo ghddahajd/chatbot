@@ -885,16 +885,15 @@ async def run_preflight(app: FastAPI, *, include_network: bool = True) -> dict[s
     leads_check = None
     if getattr(app.state.settings, "lead_storage_backend", "files") == "postgres":
         try:
-            rows = await app.state.postgres_lead_store.read_leads()
-            dated = [(_parse_ts(row.get("timestamp")), row) for row in rows]
-            last_at, latest = max(
-                (item for item in dated if item[0] is not None), key=lambda item: item[0], default=(None, {}),
-            )
+            health = await app.state.postgres_lead_store.reports.lead_health()
+            last_at = _parse_ts(health.get("last_lead_at"))
             failures = _phone_selftest()
             leads_check = _item(
-                "error" if failures else "ok", "источник лидов — Postgres",
-                source="postgres", count=len(rows), last_lead_at=_iso(last_at) if last_at else None,
-                last_lead_company=latest.get("company_id"), phone_selftest_failed=len(failures),
+                "error" if failures or not health["writable"] else "ok",
+                "предпосылки записи в Postgres проверены" if health["writable"] else "Postgres недоступен для записи",
+                source="postgres", count=health["count"], last_lead_at=_iso(last_at) if last_at else None,
+                last_lead_company=health.get("last_lead_company"), writable=health["writable"],
+                read_only=health.get("read_only", False), phone_selftest_failed=len(failures),
             )
         except Exception:
             leads_check = _item("error", "Lead storage unavailable", source="postgres")

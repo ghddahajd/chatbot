@@ -330,7 +330,8 @@ class DeliveryService:
 
         now = _utcnow()
         attempted: list[dict[str, Any]] = []
-        for record in self._latest_records().values():
+        latest = await asyncio.to_thread(self._latest_records)
+        for record in latest.values():
             if company_id is not None and record.get("company_id") != company_id:
                 continue
             if record.get("status") not in {"pending", "failed"}:
@@ -355,10 +356,10 @@ class DeliveryService:
         return _outbox_health_from_records(self._latest_records())
 
     async def get_health(self) -> dict[str, Any]:
-        return self.outbox_health()
+        return await asyncio.to_thread(self.outbox_health)
 
     async def get_summary(self, *, company_id: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
-        return self.summary(company_id=company_id, limit=limit)
+        return await asyncio.to_thread(self.summary, company_id=company_id, limit=limit)
 
     async def run_retry_loop(self, interval_seconds: int) -> None:
         """периодически повторяет due-доставки, пока задачу не отменят."""

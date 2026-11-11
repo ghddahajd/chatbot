@@ -16,6 +16,7 @@
 | `db_admin.py` | отдельная проверка PostgreSQL и повторяемая регистрация клиентских KB; не переключает runtime |
 | `client_accounts.py` | создание, отключение и сброс пароля сотрудника; отдельная роль БД для клиентского входа |
 | `lead_storage.py` | скрытый ввод пароля и выдача отдельной ограниченной роли для лидов и generic outbox; runtime не переключает |
+| `import_lead_history.py` | пробная проверка JSONL заявок и архива, запись истории в PostgreSQL по флагу `--apply` |
 | `crawl_article_batch.py` | краулит staging batch статей и режет текст на chunks для будущего RAG |
 | `import_articles_registry.py` | импортирует реестр статей клиента в staging без публикации в runtime KB |
 

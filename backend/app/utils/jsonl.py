@@ -8,19 +8,23 @@ from typing import Any
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
+    try:
+        handle = path.open(encoding="utf-8")
+    except FileNotFoundError:
         return []
 
     items: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            items.append(payload)
+    # Avoid allocating the whole file text and a second list of lines during a report.
+    with handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                items.append(payload)
     return items
 
 

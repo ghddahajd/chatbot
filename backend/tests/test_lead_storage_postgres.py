@@ -8,6 +8,7 @@ No HTTP requests or external delivery are performed.
 """
 
 import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -183,6 +184,51 @@ class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
             missing = await cli("--rollback-output", str(refused), code=1)
             self.assertEqual(missing["errors"], [{"reason": "baseline_history_missing"}])
             self.assertFalse(refused.exists())
+
+    async def test_cutover_verifies_snapshot_identities_and_empty_sql_queue(self):
+        with TemporaryDirectory() as temp:
+            folder = Path(temp)
+            scripts = Path(app_file).resolve().parents[1] / "scripts"
+            active = folder / "leads.jsonl"
+            active.write_text(json.dumps(self.payload(0)) + "\n")
+            archive = folder / "leads_archive.jsonl"
+            archive.write_text(json.dumps(self.payload(1)) + "\n")
+            (folder / "manifest.json").write_text(json.dumps({
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (active, archive)
+            }))
+            env = dict(os.environ)
+            if "TEST_LEAD_DATABASE_URL" in env:
+                env["LEAD_DATABASE_URL"] = env["TEST_LEAD_DATABASE_URL"]
+
+            async def cli(script, *args, code=0):
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, str(scripts / script), *map(str, args), env=env,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await process.communicate()
+                self.assertEqual(process.returncode, code, stderr.decode())
+                return json.loads(stdout or stderr)
+
+            async def verify(code=0):
+                return await cli("lead_cutover.py", "verify", "--snapshot", folder, code=code)
+
+            self.assertEqual((await verify(1))["missing"], 2)
+            await cli("import_lead_history.py", "--leads", active, "--archive", archive, "--apply")
+            confirmed = await verify()
+            self.assertTrue(confirmed["verified"])
+            self.assertEqual(confirmed["sql_by_company"], {self.cids[0]: 1, self.cids[1]: 1})
+
+            await self.store.enqueue([self.record()])
+            await self.store.claim(company_id=self.cids[0], limit=1)
+            busy = await verify(1)
+            self.assertEqual(busy["sql_outbox"], {"processing": 1})
+            self.assertFalse(busy["verified"])
+            async with self.owner.begin() as conn:
+                await conn.execute(leads.update().where(leads.c.tenant_id == self.tids[0])
+                                   .values(payload={**self.payload(0), "name": "changed"}))
+            self.assertEqual((await verify(1))["changed"], 1)
+            active.write_text("")
+            self.assertEqual(await verify(1), {"error": "snapshot_changed"})
 
     async def test_bridge_delivers_saved_leads_after_restart(self):
         with TemporaryDirectory() as temp:

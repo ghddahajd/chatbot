@@ -17,6 +17,7 @@
 | `client_accounts.py` | создание, отключение и сброс пароля сотрудника; отдельная роль БД для клиентского входа |
 | `lead_storage.py` | скрытый ввод пароля и выдача отдельной ограниченной роли для лидов и generic outbox; runtime не переключает |
 | `import_lead_history.py` | пробная проверка и импорт JSONL заявок, подготовка файла для отката из PostgreSQL |
+| `lead_cutover.py` | счётчики файловых очередей, снимок остановленного backend и сверка импорта с PostgreSQL |
 | `crawl_article_batch.py` | краулит staging batch статей и режет текст на chunks для будущего RAG |
 | `import_articles_registry.py` | импортирует реестр статей клиента в staging без публикации в runtime KB |
 

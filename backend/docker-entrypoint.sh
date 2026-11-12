@@ -54,6 +54,7 @@ chown -R appuser:appuser /app/data /app/logs /client-input
 exec python3 -c '
 import os, pwd, sys
 user = pwd.getpwnam("appuser")
+os.environ["HOME"] = user.pw_dir
 os.setgid(user.pw_gid)
 os.setuid(user.pw_uid)
 os.execvp(sys.argv[1], sys.argv[1:])

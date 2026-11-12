@@ -51,13 +51,22 @@ test -n "$current_backend" &&
 test "$current_backend" = "$(sql ps -q backend)" &&
 storage build db-tools &&
 sql build backend &&
-sql run --rm -T --no-deps --user 1000:1000 --entrypoint python backend scripts/check_lead_startup.py &&
+sql -f - run --rm -T --no-deps -e HOME=/root backend python scripts/check_lead_startup.py <<'YAML'
+services:
+  backend:
+    volumes: !reset []
+YAML
+```
+
+```bash
 python3 backend/scripts/lead_cutover.py status
 ```
 
-Одноразовый контейнер проверяет полный запуск и завершение приложения с SQL,
-не поднимая HTTP-порт и не отправляя сообщения. Он читает текущие клиентские базы
-и восстанавливает сессии из временной копии, если на сервере есть снимок.
+Одноразовый контейнер запускается через штатный entrypoint с переходом от root
+к appuser и проверяет запуск и завершение приложения с SQL. Контейнер подтягивает
+клиентские базы в собственную файловую систему, без рабочих томов. HTTP-порт
+и отправки отключены. Продолжайте только после `SQL backend startup: OK`,
+`PostgreSQL write prerequisites: OK`, `Registered clinics: 2` и `SQL backend shutdown: OK`.
 При ошибке SQL-инициализации ищите в логе `lead_storage_startup_failed`.
 Эта строка содержит этап, класс ошибки и SQLSTATE, если он доступен.
 

@@ -230,6 +230,39 @@ class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
             active.write_text("")
             self.assertEqual(await verify(1), {"error": "snapshot_changed"})
 
+    async def test_full_sql_startup_check_leaves_pending_delivery_untouched(self):
+        await self.store.enqueue([self.record(destination_type="fixture_no_transport")])
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            for cid in self.cids:
+                clinic = root / cid
+                clinic.mkdir()
+                (clinic / "company.yaml").write_text(json.dumps({
+                    "company_id": cid, "company_name": "Test", "city": "Test",
+                    "working_hours": "Test", "phone": "",
+                }))
+                (clinic / "services.json").write_text("[]")
+                (clinic / "prices.json").write_text("[]")
+                (clinic / "faq.md").write_text("")
+                (clinic / "config.yaml").write_text('rag: {corpus: "none"}')
+            script = Path(app_file).resolve().parents[1] / "scripts/check_lead_startup.py"
+            env = {**os.environ, "LEAD_STORAGE_BACKEND": "postgres", "DELIVERY_RETRY_ENABLED": "true",
+                   "APP_ENV": "development", "DEV_MODE": "true", "CLIENTS_DATA_DIR": str(root),
+                   "OVERRIDES_DIR": str(root / "overrides"), "DEFAULT_COMPANY_ID": self.cids[0],
+                   "SESSION_SNAPSHOT_FILE": ""}
+            if "TEST_LEAD_DATABASE_URL" in env:
+                env["LEAD_DATABASE_URL"] = env["TEST_LEAD_DATABASE_URL"]
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(script), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+            self.assertEqual(process.returncode, 0, stderr.decode())
+            self.assertIn(b"SQL backend startup: OK", stdout)
+            self.assertIn(b"Registered clinics: 2", stdout)
+            self.assertIn(b"SQL backend shutdown: OK", stdout)
+        rows = await self.store.outbox_records(self.cids[0])
+        self.assertEqual([(row["status"], row["attempts"]) for row in rows], [("pending", 0)])
+
     async def test_bridge_delivers_saved_leads_after_restart(self):
         with TemporaryDirectory() as temp:
             pending = Path(temp) / "pending.jsonl"

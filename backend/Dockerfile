@@ -32,6 +32,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FROM runtime AS client-access
 COPY backend/requirements-db.txt ./requirements-db.txt
 RUN pip install --no-cache-dir -r requirements-db.txt
+COPY backend/scripts/check_lead_startup.py ./scripts/check_lead_startup.py
 
 # Обычная сборка сохраняет файловый runtime без обязательных SQL-зависимостей.
 FROM runtime AS default

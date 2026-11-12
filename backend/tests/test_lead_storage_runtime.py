@@ -219,12 +219,14 @@ def test_pg_lifespan_wires_and_closes_after_workers(managed_env, monkeypatch, fa
     store.close.assert_awaited_once()
 
 
-def test_pg_startup_fails_closed_and_safely(managed_env, monkeypatch, fake_pg_modules):
+def test_pg_startup_fails_closed_and_safely(managed_env, monkeypatch, fake_pg_modules, caplog):
     from fastapi.testclient import TestClient
     from app.main import app
 
     store, _ = fake_pg_modules
-    store.initialize.side_effect = RuntimeError("private diagnostic")
+    error = RuntimeError("private diagnostic")
+    error.sqlstate = "28000"
+    store.initialize.side_effect = error
     monkeypatch.setenv("LEAD_STORAGE_BACKEND", "postgres")
     monkeypatch.setenv("DELIVERY_RETRY_ENABLED", "true")
     get_settings.cache_clear()
@@ -232,6 +234,8 @@ def test_pg_startup_fails_closed_and_safely(managed_env, monkeypatch, fake_pg_mo
         with TestClient(app):
             pass
     store.close.assert_awaited_once()
+    assert "lead_storage_startup_failed stage=connection_schema_permissions error=RuntimeError sqlstate=28000" in caplog.text
+    assert "private diagnostic" not in caplog.text
 
 
 def test_pg_requires_retry_before_engine(managed_env, monkeypatch, fake_pg_modules):

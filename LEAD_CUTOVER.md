@@ -51,8 +51,15 @@ test -n "$current_backend" &&
 test "$current_backend" = "$(sql ps -q backend)" &&
 storage build db-tools &&
 sql build backend &&
+sql run --rm -T --no-deps --user 1000:1000 --entrypoint python backend scripts/check_lead_startup.py &&
 python3 backend/scripts/lead_cutover.py status
 ```
+
+Одноразовый контейнер проверяет полный запуск и завершение приложения с SQL,
+не поднимая HTTP-порт и не отправляя сообщения. Он читает текущие клиентские базы
+и восстанавливает сессии из временной копии, если на сервере есть снимок.
+При ошибке SQL-инициализации ищите в логе `lead_storage_startup_failed`.
+Эта строка содержит этап, класс ошибки и SQLSTATE, если он доступен.
 
 Ожидаем `storage: files`, оба файловых счётчика ожидания по нулям. Посмотрите
 на `dead`, если такой статус есть. Проверьте, что в Telegram нет диалога,

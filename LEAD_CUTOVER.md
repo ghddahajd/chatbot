@@ -18,11 +18,15 @@ files() {
 }
 
 sql() {
-  env -u LEAD_DB_PASSWORD docker compose +    --env-file .env --env-file /root/chatbot-leads.env +    -f docker-compose.yml -f docker-compose.lead-storage-host.yml "$@"
+  env -u LEAD_DB_PASSWORD docker compose \
+    --env-file .env --env-file /root/chatbot-leads.env \
+    -f docker-compose.yml -f docker-compose.lead-storage-host.yml "$@"
 }
 
 storage() {
-  env -u POSTGRES_PASSWORD docker compose --env-file /root/chatbot-storage.env +    -p chatbot-storage -f docker-compose.storage.yml +    -f /root/chatbot-storage-loopback.yml "$@"
+  env -u POSTGRES_PASSWORD docker compose --env-file /root/chatbot-storage.env \
+    -p chatbot-storage -f docker-compose.storage.yml \
+    -f /root/chatbot-storage-loopback.yml "$@"
 }
 
 lead_tools() (
@@ -30,7 +34,11 @@ lead_tools() (
   LEAD_PGPASSWORD=$(sed -n 's/^LEAD_DB_PASSWORD=//p' /root/chatbot-leads.env)
   [[ "$LEAD_PGPASSWORD" =~ ^[0-9a-f]{64}$ ]] || exit 1
   export LEAD_PGPASSWORD
-  storage run --rm -T --no-deps +    -e LEAD_DATABASE_URL= -e LEAD_PGPASSWORD +    -e LEAD_PGHOST=postgres -e LEAD_PGPORT=5432 +    -e LEAD_PGUSER=chatbot_lead_runtime -e LEAD_PGDATABASE=chatbot_storage +    "$@"
+  storage run --rm -T --no-deps \
+    -e LEAD_DATABASE_URL= -e LEAD_PGPASSWORD \
+    -e LEAD_PGHOST=postgres -e LEAD_PGPORT=5432 \
+    -e LEAD_PGUSER=chatbot_lead_runtime -e LEAD_PGDATABASE=chatbot_storage \
+    "$@"
 )
 ```
 
@@ -76,15 +84,18 @@ if [ -f "$SNAPSHOT/leads_archive.jsonl" ]; then
   archive=(--archive /snapshot/leads_archive.jsonl)
 fi
 
-lead_tools -v "$SNAPSHOT:/snapshot:ro" db-tools +  python scripts/import_lead_history.py --leads /snapshot/leads.jsonl "${archive[@]}"
+lead_tools -v "$SNAPSHOT:/snapshot:ro" db-tools \
+  python scripts/import_lead_history.py --leads /snapshot/leads.jsonl "${archive[@]}"
 ```
 
 Ожидаем ноль ошибок и дублей, количество по клиникам сходится со снимком.
 Пробный импорт ничего не записывает. После сверки:
 
 ```bash
-lead_tools -v "$SNAPSHOT:/snapshot:ro" db-tools +  python scripts/import_lead_history.py --leads /snapshot/leads.jsonl "${archive[@]}" --apply &&
-lead_tools -v "$SNAPSHOT:/snapshot:ro" db-tools +  python scripts/lead_cutover.py verify --snapshot /snapshot
+lead_tools -v "$SNAPSHOT:/snapshot:ro" db-tools \
+  python scripts/import_lead_history.py --leads /snapshot/leads.jsonl "${archive[@]}" --apply &&
+lead_tools -v "$SNAPSHOT:/snapshot:ro" db-tools \
+  python scripts/lead_cutover.py verify --snapshot /snapshot
 ```
 
 Должно быть `verified: true`. Проверка сравнивает контрольные суммы файлов,
@@ -116,7 +127,9 @@ Telegram и красные линии проходят. Отправьте од�
 ```bash
 ROLLBACK_DIR=$(mktemp -d /root/chatbot-rollback.XXXXXX)
 python3 -c 'import os,sys; os.chown(sys.argv[1],1000,1000)' "$ROLLBACK_DIR" &&
-lead_tools -v "$SNAPSHOT:/snapshot:ro" -v "$ROLLBACK_DIR:/rollback" db-tools +  python scripts/import_lead_history.py --leads /snapshot/leads.jsonl "${archive[@]}" +    --rollback-output /rollback/leads-restored.jsonl
+lead_tools -v "$SNAPSHOT:/snapshot:ro" -v "$ROLLBACK_DIR:/rollback" db-tools \
+  python scripts/import_lead_history.py --leads /snapshot/leads.jsonl "${archive[@]}" \
+    --rollback-output /rollback/leads-restored.jsonl
 ```
 
 Сверьте `exported`, `new_by_company` и `sql_outbox`. Пока есть `pending`,

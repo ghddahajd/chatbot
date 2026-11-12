@@ -112,7 +112,7 @@ class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(process.returncode, code, stderr.decode())
                 for value in (b"SYNTHETIC_PHONE", b"SYNTHETIC_TOKEN", b"unregistered-fixture"):
                     self.assertNotIn(value, stdout + stderr)
-                return json.loads(stdout)
+                return json.loads(stdout or stderr)
 
             valid = json.dumps(first) + "\n" + json.dumps(other) + "\n"
             hot.write_text(valid + "{broken\n" + json.dumps({**other, "company_id": "unregistered-fixture"}) + "\n"
@@ -143,6 +143,46 @@ class LeadStoragePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([row["timestamp"] for row in october], ["2026-10-15T10:20:00"])
             for company in self.cids:
                 self.assertEqual(await self.store.outbox_records(company), [])
+
+            sql_id = str(uuid4())
+            new_payload = {**self.payload(0), "timestamp": "2026-11-12T13:20:00",
+                           "operator_url": "https://example.invalid/operator?session_id=session"}
+            await self.store.save_lead(
+                lead_id=sql_id, event_type="booking_created", payload=new_payload,
+                records=[self.record(0, event_type="booking_created")],
+            )
+            export = Path(temp) / "rollback.jsonl"
+            repeat_export = Path(temp) / "rollback-repeat.jsonl"
+            exported = await cli("--rollback-output", str(export))
+            self.assertEqual((exported["exported"], exported["new_by_company"]), (1, {self.cids[0]: 1}))
+            self.assertEqual((exported["sql_outbox"], exported["sql_outbox_waiting"]), ({"pending": 1}, 1))
+            await cli("--rollback-output", str(repeat_export))
+            self.assertEqual(export.read_bytes(), repeat_export.read_bytes())
+            self.assertEqual((await cli("--rollback-output", str(export), code=1))["error"], "FileExistsError")
+            self.assertEqual(export.read_bytes(), repeat_export.read_bytes())
+            self.assertEqual(export.stat().st_mode & 0o777, 0o600)
+            returned = [json.loads(line) for line in export.read_text().splitlines()]
+            self.assertEqual(returned, [other, {**new_payload, "_sql_lead_id": sql_id}])
+            hot.write_bytes(export.read_bytes())
+            roundtrip = await cli("--apply")
+            self.assertEqual((roundtrip["inserted"], roundtrip["already_present"]), (0, 4))
+            self.assertEqual(len(await self.store.outbox_records(self.cids[0])), 1)
+
+            # Altered payloads cannot create a second copy during a later import.
+            after_rollback = {**other, "timestamp": "2026-11-13T13:20:00"}
+            hot.write_text("\n".join(map(json.dumps, [other, after_rollback, {**returned[1], "summary": "altered"}])) + "\n")
+            self.assertEqual((await cli("--apply", code=1))["errors"], [{"reason": "sql_lead_missing_or_changed"}])
+            self.assertEqual(await self.store.read_leads(self.cids[1]), [other])
+            hot.write_bytes(export.read_bytes() + json.dumps(after_rollback).encode() + b"\n")
+            self.assertEqual((await cli("--apply"))["inserted"], 1)
+            self.assertEqual(await self.store.outbox_records(self.cids[1]), [])
+
+            # A missing original archive row blocks preparing a replacement file.
+            archive.write_text(json.dumps(first) + "\n")
+            refused = Path(temp) / "refused.jsonl"
+            missing = await cli("--rollback-output", str(refused), code=1)
+            self.assertEqual(missing["errors"], [{"reason": "baseline_history_missing"}])
+            self.assertFalse(refused.exists())
 
     async def test_bridge_delivers_saved_leads_after_restart(self):
         with TemporaryDirectory() as temp:

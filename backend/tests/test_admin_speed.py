@@ -27,10 +27,34 @@ def test_dashboard_reads_events_file_once(test_client, managed_env, monkeypatch)
     response = test_client.get("/api/analytics/dashboard?company_id=rosh_demo&days=30", headers=OPERATOR_HEADERS)
 
     assert response.status_code == 200
+    result = response.json()
+    assert result["event_source"] == "jsonl"
+    assert set(result["event_sources"].values()) == {"jsonl"}
+    assert set(result["event_fallback_reasons"].values()) == {"sql_disabled"}
     # на проде файл ~18 МБ: раньше его разбирал каждый из ~15 подсчётов
     assert reads.count(analytics_file) == 1
     assert len(lead_reads) == 1
     assert lead_reads[0] != test_client.portal.call(threading.get_ident)
+
+
+def test_dashboard_reports_missing_and_stale_snapshot(test_client, monkeypatch) -> None:
+    state = test_client.app.state
+    monkeypatch.setattr(state.settings, "analytics_sql_funnel_enabled", True)
+    url = "/api/analytics/dashboard?company_id=rosh_demo"
+
+    def diagnostics():
+        response = test_client.get(url, headers=OPERATOR_HEADERS)
+        assert response.status_code == 200
+        return response.json()
+
+    result = diagnostics()
+    assert result["event_source"] == "jsonl"
+    assert result["event_fallback_reasons"]["funnel"] == "snapshot_unavailable"
+
+    monkeypatch.setattr(state, "analytics_funnel_source", (None, (-1, -1, -1, -1), None, True, None))
+    result = diagnostics()
+    assert result["event_source"] == "jsonl"
+    assert result["event_fallback_reasons"]["funnel"] == "events_snapshot_stale"
 
 
 def test_chat_answers_while_dashboard_is_counting(test_client, monkeypatch) -> None:

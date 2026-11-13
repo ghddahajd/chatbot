@@ -280,9 +280,12 @@ async def _lifespan(app: FastAPI):
         )
     analytics_prune_task = None
     analytics_sync_task = None
+    app.state.analytics_funnel_source = None
     if settings.analytics_sync_enabled:
         from .storage.analytics_sync import run_analytics_sync_loop
-        analytics_sync_task = asyncio.create_task(run_analytics_sync_loop(settings, app.state.knowledge_base_resolver))
+        analytics_sync_task = asyncio.create_task(
+            run_analytics_sync_loop(settings, app.state.knowledge_base_resolver, app.state)
+        )
     elif settings.analytics_prune_enabled:
         analytics_prune_task = asyncio.create_task(
             _run_analytics_prune_loop(

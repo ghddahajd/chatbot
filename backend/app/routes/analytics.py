@@ -1,5 +1,6 @@
 """роуты простой аналитики managed-service mvp."""
 
+import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import Optional
@@ -8,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from ..analytics import analytics_file_version
 from ..auth import authenticate, authorize_company
 from ..logging_setup import log_event
 from ..rate_limit import client_ip
@@ -287,12 +289,43 @@ async def analytics_dashboard(
         trend_clamp_date = max(start.date(), end.date() - timedelta(days=29))
         trend_start, trend_end = datetime.combine(trend_clamp_date, time.min), end
     else:
-        funnel_start = funnel_end = trend_start = trend_end = None
+        funnel_start = datetime.utcnow() - timedelta(days=funnel_days)
+        funnel_end = trend_start = trend_end = None
+
+    funnel_metrics = None
+    funnel_version = None
+
+    async def prepare_funnel():
+        nonlocal funnel_metrics, funnel_version
+        state = request.app.state
+        source = getattr(state, "analytics_funnel_source", None)
+        if not state.settings.analytics_sql_funnel_enabled or not source or company_id is None:
+            return
+        engine, version = source
+        try:
+            from ..storage.postgres_funnel import load_funnel_events
+
+            async with asyncio.timeout(1):
+                funnel_metrics = await load_funnel_events(
+                    engine, company_id=company_id, start=funnel_start, end=funnel_end,
+                    path=analytics_service.analytics_file, version=version,
+                    retention_days=state.settings.analytics_message_retention_days,
+                )
+                funnel_version = version
+        except Exception as error:
+            logger.warning("SQL funnel fallback error=%s", type(error).__name__)
 
     # полтора десятка подсчётов по файлу событий (~18 МБ на проде) — в своём потоке и с одним разбором
     # файла на всех: иначе всё это время стоят ответы чата посетителям
     def build() -> dict:
         with analytics_service.events_snapshot():
+            metrics = funnel_metrics
+            if metrics is not None:
+                try:
+                    if analytics_file_version(analytics_service.analytics_file) != funnel_version:
+                        metrics = None
+                except OSError:
+                    metrics = None
             timezone_name = _company_timezone(request, company_id)
             top_services = [
                 {
@@ -317,7 +350,8 @@ async def analytics_dashboard(
                 ),
                 "top_services": top_services,
                 "funnel": analytics_service.conversion_funnel(
-                    company_id=company_id, days=funnel_days, start=funnel_start, end=funnel_end
+                    company_id=company_id, days=funnel_days, start=funnel_start, end=funnel_end,
+                    event_metrics=metrics,
                 ),
                 "unanswered_trend": analytics_service.unanswered_trend(
                     company_id=company_id, days=trend_days, start=trend_start, end=trend_end
@@ -354,7 +388,7 @@ async def analytics_dashboard(
 
     return await analytics_service.runner.report(
         analytics_service, ("dashboard", company_id, days, start, end), build,
-        company_id=company_id, leads=True,
+        company_id=company_id, leads=True, before_build=prepare_funnel,
     )
 
 

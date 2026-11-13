@@ -42,10 +42,10 @@ async def sync_once(engine, settings, company_ids, *, prune):
         prune_completed = bool(removed) or analytics_file_version(settings.analytics_file) == version
     else:
         prune_completed = False
-    return inserted, prune_completed
+    return inserted, prune_completed, version
 
 
-async def run_analytics_sync_loop(settings, resolver):
+async def run_analytics_sync_loop(settings, resolver, state):
     engine = None
     next_prune = monotonic()
     try:
@@ -55,12 +55,15 @@ async def run_analytics_sync_loop(settings, resolver):
                     from ..db.connection import make_engine
                     engine = make_engine("ANALYTICS_")
                 prune = settings.analytics_prune_enabled and monotonic() >= next_prune
-                _, prune_completed = await sync_once(engine, settings, resolver.company_ids(), prune=prune)
+                _, prune_completed, version = await sync_once(engine, settings, resolver.company_ids(), prune=prune)
+                state.analytics_funnel_source = (engine, version) if version is not None else None
                 if prune_completed:
                     next_prune = monotonic() + settings.analytics_prune_interval_seconds
             except Exception as error:
+                state.analytics_funnel_source = None
                 logger.warning("analytics sync failed error=%s", type(error).__name__)
             await asyncio.sleep(settings.analytics_sync_interval_seconds)
     finally:
+        state.analytics_funnel_source = None
         if engine is not None:
             await engine.dispose()

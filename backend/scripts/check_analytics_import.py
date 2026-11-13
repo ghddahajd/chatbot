@@ -16,39 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.storage.analytics_import import insert_events, snapshot_rows
 
 
-def project_metrics(counts, pages):
-    def count(event_type, key):
-        return counts.get(event_type, {}).get(key, 0)
-
-    def visitors(event_type):
-        return count(event_type, "visitors") + count(event_type, "without_visitor")
-
-    opened = visitors("chat_opened")
-    dialogs = count("message_answered", "sessions")
-    for page in pages:
-        page["open_rate"] = round(page["opens"] / page["loads"] * 100, 1) if page["loads"] else None
-    return {
-        "stages": [visitors("widget_impression"), opened, dialogs],
-        "page_loads": count("widget_impression", "rows"),
-        "dialog_percent": round(dialogs / opened * 100, 1) if opened and not count("chat_opened", "without_visitor") else None,
-        "contact_clicks": {"call": visitors("contact_call_clicked"), "telegram": visitors("contact_telegram_clicked")},
-        "teaser": {"shown": visitors("teaser_shown"), "price": visitors("teaser_price_clicked"),
-                   "booking": visitors("teaser_booking_clicked")},
-        "booking_card": {key: visitors(f"booking_card_{suffix}") for key, suffix in
-                         (("shown", "shown"), ("day", "day_picked"), ("phone", "phone_started"), ("sent", "sent"))},
-        "idle_reminder": {key: visitors(f"idle_reminder_{suffix}") for key, suffix in
-                          (("shown", "shown"), ("callback", "callback_clicked"), ("later", "later_clicked"))},
-        "pages": pages,
-    }
-
-
 async def run(args):
     import sqlalchemy as sa
 
     from app.analytics import AnalyticsService
     from app.db.connection import make_engine
     from app.db.models import Tenant
-    from app.storage.postgres_funnel import funnel_events
+    from app.storage.postgres_funnel import funnel_events, project_metrics
 
     engine = make_engine("ANALYTICS_")
     try:

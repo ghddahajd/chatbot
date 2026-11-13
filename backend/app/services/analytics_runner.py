@@ -3,7 +3,7 @@
 import asyncio
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 
 from fastapi import HTTPException
 
@@ -44,7 +44,7 @@ class AnalyticsRunner:
                 context = contextvars.copy_context()
                 return await asyncio.get_running_loop().run_in_executor(self._executor, context.run, build)
 
-    async def report(self, service, key, build, *, company_id=None, leads=False, events=False):
+    async def report(self, service, key, build, *, company_id=None, leads=False, events=False, before_build=None):
         def worker():
             token = None
             if leads and service.postgres_lead_store is None:
@@ -56,8 +56,14 @@ class AnalyticsRunner:
                 if token is not None:
                     LEADS_SNAPSHOT.reset(token)
 
-        prepare = (lambda: service.leads_snapshot(company_id)) if leads else None
-        return await self.run(key, worker, prepare=prepare)
+        @asynccontextmanager
+        async def preparation():
+            async with service.leads_snapshot(company_id) if leads else nullcontext():
+                if before_build is not None:
+                    await before_build()
+                yield
+
+        return await self.run(key, worker, prepare=preparation if leads or before_build else None)
 
     async def close(self):
         self._closed = True

@@ -1,16 +1,22 @@
 """Read event metrics for one clinic and period."""
 
+from datetime import datetime, timedelta, timezone
+
 import sqlalchemy as sa
 
+from ..analytics import analytics_file_version
 from ..db.analytics_models import analytics_events
+from ..db.models import Tenant
 
 
 async def funnel_events(connection, *, tenant_id, start, end):
     columns = analytics_events.c
-    scope = (
+    scope = [
         columns.tenant_id == tenant_id,
-        columns.occurred_at.between(start, end),
-    )
+        columns.occurred_at >= start,
+    ]
+    if end is not None:
+        scope.append(columns.occurred_at <= end)
     counts = await connection.execute(
         sa.select(
             columns.event_type,
@@ -35,3 +41,50 @@ async def funnel_events(connection, *, tenant_id, start, end):
         .limit(20)
     )
     return metrics, [dict(row) for row in pages.mappings()]
+
+
+def project_metrics(counts, pages):
+    def count(event_type, key):
+        return counts.get(event_type, {}).get(key, 0)
+
+    def visitors(event_type):
+        return count(event_type, "visitors") + count(event_type, "without_visitor")
+
+    opened = visitors("chat_opened")
+    dialogs = count("message_answered", "sessions")
+    for page in pages:
+        page["open_rate"] = round(page["opens"] / page["loads"] * 100, 1) if page["loads"] else None
+    return {
+        "stages": [visitors("widget_impression"), opened, dialogs],
+        "page_loads": count("widget_impression", "rows"),
+        "dialog_percent": round(dialogs / opened * 100, 1) if opened and not count("chat_opened", "without_visitor") else None,
+        "contact_clicks": {"call": visitors("contact_call_clicked"), "telegram": visitors("contact_telegram_clicked")},
+        "teaser": {"shown": visitors("teaser_shown"), "price": visitors("teaser_price_clicked"),
+                   "booking": visitors("teaser_booking_clicked")},
+        "booking_card": {key: visitors(f"booking_card_{suffix}") for key, suffix in
+                         (("shown", "shown"), ("day", "day_picked"), ("phone", "phone_started"), ("sent", "sent"))},
+        "idle_reminder": {key: visitors(f"idle_reminder_{suffix}") for key, suffix in
+                          (("shown", "shown"), ("callback", "callback_clicked"), ("later", "later_clicked"))},
+        "pages": pages,
+    }
+
+
+async def load_funnel_events(engine, *, company_id, start, end, path, version, retention_days):
+    # PostgreSQL retains imported rows after JSONL pruning. For older windows use
+    # JSONL to preserve the current report's retention semantics.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if start < now - timedelta(days=retention_days):
+        return None
+    if analytics_file_version(path) != version:
+        return None
+    async with engine.connect() as connection:
+        tenant_id = await connection.scalar(sa.select(Tenant.id).where(Tenant.company_id == company_id))
+        if tenant_id is None:
+            return None
+        counts, pages = await funnel_events(
+            connection, tenant_id=tenant_id, start=start.replace(tzinfo=timezone.utc),
+            end=end.replace(tzinfo=timezone.utc) if end is not None else None,
+        )
+    if analytics_file_version(path) != version:
+        return None
+    return project_metrics(counts, pages)

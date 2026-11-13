@@ -1202,6 +1202,7 @@ class AnalyticsService:
         *,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        event_metrics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Воронка виджет-загружен → чат-открыт → есть-переписка → лид, за последние `days`
         дней (см. FUNNEL_WINDOW_DAYS — специально короче ретеншна widget_impression/
@@ -1215,109 +1216,88 @@ class AnalyticsService:
         по тому, что передали."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         leads = _within_range(self._new_client_leads(), start=range_start, end=range_end, company_id=company_id)
+        if event_metrics is None:
+            events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
+            event_metrics = _file_funnel_metrics(events)
 
-        impression_events = [event for event in events if event.get("event_type") == "widget_impression"]
-        opened_events = [event for event in events if event.get("event_type") == "chat_opened"]
-        impressions = _unique_visitors(impression_events)
-        chat_opened = _unique_visitors(opened_events)
-        conversations = len(
-            {
-                event.get("session_id")
-                for event in events
-                if event.get("event_type") == "message_answered" and event.get("session_id")
-            }
-        )
-        lead_count = len(leads)
-
-        # не ступень воронки: человек ушёл записываться звонком или в Telegram — тоже результат чата
-        contact_clicks = {
-            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
-            for kind, event_type in (("call", "contact_call_clicked"), ("telegram", "contact_telegram_clicked"))
-        }
-        teaser = {
-            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
-            for kind, event_type in (
-                ("shown", "teaser_shown"),
-                ("price", "teaser_price_clicked"),
-                ("booking", "teaser_booking_clicked"),
-            )
-        }
-        booking_card = {
-            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
-            for kind, event_type in (
-                ("shown", "booking_card_shown"),
-                ("day", "booking_card_day_picked"),
-                ("phone", "booking_card_phone_started"),
-                ("sent", "booking_card_sent"),
-            )
-        }
-
-        idle_reminder = {
-            kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
-            for kind, event_type in (
-                ("shown", "idle_reminder_shown"),
-                ("callback", "idle_reminder_callback_clicked"),
-                ("later", "idle_reminder_later_clicked"),
-            )
-        }
-
+        impressions, opened, dialogs = event_metrics["stages"]
+        counts = (impressions, opened, dialogs, len(leads))
+        labels = ("Посетители с виджетом", "Открыли чат", "Есть переписка", "Стал лидом")
         stages = [
-            {"label": "Посетители с виджетом", "count": impressions, "page_loads": len(impression_events)},
-            {"label": "Открыли чат", "count": chat_opened},
-            {"label": "Есть переписка", "count": conversations},
-            {"label": "Стал лидом", "count": lead_count},
+            {"label": label, "count": count,
+             "percent_of_previous": round(count / counts[index - 1] * 100, 1)
+             if index and counts[index - 1] else None}
+            for index, (label, count) in enumerate(zip(labels, counts))
         ]
-        # шаг-к-шагу конверсия (эта стадия / предыдущая), не от общего — так и читается
-        # воронка визуально: "сколько из открывших чат реально написали"
-        #
-        # Живой баг (код-ревью, 2026-08-27): первая стадия раньше безусловно получала 100.0%
-        # (ей не с чем сравнивать), даже когда impressions == 0 (трекинг показов только что
-        # включили) — дашборд рисовал "0 (100.0%)" вместо честного "нет данных".
-        for index, stage in enumerate(stages):
-            if index == 0:
-                stage["percent_of_previous"] = 100.0 if stage["count"] else None
-                continue
-            previous = stages[index - 1]["count"]
-            stage["percent_of_previous"] = round(stage["count"] / previous * 100, 1) if previous else None
-
-        # "Чат открыт" → "Есть переписка" сравнивает две метрики РАЗНОЙ надёжности: первые две
-        # стадии — client-side маячки (fetch без keepalive на /api/analytics/track/... — то,
-        # что чаще всего режут адблокеры), "Есть переписка" же считается на сервере по
-        # message_answered и адблокером не режется. В проде это дало 7011.8% (обсуждено с
-        # пользователем 2026-08-29) — не баг арифметики, а честно нечего сравнивать, проценты
-        # с разных весов. Убираем именно ЭТОТ переход, остальные — Виджет→Чат (обе client-side)
-        # и Переписка→Лид (обе server-side) — внутри своего яруса сравнимы, оставляем как есть.
-        # Исключение: если ВСЕ открытия за период пришли через /api/widget/event (с меткой
-        # посетителя), их не режет блокировщик — тогда ярусы сравнимы и процент возвращаем.
-        if not opened_events or any(not _visitor_id(event) for event in opened_events):
-            stages[2]["percent_of_previous"] = None
-
-        # Честное число дней для хинта на дашборде ("За последние N дней") — не просто эхо
-        # входного `days`: при кастомном периоде (2026-08-30), клэмпнутом до 55 дней вызывающим
-        # (routes/analytics.py), это реально посчитанное окно, а не то, что запросил
-        # пользователь. Живой баг найден при живой проверке: считать так же и для обычного
-        # пресета (range_end здесь всегда None) даёт "31 день" вместо "30" — скользящее окно
-        # "N дней назад от сейчас" считает ЧАСЫ (ровно N*24ч), а не календарные даты, разница
-        # на дробный день округлением в date() и давала лишний +1. Пересчитываем ТОЛЬКО когда
-        # range_end реально задан явно (кастом/клэмп) — иначе оставляем исходный `days` как есть.
+        stages[0].update(page_loads=event_metrics["page_loads"], percent_of_previous=100.0 if impressions else None)
+        stages[2]["percent_of_previous"] = event_metrics["dialog_percent"]
         effective_days = (range_end.date() - range_start.date()).days + 1 if range_end is not None else days
-
         return {
-            "company_id": company_id,
-            "days": effective_days,
-            "stages": stages,
-            "contact_clicks": contact_clicks,
-            "teaser": teaser,
-            "booking_card": booking_card,
-            "idle_reminder": idle_reminder,
-            "pages": _widget_pages(
-                impression_events,
-                opened_events,
-                [event for event in events if event.get("event_type") == "message_answered"],
-            ),
+            "company_id": company_id, "days": effective_days, "stages": stages,
+            **{key: event_metrics[key] for key in ("contact_clicks", "teaser", "booking_card", "idle_reminder", "pages")},
         }
+
+
+def _file_funnel_metrics(events):
+    impression_events = [event for event in events if event.get("event_type") == "widget_impression"]
+    opened_events = [event for event in events if event.get("event_type") == "chat_opened"]
+    impressions = _unique_visitors(impression_events)
+    chat_opened = _unique_visitors(opened_events)
+    conversations = len(
+        {
+            event.get("session_id")
+            for event in events
+            if event.get("event_type") == "message_answered" and event.get("session_id")
+        }
+    )
+
+    # не ступень воронки: человек ушёл записываться звонком или в Telegram — тоже результат чата
+    contact_clicks = {
+        kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+        for kind, event_type in (("call", "contact_call_clicked"), ("telegram", "contact_telegram_clicked"))
+    }
+    teaser = {
+        kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+        for kind, event_type in (
+            ("shown", "teaser_shown"),
+            ("price", "teaser_price_clicked"),
+            ("booking", "teaser_booking_clicked"),
+        )
+    }
+    booking_card = {
+        kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+        for kind, event_type in (
+            ("shown", "booking_card_shown"),
+            ("day", "booking_card_day_picked"),
+            ("phone", "booking_card_phone_started"),
+            ("sent", "booking_card_sent"),
+        )
+    }
+
+    idle_reminder = {
+        kind: _unique_visitors([event for event in events if event.get("event_type") == event_type])
+        for kind, event_type in (
+            ("shown", "idle_reminder_shown"),
+            ("callback", "idle_reminder_callback_clicked"),
+            ("later", "idle_reminder_later_clicked"),
+        )
+    }
+
+    return {
+        "stages": [impressions, chat_opened, conversations],
+        "page_loads": len(impression_events),
+        "dialog_percent": round(conversations / chat_opened * 100, 1)
+        if opened_events and all(_visitor_id(event) for event in opened_events) else None,
+        "contact_clicks": contact_clicks,
+        "teaser": teaser,
+        "booking_card": booking_card,
+        "idle_reminder": idle_reminder,
+        "pages": _widget_pages(
+            impression_events, opened_events,
+            [event for event in events if event.get("event_type") == "message_answered"],
+        ),
+    }
 
 
 def _in_zone(moment: datetime, zone: Optional[ZoneInfo]) -> datetime:

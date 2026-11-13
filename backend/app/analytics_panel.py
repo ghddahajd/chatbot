@@ -1089,9 +1089,7 @@ def render_analytics_panel(
 
     function renderTiles(data) {
       const totalLeads = data.summary.leads.total;
-      // «Диалогов», «Лидов» и «Конверсия» с дельтами — из period_comparison: текущее и прошлое
-      // окно посчитаны одним способом. Для своего периода его нет — честнее прочерк, чем сравнение
-      // «N дней от сегодня» с произвольными датами.
+      // Для произвольных дат берём одно и то же окно воронки для всех трёх плиток.
       const pc = data.period_comparison;
       const tile = (label, value, caption) =>
         `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div>${caption ? `<div class="tile-caption">${caption}</div>` : ""}</div>`;
@@ -1109,10 +1107,13 @@ def render_analytics_panel(
           tile("Диалог → лид", conversion + "%" + deltaBadge(conversion, prevConversion), prevConversion ? versus : "сколько диалогов стали лидами"),
         ];
       } else {
+        const [, , dialogs, leads] = data.funnel.stages;
+        const caption = `Последние ${data.funnel.days} дн. выбранного периода`;
+        const conversion = leads.percent_of_previous == null ? "—" : leads.percent_of_previous + "%";
         tiles = [
-          tile("Диалогов", "—", "для своего периода не считаем"),
-          tile("Лидов", "—", `всего за всё время: ${fmt(totalLeads)}`),
-          tile("Диалог → лид", "—", ""),
+          tile("Диалогов", fmt(dialogs.count), caption),
+          tile("Лидов", fmt(leads.count), `${caption} · всего за всё время: ${fmt(totalLeads)}`),
+          tile("Диалог → лид", conversion, caption),
         ];
       }
       tiles.push(tile("Ожидание администратора", formatMinutes(data.queue_wait.avg_wait_minutes), "в среднем от просьбы до «Взять»"));

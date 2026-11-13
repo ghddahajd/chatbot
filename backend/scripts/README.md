@@ -19,6 +19,7 @@
 | `import_lead_history.py` | пробная проверка и импорт JSONL заявок, подготовка файла для отката из PostgreSQL |
 | `lead_cutover.py` | счётчики файловых очередей, снимок остановленного backend и сверка импорта с PostgreSQL |
 | `check_lead_startup.py` | проверка полного старта backend с PostgreSQL в одноразовом контейнере, с отключёнными отправками |
+| `check_analytics_import.py` | локальная сверка событий воронки: неизменяемый снимок JSONL, одна клиника, явный период UTC. Нужны зависимости БД, миграция и реестр в тестовой базе `ANALYTICS_DATABASE_URL`. По умолчанию проверяет вход, `--apply` импортирует и сравнивает с JSONL. |
 | `crawl_article_batch.py` | краулит staging batch статей и режет текст на chunks для будущего RAG |
 | `import_articles_registry.py` | импортирует реестр статей клиента в staging без публикации в runtime KB |
 

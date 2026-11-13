@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from app.utils.jsonl import read_jsonl
 from app.storage.analytics_import import snapshot_rows
 from app.storage.analytics_sync import read_snapshot
-from app.analytics import analytics_file_version, archive_old_analytics_events
+from app.analytics import analytics_file_version, analytics_snapshot_matches, archive_old_analytics_events
 from app.utils.jsonl import append_jsonl
 
 
@@ -42,6 +42,28 @@ def test_snapshot_reports_whether_it_covers_all_companies(tmp_path):
     append_jsonl(path, {**row, "company_id": None})
     version, events, complete = read_snapshot(path)
     assert version is not None and len(events) == 2 and not complete
+
+
+def test_snapshot_accepts_append_during_read_but_excludes_new_rows(tmp_path, monkeypatch):
+    from app.storage import analytics_sync
+
+    path = tmp_path / "analytics.jsonl"
+    row = {"company_id": "clinic", "timestamp": "2026-01-01T00:00:00", "event_type": "chat_opened"}
+    append_jsonl(path, row)
+    original = analytics_sync.snapshot_rows
+
+    def append_during_read(*args, **kwargs):
+        append_jsonl(path, {**row, "event_type": "widget_impression"})
+        yield from original(*args, **kwargs)
+
+    monkeypatch.setattr(analytics_sync, "snapshot_rows", append_during_read)
+    version, events, complete = read_snapshot(path)
+    assert complete and [event["event_type"] for event in events] == ["chat_opened"]
+    assert analytics_snapshot_matches(path, version)
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(path.read_bytes())
+    replacement.replace(path)
+    assert not analytics_snapshot_matches(path, version)
 
 
 def test_chat_writes_analytics_without_analytics_database(test_client, monkeypatch):

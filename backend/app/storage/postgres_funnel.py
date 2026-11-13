@@ -4,7 +4,7 @@ from datetime import timezone
 
 import sqlalchemy as sa
 
-from ..analytics import analytics_file_version
+from ..analytics import analytics_snapshot_matches
 from ..db.analytics_models import analytics_events
 
 
@@ -72,7 +72,7 @@ def project_metrics(counts, pages):
 
 
 async def load_funnel_events(engine, *, company_id, start, end, path, version, generation):
-    if analytics_file_version(path) != version:
+    if not analytics_snapshot_matches(path, version):
         return None
     async with engine.connect() as connection:
         counts, pages = await funnel_events(
@@ -80,6 +80,6 @@ async def load_funnel_events(engine, *, company_id, start, end, path, version, g
             end=end.replace(tzinfo=timezone.utc) if end is not None else None,
             generation=generation,
         )
-    if analytics_file_version(path) != version:
+    if not analytics_snapshot_matches(path, version):
         return None
     return project_metrics(counts, pages)

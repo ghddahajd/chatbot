@@ -4,7 +4,7 @@ from datetime import timezone
 
 import sqlalchemy as sa
 
-from ..analytics import analytics_file_version
+from ..analytics import analytics_snapshot_matches
 from ..db.analytics_models import analytics_events
 from ..hours import _resolve_timezone
 from .postgres_rollup import load_rollup
@@ -12,7 +12,7 @@ from .postgres_rollup import load_rollup
 
 async def load_activity(engine, *, company_id, start, end, timezone_name, path, version, generation,
                         rollup_generation):
-    if analytics_file_version(path) != version:
+    if not analytics_snapshot_matches(path, version):
         return None
     columns = analytics_events.c
     local = sa.func.timezone(_resolve_timezone(timezone_name).key, columns.occurred_at)
@@ -39,4 +39,4 @@ async def load_activity(engine, *, company_id, start, end, timezone_name, path, 
             weekdays[int(d)] = weekdays.get(int(d), 0) + count
         historical = await load_rollup(connection, company_id=company_id, start=start, end=end,
                                        generation=rollup_generation)
-    return (hours, weekdays, historical) if analytics_file_version(path) == version else None
+    return (hours, weekdays, historical) if analytics_snapshot_matches(path, version) else None

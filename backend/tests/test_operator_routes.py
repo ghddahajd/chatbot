@@ -327,7 +327,7 @@ def test_analytics_dashboard_resolves_service_name_and_shape(test_client) -> Non
 
     assert response.status_code == 200
     assert set(result.keys()) == {
-        "event_source", "event_sources", "event_fallback_reasons",
+        "event_source", "event_sources", "event_fallback_reasons", "event_snapshot_at",
         "company_id", "days", "range_label", "summary", "operators", "leads_by_month", "leads_by_reason",
         "top_services", "funnel", "unanswered_trend", "intent_breakdown", "objection_breakdown",
         "top_unanswered_questions", "top_answered_questions", "activity_by_hour", "activity_by_weekday",

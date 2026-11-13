@@ -33,6 +33,15 @@ def analytics_file_version(path: Path) -> tuple[int, int, int, int]:
     stat = path.stat()
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
 
+
+def analytics_snapshot_matches(path: Path, version: tuple[int, int, int, int]) -> bool:
+    try:
+        current = analytics_file_version(path)
+    except OSError:
+        return False
+    # The application appends to this inode and replaces it when pruning.
+    return current == version or (current[:2] == version[:2] and current[2] > version[2])
+
 # один разбор analytics.jsonl на весь дашборд (см. AnalyticsService.events_snapshot): на проде файл
 # ~18 МБ, а дашборд — полтора десятка подсчётов, и каждый раньше читал его заново
 _EVENTS_SNAPSHOT: ContextVar[Optional[tuple[Path, list[dict[str, Any]]]]] = ContextVar("analytics_events_snapshot", default=None)

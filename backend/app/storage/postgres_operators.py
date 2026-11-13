@@ -4,12 +4,12 @@ from datetime import timezone
 
 import sqlalchemy as sa
 
-from ..analytics import analytics_file_version
+from ..analytics import analytics_snapshot_matches
 from ..db.analytics_models import analytics_events
 
 
 async def load_operator_events(engine, *, company_id, start, end, path, version, generation):
-    if analytics_file_version(path) != version:
+    if not analytics_snapshot_matches(path, version):
         return None
     columns = analytics_events.c
     scope = [columns.file_generation == generation]
@@ -30,7 +30,7 @@ async def load_operator_events(engine, *, company_id, start, end, path, version,
     )
     async with engine.connect() as connection:
         rows = (await connection.execute(query)).all()
-    if analytics_file_version(path) != version:
+    if not analytics_snapshot_matches(path, version):
         return None
     return [
         {"company_id": event_company, "event_type": kind, "session_id": session_id,

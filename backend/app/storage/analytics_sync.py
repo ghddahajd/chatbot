@@ -2,10 +2,11 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from time import monotonic
 from uuid import uuid4
 
-from ..analytics import analytics_file_version, archive_old_analytics_events
+from ..analytics import analytics_file_version, analytics_snapshot_matches, archive_old_analytics_events
 from .analytics_import import insert_events, snapshot_rows
 
 
@@ -19,8 +20,19 @@ def read_snapshot(path):
         return None, [], False
     skipped_companies = set()
     with path.open("rb") as handle:
-        rows = list(snapshot_rows(handle, skipped_companies=skipped_companies))
-    if analytics_file_version(path) != version:
+        def complete_lines():
+            remaining = version[2]
+            while remaining:
+                line = handle.readline(remaining)
+                if not line.endswith(b"\n"):
+                    if line and analytics_file_version(path) == version:
+                        yield line
+                    break
+                remaining -= len(line)
+                yield line
+
+        rows = list(snapshot_rows(complete_lines(), skipped_companies=skipped_companies))
+    if not analytics_snapshot_matches(path, version):
         return None, [], False
     return version, rows, not skipped_companies
 
@@ -67,10 +79,13 @@ async def run_analytics_sync_loop(settings, resolver, state):
                     from ..db.connection import make_engine
                     engine = make_engine("ANALYTICS_")
                 prune = settings.analytics_prune_enabled and monotonic() >= next_prune
+                state.analytics_funnel_source = None
+                captured_at = datetime.now(timezone.utc)
                 prune_completed, previous = await sync_once(
                     engine, settings, resolver.company_ids(), prune=prune, previous=previous,
                 )
-                state.analytics_funnel_source = (engine, *previous) if previous is not None else None
+                if previous is not None:
+                    state.analytics_funnel_source = (engine, *previous, captured_at)
                 if prune_completed:
                     next_prune = monotonic() + settings.analytics_prune_interval_seconds
             except Exception as error:

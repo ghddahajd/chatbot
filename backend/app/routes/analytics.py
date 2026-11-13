@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from contextlib import nullcontext
 from typing import Optional
 
@@ -10,7 +10,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..analytics import analytics_file_version
+from ..analytics import analytics_snapshot_matches
 from ..auth import authenticate, authorize_company
 from ..logging_setup import log_event
 from ..rate_limit import client_ip
@@ -107,15 +107,17 @@ async def analytics_summary(
     company_id = await authorize_company(request, x_operator_token, company_id)
     sessions = await request.app.state.session_store.list_all()
     service = request.app.state.analytics_service
-    event_summary = version = None
+    event_summary = source = None
 
     async def prepare():
-        nonlocal event_summary, version
+        nonlocal event_summary, source
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
         if not _analytics_source_covers(source, company_id) or not state.settings.analytics_sql_summary_enabled:
             return
-        engine, version, generation, _, _ = source
+        if _events_snapshot_issue(service.analytics_file, source, state.settings):
+            return
+        engine, _, generation, _, _, _ = source
         try:
             async with asyncio.timeout(1):
                 from ..storage.postgres_summary import load_summary_reports
@@ -127,7 +129,9 @@ async def analytics_summary(
             logger.warning("SQL summary fallback error=%s", type(error).__name__)
 
     def build():
-        metrics = event_summary if event_summary is not None and _analytics_version_matches(service.analytics_file, version) else None
+        metrics = event_summary
+        if metrics is not None and not _analytics_source_usable(request.app.state, service.analytics_file, source):
+            metrics = None
         return service.summary(sessions=sessions, company_id=company_id, limit=limit, event_summary=metrics)
 
     return await service.runner.report(
@@ -151,6 +155,8 @@ async def analytics_operators(
         source = getattr(request.app.state, "analytics_funnel_source", None)
         if not _analytics_source_covers(source, company_id) or not request.app.state.settings.analytics_sql_operators_enabled:
             return
+        if _events_snapshot_issue(service.analytics_file, source, request.app.state.settings):
+            return
         try:
             async with asyncio.timeout(1):
                 events = await _sql_operator_events(service, source, company_id)
@@ -158,7 +164,7 @@ async def analytics_operators(
             logger.warning("SQL operators fallback error=%s", type(error).__name__)
 
     def build():
-        if events is not None and _analytics_version_matches(service.analytics_file, source[1]):
+        if events is not None and _analytics_source_usable(request.app.state, service.analytics_file, source):
             return service.operator_summary(company_id=company_id, operator_events=events)
         return service.operator_summary(company_id=company_id)
 
@@ -168,11 +174,16 @@ async def analytics_operators(
     )
 
 
-def _analytics_version_matches(path, version):
-    try:
-        return analytics_file_version(path) == version
-    except OSError:
-        return False
+def _events_snapshot_issue(path, source, settings):
+    if not analytics_snapshot_matches(path, source[1]):
+        return "events_snapshot_stale"
+    if datetime.now(timezone.utc) - source[5] > timedelta(seconds=2 * settings.analytics_sync_interval_seconds):
+        return "events_snapshot_expired"
+    return None
+
+
+def _analytics_source_usable(state, path, source):
+    return state.analytics_funnel_source is source and _events_snapshot_issue(path, source, state.settings) is None
 
 
 def _analytics_source_covers(source, company_id):
@@ -182,7 +193,7 @@ def _analytics_source_covers(source, company_id):
 async def _sql_operator_events(service, source, company_id, *, start=None, end=None):
     from ..storage.postgres_operators import load_operator_events
 
-    engine, version, generation, _, _ = source
+    engine, version, generation, _, _, _ = source
     return await load_operator_events(
         engine, company_id=company_id, start=start, end=end,
         path=service.analytics_file, version=version, generation=generation,
@@ -360,7 +371,7 @@ async def analytics_dashboard(
     timezone_name = _company_timezone(request, company_id)
     activity_start = start if start is not None else now - timedelta(days=days)
     funnel_metrics = activity = questions = operator_events = summary_reports = None
-    report_version = historical_version = None
+    report_source = historical_version = None
     fallback_reason = None
     activity_reason = None
     settings = request.app.state.settings
@@ -373,7 +384,7 @@ async def analytics_dashboard(
     }
 
     async def prepare_sql_reports():
-        nonlocal funnel_metrics, activity, questions, operator_events, summary_reports, report_version, historical_version
+        nonlocal funnel_metrics, activity, questions, operator_events, summary_reports, report_source, historical_version
         nonlocal fallback_reason, activity_reason
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
@@ -385,11 +396,11 @@ async def analytics_dashboard(
         if company_id is not None and not state.knowledge_base_resolver.client_exists(company_id):
             fallback_reason = "company_unavailable"
             return
-        engine, version, generation, _, historical = source
+        engine, version, generation, _, historical, _ = source
         if historical is None:
             activity_reason = "rollup_snapshot_unavailable"
-        if not _analytics_version_matches(analytics_service.analytics_file, version):
-            fallback_reason = "events_snapshot_stale"
+        fallback_reason = _events_snapshot_issue(analytics_service.analytics_file, source, settings)
+        if fallback_reason:
             return
         source_args = dict(company_id=company_id, path=analytics_service.analytics_file,
                            version=version, generation=generation)
@@ -419,14 +430,14 @@ async def analytics_dashboard(
                     operator_events = await _sql_operator_events(
                         analytics_service, source, company_id, start=activity_start, end=end,
                     )
-                if settings.analytics_sql_summary_enabled and _analytics_version_matches(analytics_service.analytics_file, version):
+                if settings.analytics_sql_summary_enabled:
                     from ..storage.postgres_summary import load_summary_reports
 
                     summary_reports = await load_summary_reports(
                         engine, company_id=company_id, generation=generation, limit=10,
                         trend=(trend_start, trend_end), comparison=None if custom_range else (now, days),
                     )
-                report_version = version
+                report_source = source
         except Exception as error:
             funnel_metrics = activity = questions = operator_events = summary_reports = None
             fallback_reason = "sql_timeout" if isinstance(error, TimeoutError) else "sql_error"
@@ -435,9 +446,12 @@ async def analytics_dashboard(
     def build() -> dict:
         reports = (funnel_metrics, activity, questions, operator_events, summary_reports)
         reason = fallback_reason
-        if report_version is not None and not _analytics_version_matches(analytics_service.analytics_file, report_version):
-            reports = (None,) * len(reports)
-            reason = "events_snapshot_stale"
+        if report_source is not None:
+            reason = _events_snapshot_issue(analytics_service.analytics_file, report_source, settings)
+            if reason is None and request.app.state.analytics_funnel_source is not report_source:
+                reason = "snapshot_changed_during_report"
+            if reason is not None:
+                reports = (None,) * len(reports)
         metrics, activity_counts, question_reports, handovers, overview = reports
         rollup_reason = activity_reason
         if activity_counts is not None:
@@ -492,6 +506,7 @@ async def analytics_dashboard(
                 "event_source": event_source,
                 "event_sources": event_sources,
                 "event_fallback_reasons": fallback_reasons,
+                "event_snapshot_at": report_source[5].isoformat() if event_source != "jsonl" else None,
                 "summary": analytics_service.summary(
                     sessions=sessions, company_id=company_id, limit=10,
                     event_summary=overview["summary"] if overview is not None else None,

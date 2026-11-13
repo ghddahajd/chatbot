@@ -373,16 +373,18 @@ def check_analytics(settings: Any, source=None) -> dict[str, Any]:
 
     sync_enabled = getattr(settings, "analytics_sync_enabled", False)
     source_current = False
+    source_usable = False
     if sync_enabled and source is not None:
-        from .analytics import analytics_file_version
+        from .analytics import analytics_file_version, analytics_snapshot_matches
         from .storage.postgres_rollup import rollup_version
 
         try:
             historical = source[4]
+            rollup_current = historical is not None and rollup_version(settings.analytics_rollup_file) == historical[0]
+            recent = time.time() - source[5].timestamp() <= 2 * settings.analytics_sync_interval_seconds
+            source_usable = recent and rollup_current and analytics_snapshot_matches(path, source[1])
             source_current = (
-                analytics_file_version(path) == source[1]
-                and historical is not None
-                and rollup_version(settings.analytics_rollup_file) == historical[0]
+                source_usable and analytics_file_version(path) == source[1]
             )
         except OSError:
             pass
@@ -392,7 +394,9 @@ def check_analytics(settings: Any, source=None) -> dict[str, Any]:
     elif sync_enabled:
         if source_current and source[3]:
             status, detail = "ok", "события аналитики синхронизированы с PostgreSQL"
-        elif source_current:
+        elif source_usable and source[3]:
+            status, detail = "ok", "SQL-снимок доступен, новые события ждут догрузки"
+        elif source_usable:
             status, detail = "degraded", "часть событий без идентификатора клиники, общий отчёт читает JSONL"
         else:
             status, detail = "degraded", "SQL-снимок аналитики ещё не готов или отстаёт от JSONL"
@@ -410,6 +414,7 @@ def check_analytics(settings: Any, source=None) -> dict[str, Any]:
         size_mb=size_mb,
         last_event_at=_iso(last_at) if last_at else None,
         postgres_snapshot_current=source_current,
+        postgres_snapshot_usable=source_usable,
     )
 
 

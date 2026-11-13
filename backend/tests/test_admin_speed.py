@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app import analytics
 from app.analytics import AnalyticsService
@@ -51,10 +51,21 @@ def test_dashboard_reports_missing_and_stale_snapshot(test_client, monkeypatch) 
     assert result["event_source"] == "jsonl"
     assert result["event_fallback_reasons"]["funnel"] == "snapshot_unavailable"
 
-    monkeypatch.setattr(state, "analytics_funnel_source", (None, (-1, -1, -1, -1), None, True, None))
+    monkeypatch.setattr(state, "analytics_funnel_source",
+                        (None, (-1, -1, -1, -1), None, True, None, datetime.now(timezone.utc)))
     result = diagnostics()
     assert result["event_source"] == "jsonl"
     assert result["event_fallback_reasons"]["funnel"] == "events_snapshot_stale"
+
+    path = state.analytics_service.analytics_file
+    append_jsonl(path, {"event_type": "chat_opened"})
+    expired = datetime.now(timezone.utc) - timedelta(seconds=2 * state.settings.analytics_sync_interval_seconds + 1)
+    monkeypatch.setattr(state, "analytics_funnel_source",
+                        (None, analytics.analytics_file_version(path), None, True, None, expired))
+    result = diagnostics()
+    assert result["event_source"] == "jsonl"
+    assert result["event_fallback_reasons"]["funnel"] == "events_snapshot_expired"
+    assert result["event_snapshot_at"] is None
 
 
 def test_chat_answers_while_dashboard_is_counting(test_client, monkeypatch) -> None:

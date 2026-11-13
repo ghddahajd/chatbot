@@ -5,12 +5,12 @@ from datetime import timezone
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 
-from ..analytics import analytics_file_version
+from ..analytics import analytics_snapshot_matches
 from ..db.analytics_models import analytics_events
 
 
 async def load_question_reports(engine, *, company_id, start, end, path, version, generation):
-    if analytics_file_version(path) != version:
+    if not analytics_snapshot_matches(path, version):
         return None
     c = analytics_events.c
     scope = [
@@ -47,4 +47,4 @@ async def load_question_reports(engine, *, company_id, start, end, path, version
             )
             breakdown[report] = [dict(row) for row in rows.mappings()]
 
-    return breakdown if analytics_file_version(path) == version else None
+    return breakdown if analytics_snapshot_matches(path, version) else None

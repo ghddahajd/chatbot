@@ -44,12 +44,13 @@ def snapshot_rows(handle, tenants):
                 question = str(row.get("message") or "").strip() or None
             category_field = {"message_answered": "policy_reason", "objection_raised": "objection_topic"}.get(event_type)
             category = str(metadata.get(category_field) or "unknown") if category_field else None
+            claimed_by = str(metadata.get("claimed_by") or "unknown") if event_type == "operator_claimed" else None
             yield dict(
                 tenant_id=tenant_id, event_key=event_key,
                 occurred_at=timestamp.replace(tzinfo=timezone.utc), event_type=event_type,
                 session_id=session_id, page=page, visitor_id=str(metadata.get("visitor_id") or "") or None,
                 file_position=number, question=question, question_key=question.lower() if question else None,
-                category=category,
+                category=category, claimed_by=claimed_by,
             )
         except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
             raise ValueError(f"invalid_event_at_line:{number}") from None
@@ -66,7 +67,7 @@ async def insert_events(connection, rows, *, generation=None):
         statement = statement.on_conflict_do_update(
             index_elements=list(analytics_events.primary_key),
             set_={name: statement.excluded[name] for name in (
-                "file_generation", "file_position", "question", "question_key", "category",
+                "file_generation", "file_position", "question", "question_key", "category", "claimed_by",
             )},
             where=analytics_events.c.file_generation.is_distinct_from(generation),
         )

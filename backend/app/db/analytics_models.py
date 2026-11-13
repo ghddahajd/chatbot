@@ -19,5 +19,6 @@ analytics_events = sa.Table(
     sa.Column("question", sa.Text),
     sa.Column("question_key", sa.Text),
     sa.Column("category", sa.Text),
+    sa.Column("claimed_by", sa.Text),
 )
 sa.Index("ix_analytics_events_tenant_time", analytics_events.c.tenant_id, analytics_events.c.occurred_at)

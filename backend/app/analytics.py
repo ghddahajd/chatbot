@@ -374,6 +374,7 @@ class AnalyticsService:
         *,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        operator_events: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Аналитика "по манагерам" (2026-08-27) — считает operator_claimed/operator_closed
         события (см. telegram_bridge._track_operator_event) и attribute'ит лиды к оператору
@@ -385,7 +386,7 @@ class AnalyticsService:
         кастомный период) — явные границы, побеждают days, если заданы."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        all_events = self._events()
+        all_events = self._events() if operator_events is None else operator_events
         events = _within_range(all_events, start=range_start, end=range_end, company_id=company_id)
         claims = [event for event in events if event.get("event_type") == "operator_claimed"]
         # closes/leads: живой баг (код-ревью, 2026-08-27) — раньше closes и leads фильтровались
@@ -1090,6 +1091,7 @@ class AnalyticsService:
         *,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        operator_events: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Сколько реально ждут оператора — от operator_requested (клиент попросил) до
         operator_claimed (кто-то взял в работу). Не путать с avg_dialog_minutes в
@@ -1098,7 +1100,8 @@ class AnalyticsService:
         работает на любом окне, включая "всё время" (days=None)."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
+        source = self._events() if operator_events is None else operator_events
+        events = _within_range(source, start=range_start, end=range_end, company_id=company_id)
 
         requested_at_by_session: dict[str, datetime] = {}
         for event in events:

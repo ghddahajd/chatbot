@@ -121,9 +121,45 @@ async def analytics_operators(
 ) -> dict:
     company_id = await authorize_company(request, x_operator_token, company_id)
     service = request.app.state.analytics_service
+    source = None
+    events = None
+
+    async def prepare():
+        nonlocal source, events
+        source = getattr(request.app.state, "analytics_funnel_source", None)
+        if company_id is None or not source or not request.app.state.settings.analytics_sql_operators_enabled:
+            return
+        try:
+            async with asyncio.timeout(1):
+                events = await _sql_operator_events(service, source, company_id)
+        except Exception as error:
+            logger.warning("SQL operators fallback error=%s", type(error).__name__)
+
+    def build():
+        if events is not None and _analytics_version_matches(service.analytics_file, source[1]):
+            return service.operator_summary(company_id=company_id, operator_events=events)
+        return service.operator_summary(company_id=company_id)
+
     return await service.runner.report(
-        service, ("operators", company_id), lambda: service.operator_summary(company_id=company_id),
-        company_id=company_id, leads=True, events=True,
+        service, ("operators", company_id), build,
+        company_id=company_id, leads=True, before_build=prepare,
+    )
+
+
+def _analytics_version_matches(path, version):
+    try:
+        return analytics_file_version(path) == version
+    except OSError:
+        return False
+
+
+async def _sql_operator_events(service, source, company_id, *, start=None, end=None):
+    from ..storage.postgres_operators import load_operator_events
+
+    engine, version, generation = source
+    return await load_operator_events(
+        engine, company_id=company_id, start=start, end=end,
+        path=service.analytics_file, version=version, generation=generation,
     )
 
 
@@ -294,11 +330,11 @@ async def analytics_dashboard(
 
     timezone_name = _company_timezone(request, company_id)
     activity_start = start if start is not None else datetime.utcnow() - timedelta(days=days)
-    funnel_metrics = activity = questions = None
+    funnel_metrics = activity = questions = operator_events = None
     report_version = None
 
     async def prepare_sql_reports():
-        nonlocal funnel_metrics, activity, questions, report_version
+        nonlocal funnel_metrics, activity, questions, operator_events, report_version
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
         settings = state.settings
@@ -327,24 +363,22 @@ async def analytics_dashboard(
                     questions = await load_question_reports(
                         engine, start=activity_start, end=end, **source_args,
                     )
+                if settings.analytics_sql_operators_enabled:
+                    operator_events = await _sql_operator_events(
+                        analytics_service, source, company_id, start=activity_start, end=end,
+                    )
                 report_version = version
         except Exception as error:
-            funnel_metrics = activity = questions = None
+            funnel_metrics = activity = questions = operator_events = None
             logger.warning("SQL analytics fallback error=%s", type(error).__name__)
 
     # полтора десятка подсчётов по файлу событий (~18 МБ на проде) — в своём потоке и с одним разбором
     # файла на всех: иначе всё это время стоят ответы чата посетителям
     def build() -> dict:
         with analytics_service.events_snapshot():
-            metrics = funnel_metrics
-            activity_counts = activity
-            question_reports = questions
-            if metrics is not None or activity_counts is not None or question_reports is not None:
-                try:
-                    if analytics_file_version(analytics_service.analytics_file) != report_version:
-                        metrics = activity_counts = question_reports = None
-                except OSError:
-                    metrics = activity_counts = question_reports = None
+            metrics = activity_counts = question_reports = handovers = None
+            if report_version is not None and _analytics_version_matches(analytics_service.analytics_file, report_version):
+                metrics, activity_counts, question_reports, handovers = funnel_metrics, activity, questions, operator_events
             hours, weekdays = activity_counts if activity_counts is not None else (None, None)
             if question_reports is None:
                 question_reports = {
@@ -371,7 +405,7 @@ async def analytics_dashboard(
                 "range_label": range_label,
                 "summary": analytics_service.summary(sessions=sessions, company_id=company_id, limit=10),
                 "operators": analytics_service.operator_summary(
-                    company_id=company_id, days=days, start=start, end=end
+                    company_id=company_id, start=activity_start, end=end, operator_events=handovers,
                 )["operators"],
                 "leads_by_month": analytics_service.leads_by_month(company_id=company_id),
                 "leads_by_reason": analytics_service.leads_by_reason(
@@ -396,7 +430,7 @@ async def analytics_dashboard(
                 ),
                 "timezone": timezone_name,
                 "queue_wait": analytics_service.queue_wait_stats(
-                    company_id=company_id, days=days, start=start, end=end
+                    company_id=company_id, start=activity_start, end=end, operator_events=handovers,
                 ),
                 # period_comparison сравнивает "N дней vs предыдущие N дней ОТ СЕГОДНЯ" — для
                 # кастомного периода (не обязательно кончающегося сегодня) это дало бы честно

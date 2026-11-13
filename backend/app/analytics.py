@@ -304,6 +304,7 @@ class AnalyticsService:
         sessions: list[Session],
         company_id: Optional[str] = None,
         limit: int = 20,
+        event_summary: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         filtered_sessions = [
             session for session in sessions if company_id is None or session.company_id == company_id
@@ -313,15 +314,33 @@ class AnalyticsService:
             for lead in self._new_client_leads()
             if company_id is None or lead.get("company_id") == company_id
         ]
+        if event_summary is None:
+            event_summary = self._event_summary(company_id, limit)
+
+        sessions_by_status = Counter(session.status.value for session in filtered_sessions)
+        sessions_by_company = Counter(session.company_id for session in filtered_sessions)
+        leads_by_company = Counter(str(lead.get("company_id") or "legacy") for lead in leads)
+        return {
+            "company_id": company_id,
+            "sessions": {
+                "total": len(filtered_sessions),
+                "by_status": dict(sessions_by_status),
+                "by_company": dict(sessions_by_company),
+                "operator_requested": sum(1 for session in filtered_sessions if session.operator_requested),
+                "lead_requested": sum(1 for session in filtered_sessions if session.lead_requested),
+                "messages_total": sum(len(session.messages) for session in filtered_sessions),
+            },
+            "leads": {"total": len(leads), "by_company": dict(leads_by_company)},
+            **event_summary,
+        }
+
+    def _event_summary(self, company_id, limit):
         events = [
             event
             for event in self._events()
             if company_id is None or event.get("company_id") == company_id
         ]
 
-        sessions_by_status = Counter(session.status.value for session in filtered_sessions)
-        sessions_by_company = Counter(session.company_id for session in filtered_sessions)
-        leads_by_company = Counter(str(lead.get("company_id") or "legacy") for lead in leads)
         events_by_type = Counter(str(event.get("event_type") or "unknown") for event in events)
         events_by_company: dict[str, Counter[str]] = defaultdict(Counter)
         for event in events:
@@ -343,19 +362,6 @@ class AnalyticsService:
         ][:limit]
 
         return {
-            "company_id": company_id,
-            "sessions": {
-                "total": len(filtered_sessions),
-                "by_status": dict(sessions_by_status),
-                "by_company": dict(sessions_by_company),
-                "operator_requested": sum(1 for session in filtered_sessions if session.operator_requested),
-                "lead_requested": sum(1 for session in filtered_sessions if session.lead_requested),
-                "messages_total": sum(len(session.messages) for session in filtered_sessions),
-            },
-            "leads": {
-                "total": len(leads),
-                "by_company": dict(leads_by_company),
-            },
             "events": {
                 "total": len(events),
                 "by_type": dict(events_by_type),
@@ -870,6 +876,7 @@ class AnalyticsService:
         *,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
+        event_counts: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
         """Дневная динамика unknown_question — растёт база знаний или деградирует. Не
         подчиняется MESSAGE_RETENTION_EVENT_TYPES (хранится вечно), так что честно работает и
@@ -891,14 +898,12 @@ class AnalyticsService:
             range_end = now
             range_start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
-        counts: Counter[str] = Counter()
-        for event in events:
-            if event.get("event_type") != "unknown_question":
-                continue
-            day_key = str(event.get("timestamp") or "")[:10]
-            if day_key:
-                counts[day_key] += 1
+        counts = event_counts
+        if counts is None:
+            events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
+            counts = Counter(
+                str(event["timestamp"])[:10] for event in events if event.get("event_type") == "unknown_question"
+            )
 
         result: list[dict[str, Any]] = []
         day = range_start.date()
@@ -1140,13 +1145,16 @@ class AnalyticsService:
             "sample_size": len(waits_minutes),
         }
 
-    def period_comparison(self, company_id: Optional[str] = None, days: int = 30) -> dict[str, Any]:
+    def period_comparison(
+        self, company_id: Optional[str] = None, days: int = 30, *,
+        now: datetime | None = None, conversation_counts: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
         """Текущий период vs такой же по длине предыдущий — для дельт на плитках ("+12% к
         прошлому периоду"). Не про воронку и не ограничено её более коротким safety-окном —
         conversations/leads тут те же самые, что даёт conversion_funnel, посчитанные дважды
         на два смежных отрезка."""
 
-        now = datetime.utcnow()
+        now = now if now is not None else datetime.utcnow()
         current_start = now - timedelta(days=days)
         previous_start = now - timedelta(days=days * 2)
         # Живой баг (код-ревью, 2026-08-27): conversations джойнит message_answered по
@@ -1181,13 +1189,15 @@ class AnalyticsService:
                 }
             )
 
-        all_events = self._events()
         all_leads = self._new_client_leads()
 
-        current_conversations = _conversations(_in_range(all_events, conversation_current_start, now))
-        previous_conversations = _conversations(
-            _in_range(all_events, conversation_previous_start, conversation_current_start)
-        )
+        if conversation_counts is None:
+            all_events = self._events()
+            conversation_counts = (
+                _conversations(_in_range(all_events, conversation_current_start, now)),
+                _conversations(_in_range(all_events, conversation_previous_start, conversation_current_start)),
+            )
+        current_conversations, previous_conversations = conversation_counts
         current_leads = len(_in_range(all_leads, current_start, now))
         previous_leads = len(_in_range(all_leads, previous_start, current_start))
 

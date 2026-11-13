@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
+from contextlib import nullcontext
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -106,10 +107,31 @@ async def analytics_summary(
     company_id = await authorize_company(request, x_operator_token, company_id)
     sessions = await request.app.state.session_store.list_all()
     service = request.app.state.analytics_service
+    event_summary = version = None
+
+    async def prepare():
+        nonlocal event_summary, version
+        state = request.app.state
+        source = getattr(state, "analytics_funnel_source", None)
+        if company_id is None or not source or not state.settings.analytics_sql_summary_enabled:
+            return
+        engine, version, generation = source
+        try:
+            async with asyncio.timeout(1):
+                from ..storage.postgres_summary import load_summary_reports
+
+                reports = await load_summary_reports(engine, company_id=company_id, generation=generation, limit=limit)
+                if reports is not None:
+                    event_summary = reports["summary"]
+        except Exception as error:
+            logger.warning("SQL summary fallback error=%s", type(error).__name__)
+
+    def build():
+        metrics = event_summary if event_summary is not None and _analytics_version_matches(service.analytics_file, version) else None
+        return service.summary(sessions=sessions, company_id=company_id, limit=limit, event_summary=metrics)
+
     return await service.runner.report(
-        service, ("summary", company_id, limit),
-        lambda: service.summary(sessions=sessions, company_id=company_id, limit=limit),
-        company_id=company_id, leads=True, events=True,
+        service, ("summary", company_id, limit), build, company_id=company_id, leads=True, before_build=prepare,
     )
 
 
@@ -314,6 +336,7 @@ async def analytics_dashboard(
     # пользователь), а не просто "days" — иначе воронка молча съезжает на другие даты.
     funnel_days = min(days, 55)
     trend_days = min(days, 30)
+    now = datetime.utcnow()
     if custom_range:
         # Живой баг (код-ревью, 2026-08-30): раньше клэмп считался как `end - timedelta(...)`
         # НАПРЯМУЮ от end — а end это datetime.combine(end_date, time.max), т.е. 23:59:59.999999.
@@ -325,20 +348,22 @@ async def analytics_dashboard(
         trend_clamp_date = max(start.date(), end.date() - timedelta(days=29))
         trend_start, trend_end = datetime.combine(trend_clamp_date, time.min), end
     else:
-        funnel_start = datetime.utcnow() - timedelta(days=funnel_days)
-        funnel_end = trend_start = trend_end = None
+        funnel_start = now - timedelta(days=funnel_days)
+        funnel_end = None
+        trend_start = datetime.combine(now.date() - timedelta(days=trend_days - 1), time.min)
+        trend_end = now
 
     timezone_name = _company_timezone(request, company_id)
-    activity_start = start if start is not None else datetime.utcnow() - timedelta(days=days)
-    funnel_metrics = activity = questions = operator_events = None
+    activity_start = start if start is not None else now - timedelta(days=days)
+    funnel_metrics = activity = questions = operator_events = summary_reports = None
     report_version = None
 
     async def prepare_sql_reports():
-        nonlocal funnel_metrics, activity, questions, operator_events, report_version
+        nonlocal funnel_metrics, activity, questions, operator_events, summary_reports, report_version
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
         settings = state.settings
-        if not source or company_id is None:
+        if not source or company_id is None or not state.knowledge_base_resolver.client_exists(company_id):
             return
         engine, version, generation = source
         source_args = dict(company_id=company_id, path=analytics_service.analytics_file,
@@ -367,18 +392,24 @@ async def analytics_dashboard(
                     operator_events = await _sql_operator_events(
                         analytics_service, source, company_id, start=activity_start, end=end,
                     )
+                if settings.analytics_sql_summary_enabled and _analytics_version_matches(analytics_service.analytics_file, version):
+                    from ..storage.postgres_summary import load_summary_reports
+
+                    summary_reports = await load_summary_reports(
+                        engine, company_id=company_id, generation=generation, limit=10,
+                        trend=(trend_start, trend_end), comparison=None if custom_range else (now, days),
+                    )
                 report_version = version
         except Exception as error:
-            funnel_metrics = activity = questions = operator_events = None
+            funnel_metrics = activity = questions = operator_events = summary_reports = None
             logger.warning("SQL analytics fallback error=%s", type(error).__name__)
 
-    # полтора десятка подсчётов по файлу событий (~18 МБ на проде) — в своём потоке и с одним разбором
-    # файла на всех: иначе всё это время стоят ответы чата посетителям
     def build() -> dict:
-        with analytics_service.events_snapshot():
-            metrics = activity_counts = question_reports = handovers = None
-            if report_version is not None and _analytics_version_matches(analytics_service.analytics_file, report_version):
-                metrics, activity_counts, question_reports, handovers = funnel_metrics, activity, questions, operator_events
+        reports = (funnel_metrics, activity, questions, operator_events, summary_reports)
+        if report_version is None or not _analytics_version_matches(analytics_service.analytics_file, report_version):
+            reports = (None,) * len(reports)
+        metrics, activity_counts, question_reports, handovers, overview = reports
+        with analytics_service.events_snapshot() if any(report is None for report in reports) else nullcontext():
             hours, weekdays = activity_counts if activity_counts is not None else (None, None)
             if question_reports is None:
                 question_reports = {
@@ -403,7 +434,10 @@ async def analytics_dashboard(
                 "company_id": company_id,
                 "days": days if not custom_range else None,
                 "range_label": range_label,
-                "summary": analytics_service.summary(sessions=sessions, company_id=company_id, limit=10),
+                "summary": analytics_service.summary(
+                    sessions=sessions, company_id=company_id, limit=10,
+                    event_summary=overview["summary"] if overview is not None else None,
+                ),
                 "operators": analytics_service.operator_summary(
                     company_id=company_id, start=activity_start, end=end, operator_events=handovers,
                 )["operators"],
@@ -417,7 +451,8 @@ async def analytics_dashboard(
                     event_metrics=metrics,
                 ),
                 "unanswered_trend": analytics_service.unanswered_trend(
-                    company_id=company_id, days=trend_days, start=trend_start, end=trend_end
+                    company_id=company_id, days=trend_days, start=trend_start, end=trend_end,
+                    event_counts=overview["trend"] if overview is not None else None,
                 ),
                 **question_reports,
                 "activity_by_hour": analytics_service.activity_by_hour(
@@ -436,7 +471,10 @@ async def analytics_dashboard(
                 # кастомного периода (не обязательно кончающегося сегодня) это дало бы честно
                 # выглядящее, но неверное число. Лучше не показать бейдж дельты вообще, чем соврать.
                 "period_comparison": (
-                    analytics_service.period_comparison(company_id=company_id, days=days) if not custom_range else None
+                    analytics_service.period_comparison(
+                        company_id=company_id, days=days, now=now,
+                        conversation_counts=overview["comparison"] if overview is not None else None,
+                    ) if not custom_range else None
                 ),
             }
 

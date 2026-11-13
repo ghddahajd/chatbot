@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     analytics_sql_activity_enabled: bool = False
     analytics_sql_questions_enabled: bool = False
     analytics_sql_operators_enabled: bool = False
+    analytics_sql_summary_enabled: bool = False
     analytics_sync_interval_seconds: int = Field(default=300, ge=1)
     # сторож: сам прогоняет проверки preflight и пишет нам о переходах «в порядке ↔ проблема»;
     # проблема должна продержаться watchdog_confirm_runs прогонов подряд — разовый сбой сети не будит

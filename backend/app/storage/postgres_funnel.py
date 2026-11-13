@@ -1,15 +1,14 @@
-"""Read event metrics from one imported snapshot for one clinic and period."""
+"""Read event metrics for one clinic and period."""
 
 import sqlalchemy as sa
 
 from ..db.analytics_models import analytics_events
 
 
-async def funnel_events(connection, *, tenant_id, snapshot_sha256, start, end):
+async def funnel_events(connection, *, tenant_id, start, end):
     columns = analytics_events.c
     scope = (
         columns.tenant_id == tenant_id,
-        columns.snapshot_sha256 == snapshot_sha256,
         columns.occurred_at.between(start, end),
     )
     counts = await connection.execute(

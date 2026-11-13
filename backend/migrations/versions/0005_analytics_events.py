@@ -14,8 +14,7 @@ def upgrade():
     op.create_table(
         "analytics_events",
         sa.Column("tenant_id", UUID(as_uuid=True), sa.ForeignKey("tenants.id"), primary_key=True),
-        sa.Column("snapshot_sha256", sa.String(64), primary_key=True),
-        sa.Column("line_number", sa.BigInteger, primary_key=True),
+        sa.Column("event_key", sa.Text, primary_key=True),
         sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("event_type", sa.Text, nullable=False),
         sa.Column("session_id", sa.Text),

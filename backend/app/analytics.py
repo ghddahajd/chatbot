@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator, Optional
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .hours import _resolve_timezone
@@ -202,6 +203,7 @@ class AnalyticsService:
     ) -> None:
         self.analytics_file.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "event_id": str(uuid4()),
             "timestamp": datetime.utcnow().isoformat(),
             "company_id": company_id,
             "session_id": session_id,

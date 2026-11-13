@@ -1,19 +1,23 @@
-"""Import a frozen JSONL snapshot and compare its event funnel offline."""
+"""Import analytics from a frozen JSONL copy and optionally compare the funnel."""
 
 import argparse
 import asyncio
+from collections import Counter
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
-from hashlib import file_digest
+from hashlib import file_digest, sha256
 from itertools import batched
 import json
 from pathlib import Path
 import sys
 from time import perf_counter
+from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-def snapshot_rows(handle, tenant_id, company_id, digest):
+
+def snapshot_rows(handle, tenant_id, company_id):
+    occurrences = Counter()
     for number, raw in enumerate(handle, 1):
         if not raw.strip():
             continue
@@ -34,12 +38,20 @@ def snapshot_rows(handle, tenant_id, company_id, digest):
             if (session_id is not None and not isinstance(session_id, str)
                     or page is not None and not isinstance(page, str)):
                 raise ValueError
+            if "event_id" in row:
+                event_key = f"id:{UUID(row['event_id'])}"
+            else:
+                # Legacy events can be identical. Keep their multiplicity across rewrites.
+                canonical = json.dumps(row, sort_keys=True, separators=(",", ":"), allow_nan=False)
+                fingerprint = sha256(canonical.encode("ascii")).hexdigest()
+                occurrences[fingerprint] += 1
+                event_key = f"legacy:{fingerprint}:{occurrences[fingerprint]}"
             yield dict(
-                tenant_id=tenant_id, snapshot_sha256=digest, line_number=number,
+                tenant_id=tenant_id, event_key=event_key,
                 occurred_at=timestamp.replace(tzinfo=timezone.utc), event_type=event_type,
                 session_id=session_id, page=page, visitor_id=str(metadata.get("visitor_id") or "") or None,
             )
-        except (TypeError, ValueError, KeyError):
+        except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
             raise ValueError(f"invalid_event_at_line:{number}") from None
 
 
@@ -90,19 +102,18 @@ async def run(args):
             if tenant_id is None:
                 raise ValueError("unknown_company")
             selected = inserted = 0
-            for batch in batched(snapshot_rows(handle, tenant_id, args.company, digest), 1000):
+            for batch in batched(snapshot_rows(handle, tenant_id, args.company), 1000):
                 selected += len(batch)
                 if args.apply:
-                    stmt = insert(analytics_events).on_conflict_do_nothing().returning(analytics_events.c.line_number)
+                    stmt = insert(analytics_events).on_conflict_do_nothing().returning(analytics_events.c.event_key)
                     inserted += len((await connection.execute(stmt, list(batch))).all())
             if not selected:
                 raise ValueError("no_company_events")
             report = {"selected": selected, "inserted": inserted, "mode": "apply" if args.apply else "dry-run"}
-            if args.apply:
-                await connection.execute(sa.text("ANALYZE analytics_events"))
+            if args.apply and args.start is not None:
                 sql_start = perf_counter()
                 actual = project_metrics(*await funnel_events(
-                    connection, tenant_id=tenant_id, snapshot_sha256=digest,
+                    connection, tenant_id=tenant_id,
                     start=args.start.replace(tzinfo=timezone.utc), end=args.end.replace(tzinfo=timezone.utc),
                 ))
                 report["sql_ms"] = round((perf_counter() - sql_start) * 1000, 2)
@@ -130,14 +141,17 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", required=True, type=Path)
-    parser.add_argument("--leads", required=True, type=Path)
+    parser.add_argument("--leads", type=Path)
     parser.add_argument("--company", required=True)
-    parser.add_argument("--start", required=True, type=datetime.fromisoformat)
-    parser.add_argument("--end", required=True, type=datetime.fromisoformat)
+    parser.add_argument("--start", type=datetime.fromisoformat)
+    parser.add_argument("--end", type=datetime.fromisoformat)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
-    if args.start.tzinfo is not None or args.end.tzinfo is not None or args.start > args.end:
-        parser.error("Provide ordered UTC timestamps without an offset, as stored in JSONL")
+    if any(value is not None for value in (args.start, args.end, args.leads)):
+        if args.start is None or args.end is None or args.leads is None:
+            parser.error("Funnel comparison needs --start, --end and --leads")
+        if args.start.tzinfo is not None or args.end.tzinfo is not None or args.start > args.end:
+            parser.error("Provide ordered UTC timestamps without an offset, as stored in JSONL")
     try:
         print(json.dumps(asyncio.run(run(args))))
     except ValueError as error:

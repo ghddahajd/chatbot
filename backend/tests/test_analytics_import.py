@@ -1,9 +1,12 @@
 import io
 import json
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from app.utils.jsonl import read_jsonl
-from backend.scripts.check_analytics_import import snapshot_rows
+from app.storage.analytics_import import snapshot_rows
+from app.analytics import analytics_file_version, archive_old_analytics_events
+from app.utils.jsonl import append_jsonl
 
 
 def test_event_keys_survive_append_and_rewrite():
@@ -14,7 +17,7 @@ def test_event_keys_survive_append_and_rewrite():
 
     def keys(*events, sort_keys=False):
         source = io.StringIO("".join(json.dumps(row, sort_keys=sort_keys) + "\n" for row in events))
-        return [row["event_key"] for row in snapshot_rows(source, tenant, "clinic")]
+        return [row["event_key"] for row in snapshot_rows(source, {"clinic": tenant})]
 
     first = keys(old, repeated, repeated)
     appended = keys(old, repeated, repeated, new)
@@ -32,3 +35,25 @@ def test_chat_writes_analytics_without_analytics_database(test_client, monkeypat
     events = [event for event in read_jsonl(analytics_file) if event["event_type"] == "message_answered"]
     assert len(events) == 1
     assert UUID(events[0]["event_id"]).version == 4
+
+
+def test_prune_waits_for_new_file_version_and_preserves_unknown_clinic(tmp_path):
+    events = tmp_path / "analytics.jsonl"
+    rollup = tmp_path / "rollup.jsonl"
+    timestamp = (datetime.now(timezone.utc) - timedelta(days=65)).replace(tzinfo=None).isoformat()
+    old = {"company_id": "clinic", "timestamp": timestamp, "event_type": "widget_impression"}
+    unknown = {**old, "company_id": "unknown"}
+    append_jsonl(events, old)
+    before_append = analytics_file_version(events)
+    append_jsonl(events, unknown)
+    assert archive_old_analytics_events(
+        events, rollup, 60, synced_version=before_append, synced_companies={"clinic"},
+    ) == 0
+    assert read_jsonl(events) == [old, unknown]
+    assert not rollup.exists()
+
+    assert archive_old_analytics_events(
+        events, rollup, 60, synced_version=analytics_file_version(events), synced_companies={"clinic"},
+    ) == 1
+    assert read_jsonl(events) == [unknown]
+    assert len(read_jsonl(rollup)) == 1

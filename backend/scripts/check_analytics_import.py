@@ -2,57 +2,18 @@
 
 import argparse
 import asyncio
-from collections import Counter
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
-from hashlib import file_digest, sha256
-from itertools import batched
+from hashlib import file_digest
 import json
 from pathlib import Path
 import sys
 from time import perf_counter
-from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def snapshot_rows(handle, tenant_id, company_id):
-    occurrences = Counter()
-    for number, raw in enumerate(handle, 1):
-        if not raw.strip():
-            continue
-        try:
-            row = json.loads(raw)
-            if not isinstance(row, dict):
-                raise ValueError
-            if row.get("company_id") != company_id:
-                continue
-            timestamp = datetime.fromisoformat(row["timestamp"])
-            event_type = row["event_type"]
-            if timestamp.tzinfo is not None or not isinstance(event_type, str) or not event_type:
-                raise ValueError
-            metadata = row.get("metadata")
-            metadata = metadata if isinstance(metadata, dict) else {}
-            session_id = row.get("session_id") or None
-            page = metadata.get("page") or None
-            if (session_id is not None and not isinstance(session_id, str)
-                    or page is not None and not isinstance(page, str)):
-                raise ValueError
-            if "event_id" in row:
-                event_key = f"id:{UUID(row['event_id'])}"
-            else:
-                # Legacy events can be identical. Keep their multiplicity across rewrites.
-                canonical = json.dumps(row, sort_keys=True, separators=(",", ":"), allow_nan=False)
-                fingerprint = sha256(canonical.encode("ascii")).hexdigest()
-                occurrences[fingerprint] += 1
-                event_key = f"legacy:{fingerprint}:{occurrences[fingerprint]}"
-            yield dict(
-                tenant_id=tenant_id, event_key=event_key,
-                occurred_at=timestamp.replace(tzinfo=timezone.utc), event_type=event_type,
-                session_id=session_id, page=page, visitor_id=str(metadata.get("visitor_id") or "") or None,
-            )
-        except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
-            raise ValueError(f"invalid_event_at_line:{number}") from None
+from app.storage.analytics_import import insert_events, snapshot_rows
 
 
 def project_metrics(counts, pages):
@@ -83,10 +44,8 @@ def project_metrics(counts, pages):
 
 async def run(args):
     import sqlalchemy as sa
-    from sqlalchemy.dialects.postgresql import insert
 
     from app.analytics import AnalyticsService
-    from app.db.analytics_models import analytics_events
     from app.db.connection import make_engine
     from app.db.models import Tenant
     from app.storage.postgres_funnel import funnel_events
@@ -101,15 +60,11 @@ async def run(args):
             tenant_id = await connection.scalar(sa.select(Tenant.id).where(Tenant.company_id == args.company))
             if tenant_id is None:
                 raise ValueError("unknown_company")
-            selected = inserted = 0
-            for batch in batched(snapshot_rows(handle, tenant_id, args.company), 1000):
-                selected += len(batch)
-                if args.apply:
-                    stmt = insert(analytics_events).on_conflict_do_nothing().returning(analytics_events.c.event_key)
-                    inserted += len((await connection.execute(stmt, list(batch))).all())
-            if not selected:
+            rows = list(snapshot_rows(handle, {args.company: tenant_id}))
+            if not rows:
                 raise ValueError("no_company_events")
-            report = {"selected": selected, "inserted": inserted, "mode": "apply" if args.apply else "dry-run"}
+            inserted = await insert_events(connection, rows) if args.apply else 0
+            report = {"selected": len(rows), "inserted": inserted, "mode": "apply" if args.apply else "dry-run"}
             if args.apply and args.start is not None:
                 sql_start = perf_counter()
                 actual = project_metrics(*await funnel_events(

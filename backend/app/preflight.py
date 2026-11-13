@@ -67,6 +67,7 @@ BACKGROUND_TASKS = (
     ("telegram_polling", "telegram_bridge_enabled"),
     ("leads_archive", "leads_archive_enabled"),
     ("analytics_prune", "analytics_prune_enabled"),
+    ("analytics_sync", "analytics_sync_enabled"),
     ("watchdog", "watchdog_enabled"),
     ("ops_bot", "ops_commands_enabled"),
 )
@@ -458,6 +459,9 @@ def check_background_tasks(app: FastAPI) -> dict[str, Any]:
     bridge = getattr(app.state, "telegram_bridge_service", None)
     tasks: list[dict[str, Any]] = []
     for name, flag in BACKGROUND_TASKS:
+        if name == "analytics_prune" and getattr(settings, "analytics_sync_enabled", False):
+            tasks.append({"name": name, "status": "skip", "detail": "очистка после синхронизации"})
+            continue
         if name == "leads_archive" and getattr(settings, "lead_storage_backend", "files") == "postgres":
             tasks.append({"name": name, "status": "skip", "detail": "лиды остаются в Postgres"})
             continue

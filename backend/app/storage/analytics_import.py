@@ -1,0 +1,59 @@
+"""Stable event identities shared by the offline importer and the sync worker."""
+
+from collections import Counter
+from datetime import datetime, timezone
+from hashlib import sha256
+from itertools import batched
+import json
+from uuid import UUID
+
+
+def snapshot_rows(handle, tenants):
+    occurrences = Counter()
+    for number, raw in enumerate(handle, 1):
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+            if not isinstance(row, dict):
+                raise ValueError
+            tenant_id = tenants.get(row.get("company_id"))
+            if tenant_id is None:
+                continue
+            timestamp = datetime.fromisoformat(row["timestamp"])
+            event_type = row["event_type"]
+            if timestamp.tzinfo is not None or not isinstance(event_type, str) or not event_type:
+                raise ValueError
+            metadata = row.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            session_id = row.get("session_id") or None
+            page = metadata.get("page") or None
+            if (session_id is not None and not isinstance(session_id, str)
+                    or page is not None and not isinstance(page, str)):
+                raise ValueError
+            if "event_id" in row:
+                event_key = f"id:{UUID(row['event_id'])}"
+            else:
+                # Legacy events can be identical. Keep their multiplicity across rewrites.
+                canonical = json.dumps(row, sort_keys=True, separators=(",", ":"), allow_nan=False)
+                fingerprint = sha256(canonical.encode("ascii")).hexdigest()
+                occurrences[fingerprint] += 1
+                event_key = f"legacy:{fingerprint}:{occurrences[fingerprint]}"
+            yield dict(
+                tenant_id=tenant_id, event_key=event_key,
+                occurred_at=timestamp.replace(tzinfo=timezone.utc), event_type=event_type,
+                session_id=session_id, page=page, visitor_id=str(metadata.get("visitor_id") or "") or None,
+            )
+        except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
+            raise ValueError(f"invalid_event_at_line:{number}") from None
+
+
+async def insert_events(connection, rows):
+    from sqlalchemy.dialects.postgresql import insert
+    from ..db.analytics_models import analytics_events
+
+    statement = insert(analytics_events).on_conflict_do_nothing().returning(analytics_events.c.event_key)
+    inserted = 0
+    for batch in batched(rows, 1000):
+        inserted += len((await connection.execute(statement, list(batch))).all())
+    return inserted

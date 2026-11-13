@@ -48,6 +48,7 @@ def main() -> int:
                 SESSION_EVICTION_ENABLED="false",
                 LEADS_ARCHIVE_ENABLED="false",
                 ANALYTICS_PRUNE_ENABLED="false",
+                ANALYTICS_SYNC_ENABLED="false",
                 TELEGRAM_BRIDGE_ENABLED="false",
                 TELEGRAM_BOT_TOKEN="",
                 WATCHDOG_ENABLED="false",

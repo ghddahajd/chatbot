@@ -279,7 +279,11 @@ async def _lifespan(app: FastAPI):
             )
         )
     analytics_prune_task = None
-    if settings.analytics_prune_enabled:
+    analytics_sync_task = None
+    if settings.analytics_sync_enabled:
+        from .storage.analytics_sync import run_analytics_sync_loop
+        analytics_sync_task = asyncio.create_task(run_analytics_sync_loop(settings, app.state.knowledge_base_resolver))
+    elif settings.analytics_prune_enabled:
         analytics_prune_task = asyncio.create_task(
             _run_analytics_prune_loop(
                 settings.analytics_file,
@@ -300,6 +304,7 @@ async def _lifespan(app: FastAPI):
             ("telegram_resend", telegram_resend_task),
             ("leads_archive", leads_archive_task),
             ("analytics_prune", analytics_prune_task),
+            ("analytics_sync", analytics_sync_task),
             ("watchdog", watchdog_task),
             ("ops_bot", ops_bot_task),
         )
@@ -363,10 +368,11 @@ async def _lifespan(app: FastAPI):
             leads_archive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await leads_archive_task
-        if analytics_prune_task is not None:
-            analytics_prune_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await analytics_prune_task
+        for task in (analytics_prune_task, analytics_sync_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         if snapshot_file is not None:
             final_snapshot_result = await app.state.session_store.snapshot_to(
                 snapshot_file,

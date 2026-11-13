@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from threading import Lock
 from typing import Any, Generator, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -24,6 +26,12 @@ from .utils.jsonl import read_jsonl
 
 
 logger = logging.getLogger(__name__)
+_ANALYTICS_WRITE_LOCK = Lock()
+
+
+def analytics_file_version(path: Path) -> tuple[int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
 
 # один разбор analytics.jsonl на весь дашборд (см. AnalyticsService.events_snapshot): на проде файл
 # ~18 МБ, а дашборд — полтора десятка подсчётов, и каждый раньше читал его заново
@@ -211,7 +219,7 @@ class AnalyticsService:
             "message": message,
             "metadata": metadata or {},
         }
-        with self.analytics_file.open("a", encoding="utf-8") as handle:
+        with _ANALYTICS_WRITE_LOCK, self.analytics_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
     async def track_answer(
@@ -1369,7 +1377,11 @@ def _widget_pages(
     return top
 
 
-def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retention_days: int) -> int:
+def archive_old_analytics_events(
+    analytics_file: Path, rollup_file: Path, retention_days: int, *,
+    synced_version: tuple[int, int, int, int] | None = None,
+    synced_companies: set[str] | None = None,
+) -> int:
     """удаляет записи MESSAGE_RETENTION_EVENT_TYPES старше retention_days из analytics_file,
     сохранив дневные счётчики (дата, company_id, action — без текста) в rollup_file.
 
@@ -1378,6 +1390,12 @@ def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retent
     удалять нечего — обычный случай при ежедневном запуске.
     """
 
+    try:
+        version = analytics_file_version(analytics_file)
+    except FileNotFoundError:
+        return 0
+    if synced_version is not None and version != synced_version:
+        return 0
     entries = read_jsonl(analytics_file)
     if not entries:
         return 0
@@ -1386,7 +1404,8 @@ def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retent
     keep: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
     for entry in entries:
-        if entry.get("event_type") not in MESSAGE_RETENTION_EVENT_TYPES:
+        if (entry.get("event_type") not in MESSAGE_RETENTION_EVENT_TYPES
+                or synced_companies is not None and entry.get("company_id") not in synced_companies):
             keep.append(entry)
             continue
         try:
@@ -1417,29 +1436,34 @@ def archive_old_analytics_events(analytics_file: Path, rollup_file: Path, retent
         action = str((entry.get("metadata") or {}).get("action") or event_type or "unknown")
         rollup_counts[(day, hour, company_id, event_type, action)] += 1
 
-    rollup_file.parent.mkdir(parents=True, exist_ok=True)
-    with rollup_file.open("a", encoding="utf-8") as handle:
-        for (day, hour, company_id, event_type, action), count in sorted(rollup_counts.items()):
-            handle.write(
-                _dump_jsonl_line(
-                    {
-                        "date": day,
-                        "hour": hour,
-                        "company_id": company_id,
-                        "event_type": event_type,
-                        "action": action,
-                        "count": count,
-                    }
-                )
-            )
-
-    # атомарная перезапись "горячего" файла — временный файл + rename, чтобы конкурентный
-    # append (новое сообщение пришло ровно во время чистки) не попал под усечение.
-    tmp_path = analytics_file.with_suffix(analytics_file.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        for entry in keep:
-            handle.write(_dump_jsonl_line(entry))
-    os.replace(tmp_path, analytics_file)
+    rollup = "".join(
+        _dump_jsonl_line(dict(date=day, hour=hour, company_id=company_id, event_type=event_type,
+                              action=action, count=count))
+        for (day, hour, company_id, event_type, action), count in sorted(rollup_counts.items())
+    )
+    # Only the commit holds the writer lock. A concurrent append invalidates this plan.
+    tmp = NamedTemporaryFile(mode="w", encoding="utf-8", dir=analytics_file.parent,
+                             prefix=f".{analytics_file.name}.", delete=False)
+    tmp_path = Path(tmp.name)
+    try:
+        with tmp:
+            tmp_path.chmod(analytics_file.stat().st_mode & 0o777)
+            tmp.writelines(_dump_jsonl_line(entry) for entry in keep)
+        with _ANALYTICS_WRITE_LOCK:
+            if analytics_file_version(analytics_file) != version:
+                return 0
+            rollup_file.parent.mkdir(parents=True, exist_ok=True)
+            with rollup_file.open("ab") as handle:
+                previous_size = handle.tell()
+                try:
+                    handle.write(rollup.encode("utf-8"))
+                    handle.flush()
+                    os.replace(tmp_path, analytics_file)
+                except OSError:
+                    handle.truncate(previous_size)
+                    raise
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
     logger.info(
         "analytics prune: removed %d of %d message_answered entries older than %d days (analytics_file=%s)",

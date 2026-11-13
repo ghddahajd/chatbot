@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     analytics_message_retention_days: int = 60
     analytics_prune_interval_seconds: int = 86400
     analytics_prune_enabled: bool = True
+    analytics_sync_enabled: bool = False
+    analytics_sync_interval_seconds: int = Field(default=300, ge=1)
     # сторож: сам прогоняет проверки preflight и пишет нам о переходах «в порядке ↔ проблема»;
     # проблема должна продержаться watchdog_confirm_runs прогонов подряд — разовый сбой сети не будит
     watchdog_enabled: bool = True

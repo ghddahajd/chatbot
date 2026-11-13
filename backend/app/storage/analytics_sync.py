@@ -28,7 +28,9 @@ def read_snapshot(path, tenants):
 async def sync_once(engine, settings, company_ids, *, prune, previous=None):
     import sqlalchemy as sa
     from ..db.models import Tenant
+    from .postgres_rollup import sync_rollup
 
+    historical = None
     async with engine.begin() as connection:
         registry = await connection.execute(sa.select(Tenant.company_id, Tenant.id))
         tenants = {company_id: tenant_id for company_id, tenant_id in registry}
@@ -39,6 +41,9 @@ async def sync_once(engine, settings, company_ids, *, prune, previous=None):
         if version is not None:
             generation = previous[1] if previous is not None and version == previous[0] else uuid4()
             await insert_events(connection, rows, generation=generation)
+            historical = await sync_rollup(
+                connection, settings.analytics_rollup_file, previous[3] if previous is not None else None,
+            )
     if prune and version is not None:
         removed = await asyncio.to_thread(
             archive_old_analytics_events, settings.analytics_file, settings.analytics_rollup_file,
@@ -47,7 +52,7 @@ async def sync_once(engine, settings, company_ids, *, prune, previous=None):
         prune_completed = bool(removed) or analytics_file_version(settings.analytics_file) == version
     else:
         prune_completed = False
-    return prune_completed, (version, generation, complete) if generation is not None else None
+    return prune_completed, (version, generation, complete, historical) if generation is not None else None
 
 
 async def run_analytics_sync_loop(settings, resolver, state):

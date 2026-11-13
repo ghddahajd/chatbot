@@ -8,9 +8,11 @@ from ..analytics import analytics_file_version
 from ..db.analytics_models import analytics_events
 from ..db.models import Tenant
 from ..hours import _resolve_timezone
+from .postgres_rollup import load_rollup
 
 
-async def load_activity(engine, *, company_id, start, end, timezone_name, path, version, generation):
+async def load_activity(engine, *, company_id, start, end, timezone_name, path, version, generation,
+                        rollup_generation):
     if analytics_file_version(path) != version:
         return None
     columns = analytics_events.c
@@ -37,4 +39,6 @@ async def load_activity(engine, *, company_id, start, end, timezone_name, path, 
         for h, d, count in rows:
             hours[int(h)] = hours.get(int(h), 0) + count
             weekdays[int(d)] = weekdays.get(int(d), 0) + count
-    return (hours, weekdays) if analytics_file_version(path) == version else None
+        historical = await load_rollup(connection, company_id=company_id, start=start, end=end,
+                                       generation=rollup_generation)
+    return (hours, weekdays, historical) if analytics_file_version(path) == version else None

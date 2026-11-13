@@ -115,7 +115,7 @@ async def analytics_summary(
         source = getattr(state, "analytics_funnel_source", None)
         if not _analytics_source_covers(source, company_id) or not state.settings.analytics_sql_summary_enabled:
             return
-        engine, version, generation, _ = source
+        engine, version, generation, _, _ = source
         try:
             async with asyncio.timeout(1):
                 from ..storage.postgres_summary import load_summary_reports
@@ -182,7 +182,7 @@ def _analytics_source_covers(source, company_id):
 async def _sql_operator_events(service, source, company_id, *, start=None, end=None):
     from ..storage.postgres_operators import load_operator_events
 
-    engine, version, generation, _ = source
+    engine, version, generation, _, _ = source
     return await load_operator_events(
         engine, company_id=company_id, start=start, end=end,
         path=service.analytics_file, version=version, generation=generation,
@@ -360,10 +360,10 @@ async def analytics_dashboard(
     timezone_name = _company_timezone(request, company_id)
     activity_start = start if start is not None else now - timedelta(days=days)
     funnel_metrics = activity = questions = operator_events = summary_reports = None
-    report_version = None
+    report_version = historical_version = None
 
     async def prepare_sql_reports():
-        nonlocal funnel_metrics, activity, questions, operator_events, summary_reports, report_version
+        nonlocal funnel_metrics, activity, questions, operator_events, summary_reports, report_version, historical_version
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
         settings = state.settings
@@ -371,7 +371,7 @@ async def analytics_dashboard(
             return
         if company_id is not None and not state.knowledge_base_resolver.client_exists(company_id):
             return
-        engine, version, generation, _ = source
+        engine, version, generation, _, historical = source
         source_args = dict(company_id=company_id, path=analytics_service.analytics_file,
                            version=version, generation=generation)
         try:
@@ -382,11 +382,13 @@ async def analytics_dashboard(
                     funnel_metrics = await load_funnel_events(
                         engine, start=funnel_start, end=funnel_end, **source_args,
                     )
-                if settings.analytics_sql_activity_enabled:
+                if settings.analytics_sql_activity_enabled and historical is not None:
                     from ..storage.postgres_activity import load_activity
 
+                    historical_version, rollup_generation = historical
                     activity = await load_activity(
-                        engine, start=activity_start, end=end, timezone_name=timezone_name, **source_args,
+                        engine, start=activity_start, end=end, timezone_name=timezone_name,
+                        rollup_generation=rollup_generation, **source_args,
                     )
                 if settings.analytics_sql_questions_enabled:
                     from ..storage.postgres_questions import load_question_reports
@@ -415,8 +417,19 @@ async def analytics_dashboard(
         if report_version is None or not _analytics_version_matches(analytics_service.analytics_file, report_version):
             reports = (None,) * len(reports)
         metrics, activity_counts, question_reports, handovers, overview = reports
-        with analytics_service.events_snapshot() if any(report is None for report in reports) else nullcontext():
-            hours, weekdays = activity_counts if activity_counts is not None else (None, None)
+        if activity_counts is not None:
+            from ..storage.postgres_rollup import rollup_version
+
+            try:
+                if rollup_version(analytics_service.rollup_file) != historical_version:
+                    activity_counts = None
+            except OSError:
+                activity_counts = None
+        needs_events = activity_counts is None or any(
+            report is None for report in (metrics, question_reports, handovers, overview)
+        )
+        with analytics_service.events_snapshot() if needs_events else nullcontext():
+            hours, weekdays, historical_rows = activity_counts if activity_counts is not None else (None, None, None)
             if question_reports is None:
                 question_reports = {
                     name: calculate(company_id=company_id, start=activity_start, end=end)
@@ -463,11 +476,11 @@ async def analytics_dashboard(
                 **question_reports,
                 "activity_by_hour": analytics_service.activity_by_hour(
                     company_id=company_id, days=days, start=activity_start, end=end, timezone_name=timezone_name,
-                    event_counts=hours,
+                    event_counts=hours, rollup_rows=historical_rows,
                 ),
                 "activity_by_weekday": analytics_service.activity_by_weekday(
                     company_id=company_id, days=days, start=activity_start, end=end, timezone_name=timezone_name,
-                    event_counts=weekdays,
+                    event_counts=weekdays, rollup_rows=historical_rows,
                 ),
                 "timezone": timezone_name,
                 "queue_wait": analytics_service.queue_wait_stats(

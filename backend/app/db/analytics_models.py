@@ -23,3 +23,13 @@ analytics_events = sa.Table(
     sa.Column("unanswered", JSONB(none_as_null=True)),
 )
 sa.Index("ix_analytics_events_tenant_time", analytics_events.c.tenant_id, analytics_events.c.occurred_at)
+
+analytics_rollup = sa.Table(
+    "analytics_rollup", SQLModel.metadata,
+    sa.Column("position", sa.BigInteger, primary_key=True, autoincrement=False),
+    sa.Column("generation", UUID(as_uuid=True), nullable=False),
+    sa.Column("company_id", sa.Text),
+    sa.Column("day_key", sa.Text, nullable=False),
+    sa.Column("payload", JSONB(none_as_null=True), nullable=False),
+    sa.Index("ix_analytics_rollup_company_day", "company_id", "day_key"),
+)

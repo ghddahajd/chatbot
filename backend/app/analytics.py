@@ -1013,6 +1013,7 @@ class AnalyticsService:
         end: Optional[datetime] = None,
         timezone_name: Optional[str] = None,
         event_counts: dict[int, int] | None = None,
+        rollup_rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Сколько сообщений приходит в каждый час суток (UTC) — для планирования смен
         операторов. Сырые message_answered (недавние) + rollup (то, что уже сжато под
@@ -1030,7 +1031,9 @@ class AnalyticsService:
             except (TypeError, ValueError):
                 continue
             counts[hour] += 1
-        for row in self._rollup_message_answered_rows(company_id, start=range_start, end=range_end):
+        if rollup_rows is None:
+            rollup_rows = self._rollup_message_answered_rows(company_id, start=range_start, end=range_end)
+        for row in rollup_rows:
             try:
                 # Живой баг (код-ревью, 2026-08-27): int(count) раньше жил СНАРУЖИ этого
                 # try/except (тот ловил только парсинг часа) — битое/нецелое значение count
@@ -1055,6 +1058,7 @@ class AnalyticsService:
         end: Optional[datetime] = None,
         timezone_name: Optional[str] = None,
         event_counts: dict[int, int] | None = None,
+        rollup_rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Та же идея, но по дню недели (0=Пн ... 6=Вс) — на пару с activity_by_hour. День
         недели не хранится отдельно ни в сырых событиях, ни в rollup — всегда вычисляется из
@@ -1072,7 +1076,9 @@ class AnalyticsService:
             except (TypeError, ValueError):
                 continue
             counts[weekday] += 1
-        for row in self._rollup_message_answered_rows(company_id, start=range_start, end=range_end):
+        if rollup_rows is None:
+            rollup_rows = self._rollup_message_answered_rows(company_id, start=range_start, end=range_end)
+        for row in rollup_rows:
             try:
                 # Живой баг (код-ревью, 2026-08-27): та же дыра, что в activity_by_hour —
                 # int(count) вне try/except мог уронить весь дашборд на одной плохой строке.

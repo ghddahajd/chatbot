@@ -9,6 +9,7 @@ analytics_events = sa.Table(
     "analytics_events", SQLModel.metadata,
     sa.Column("tenant_id", UUID(as_uuid=True), sa.ForeignKey("tenants.id"), primary_key=True),
     sa.Column("event_key", sa.Text, primary_key=True),
+    sa.Column("file_generation", UUID(as_uuid=True)),
     sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("event_type", sa.Text, nullable=False),
     sa.Column("session_id", sa.Text),

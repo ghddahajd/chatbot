@@ -292,41 +292,53 @@ async def analytics_dashboard(
         funnel_start = datetime.utcnow() - timedelta(days=funnel_days)
         funnel_end = trend_start = trend_end = None
 
-    funnel_metrics = None
-    funnel_version = None
+    timezone_name = _company_timezone(request, company_id)
+    activity_start = start if start is not None else datetime.utcnow() - timedelta(days=days)
+    funnel_metrics = activity = None
+    report_version = None
 
-    async def prepare_funnel():
-        nonlocal funnel_metrics, funnel_version
+    async def prepare_sql_reports():
+        nonlocal funnel_metrics, activity, report_version
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
-        if not state.settings.analytics_sql_funnel_enabled or not source or company_id is None:
+        settings = state.settings
+        if not source or company_id is None:
             return
-        engine, version = source
+        engine, version, generation = source
+        source_args = dict(company_id=company_id, path=analytics_service.analytics_file,
+                           version=version, generation=generation)
         try:
-            from ..storage.postgres_funnel import load_funnel_events
-
             async with asyncio.timeout(1):
-                funnel_metrics = await load_funnel_events(
-                    engine, company_id=company_id, start=funnel_start, end=funnel_end,
-                    path=analytics_service.analytics_file, version=version,
-                    retention_days=state.settings.analytics_message_retention_days,
-                )
-                funnel_version = version
+                if settings.analytics_sql_funnel_enabled:
+                    from ..storage.postgres_funnel import load_funnel_events
+
+                    funnel_metrics = await load_funnel_events(
+                        engine, start=funnel_start, end=funnel_end, **source_args,
+                    )
+                if settings.analytics_sql_activity_enabled:
+                    from ..storage.postgres_activity import load_activity
+
+                    activity = await load_activity(
+                        engine, start=activity_start, end=end, timezone_name=timezone_name, **source_args,
+                    )
+                report_version = version
         except Exception as error:
-            logger.warning("SQL funnel fallback error=%s", type(error).__name__)
+            funnel_metrics = activity = None
+            logger.warning("SQL analytics fallback error=%s", type(error).__name__)
 
     # полтора десятка подсчётов по файлу событий (~18 МБ на проде) — в своём потоке и с одним разбором
     # файла на всех: иначе всё это время стоят ответы чата посетителям
     def build() -> dict:
         with analytics_service.events_snapshot():
             metrics = funnel_metrics
-            if metrics is not None:
+            activity_counts = activity
+            if metrics is not None or activity_counts is not None:
                 try:
-                    if analytics_file_version(analytics_service.analytics_file) != funnel_version:
-                        metrics = None
+                    if analytics_file_version(analytics_service.analytics_file) != report_version:
+                        metrics = activity_counts = None
                 except OSError:
-                    metrics = None
-            timezone_name = _company_timezone(request, company_id)
+                    metrics = activity_counts = None
+            hours, weekdays = activity_counts if activity_counts is not None else (None, None)
             top_services = [
                 {
                     "service_id": entry["service_id"],
@@ -369,10 +381,12 @@ async def analytics_dashboard(
                     company_id=company_id, days=days, start=start, end=end
                 ),
                 "activity_by_hour": analytics_service.activity_by_hour(
-                    company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
+                    company_id=company_id, days=days, start=activity_start, end=end, timezone_name=timezone_name,
+                    event_counts=hours,
                 ),
                 "activity_by_weekday": analytics_service.activity_by_weekday(
-                    company_id=company_id, days=days, start=start, end=end, timezone_name=timezone_name
+                    company_id=company_id, days=days, start=activity_start, end=end, timezone_name=timezone_name,
+                    event_counts=weekdays,
                 ),
                 "timezone": timezone_name,
                 "queue_wait": analytics_service.queue_wait_stats(
@@ -388,7 +402,7 @@ async def analytics_dashboard(
 
     return await analytics_service.runner.report(
         analytics_service, ("dashboard", company_id, days, start, end), build,
-        company_id=company_id, leads=True, before_build=prepare_funnel,
+        company_id=company_id, leads=True, before_build=prepare_sql_reports,
     )
 
 

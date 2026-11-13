@@ -1006,15 +1006,16 @@ class AnalyticsService:
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
         timezone_name: Optional[str] = None,
+        event_counts: dict[int, int] | None = None,
     ) -> list[dict[str, Any]]:
         """Сколько сообщений приходит в каждый час суток (UTC) — для планирования смен
         операторов. Сырые message_answered (недавние) + rollup (то, что уже сжато под
         ретеншном) — иначе окно дальше 60 дней молча показывало бы неполную картину."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         zone = _resolve_timezone(timezone_name) if timezone_name else None
-        counts: Counter[int] = Counter()
+        counts: Counter[int] = Counter(event_counts)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id) if event_counts is None else ()
         for event in events:
             if event.get("event_type") != "message_answered":
                 continue
@@ -1047,15 +1048,16 @@ class AnalyticsService:
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
         timezone_name: Optional[str] = None,
+        event_counts: dict[int, int] | None = None,
     ) -> list[dict[str, Any]]:
         """Та же идея, но по дню недели (0=Пн ... 6=Вс) — на пару с activity_by_hour. День
         недели не хранится отдельно ни в сырых событиях, ни в rollup — всегда вычисляется из
         даты, это чистая функция, дублировать в схеме незачем."""
 
         range_start, range_end = _resolve_range(days=days, start=start, end=end)
-        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id)
         zone = _resolve_timezone(timezone_name) if timezone_name else None
-        counts: Counter[int] = Counter()
+        counts: Counter[int] = Counter(event_counts)
+        events = _within_range(self._events(), start=range_start, end=range_end, company_id=company_id) if event_counts is None else ()
         for event in events:
             if event.get("event_type") != "message_answered":
                 continue

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from time import monotonic
+from uuid import uuid4
 
 from ..analytics import analytics_file_version, archive_old_analytics_events
 from .analytics_import import insert_events, snapshot_rows
@@ -23,7 +24,7 @@ def read_snapshot(path, tenants):
     return version, rows
 
 
-async def sync_once(engine, settings, company_ids, *, prune):
+async def sync_once(engine, settings, company_ids, *, prune, previous=None):
     import sqlalchemy as sa
     from ..db.models import Tenant
 
@@ -33,7 +34,10 @@ async def sync_once(engine, settings, company_ids, *, prune):
         if set(company_ids) - tenants.keys():
             raise ValueError("analytics_company_not_registered")
         version, rows = await asyncio.to_thread(read_snapshot, settings.analytics_file, tenants)
-        inserted = await insert_events(connection, rows)
+        generation = None
+        if version is not None:
+            generation = previous[1] if previous is not None and version == previous[0] else uuid4()
+            await insert_events(connection, rows, generation=generation)
     if prune and version is not None:
         removed = await asyncio.to_thread(
             archive_old_analytics_events, settings.analytics_file, settings.analytics_rollup_file,
@@ -42,12 +46,13 @@ async def sync_once(engine, settings, company_ids, *, prune):
         prune_completed = bool(removed) or analytics_file_version(settings.analytics_file) == version
     else:
         prune_completed = False
-    return inserted, prune_completed, version
+    return prune_completed, (version, generation) if generation is not None else None
 
 
 async def run_analytics_sync_loop(settings, resolver, state):
     engine = None
     next_prune = monotonic()
+    previous = None
     try:
         while True:
             try:
@@ -55,11 +60,14 @@ async def run_analytics_sync_loop(settings, resolver, state):
                     from ..db.connection import make_engine
                     engine = make_engine("ANALYTICS_")
                 prune = settings.analytics_prune_enabled and monotonic() >= next_prune
-                _, prune_completed, version = await sync_once(engine, settings, resolver.company_ids(), prune=prune)
-                state.analytics_funnel_source = (engine, version) if version is not None else None
+                prune_completed, previous = await sync_once(
+                    engine, settings, resolver.company_ids(), prune=prune, previous=previous,
+                )
+                state.analytics_funnel_source = (engine, *previous) if previous is not None else None
                 if prune_completed:
                     next_prune = monotonic() + settings.analytics_prune_interval_seconds
             except Exception as error:
+                previous = None
                 state.analytics_funnel_source = None
                 logger.warning("analytics sync failed error=%s", type(error).__name__)
             await asyncio.sleep(settings.analytics_sync_interval_seconds)

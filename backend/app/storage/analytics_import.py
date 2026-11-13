@@ -48,12 +48,27 @@ def snapshot_rows(handle, tenants):
             raise ValueError(f"invalid_event_at_line:{number}") from None
 
 
-async def insert_events(connection, rows):
+async def insert_events(connection, rows, *, generation=None):
     from sqlalchemy.dialects.postgresql import insert
     from ..db.analytics_models import analytics_events
 
-    statement = insert(analytics_events).on_conflict_do_nothing().returning(analytics_events.c.event_key)
+    statement = insert(analytics_events)
+    if generation is None:
+        statement = statement.on_conflict_do_nothing()
+    else:
+        statement = statement.on_conflict_do_update(
+            index_elements=list(analytics_events.primary_key),
+            set_={"file_generation": generation},
+            where=analytics_events.c.file_generation.is_distinct_from(generation),
+        )
+    statement = statement.returning(analytics_events.c.event_key)
     inserted = 0
     for batch in batched(rows, 1000):
-        inserted += len((await connection.execute(statement, list(batch))).all())
+        values = list(batch)
+        if generation is not None:
+            values = list({
+                (row["tenant_id"], row["event_key"]): {**row, "file_generation": generation}
+                for row in reversed(batch)
+            }.values())
+        inserted += len((await connection.execute(statement, values)).all())
     return inserted

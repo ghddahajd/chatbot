@@ -1,6 +1,6 @@
 """Read event metrics for one clinic and period."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import timezone
 
 import sqlalchemy as sa
 
@@ -9,7 +9,7 @@ from ..db.analytics_models import analytics_events
 from ..db.models import Tenant
 
 
-async def funnel_events(connection, *, tenant_id, start, end):
+async def funnel_events(connection, *, tenant_id, start, end, generation=None):
     columns = analytics_events.c
     scope = [
         columns.tenant_id == tenant_id,
@@ -17,6 +17,8 @@ async def funnel_events(connection, *, tenant_id, start, end):
     ]
     if end is not None:
         scope.append(columns.occurred_at <= end)
+    if generation is not None:
+        scope.append(columns.file_generation == generation)
     counts = await connection.execute(
         sa.select(
             columns.event_type,
@@ -69,12 +71,7 @@ def project_metrics(counts, pages):
     }
 
 
-async def load_funnel_events(engine, *, company_id, start, end, path, version, retention_days):
-    # PostgreSQL retains imported rows after JSONL pruning. For older windows use
-    # JSONL to preserve the current report's retention semantics.
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    if start < now - timedelta(days=retention_days):
-        return None
+async def load_funnel_events(engine, *, company_id, start, end, path, version, generation):
     if analytics_file_version(path) != version:
         return None
     async with engine.connect() as connection:
@@ -84,6 +81,7 @@ async def load_funnel_events(engine, *, company_id, start, end, path, version, r
         counts, pages = await funnel_events(
             connection, tenant_id=tenant_id, start=start.replace(tzinfo=timezone.utc),
             end=end.replace(tzinfo=timezone.utc) if end is not None else None,
+            generation=generation,
         )
     if analytics_file_version(path) != version:
         return None

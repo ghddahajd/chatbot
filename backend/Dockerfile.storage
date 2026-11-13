@@ -6,6 +6,7 @@ COPY backend/app ./app
 COPY backend/scripts/db_admin.py ./scripts/db_admin.py
 COPY backend/scripts/client_accounts.py ./scripts/client_accounts.py
 COPY backend/scripts/lead_storage.py ./scripts/lead_storage.py
+COPY backend/scripts/analytics_storage.py ./scripts/analytics_storage.py
 COPY backend/scripts/import_lead_history.py backend/scripts/lead_cutover.py ./scripts/
 COPY backend/alembic.ini ./
 COPY backend/migrations ./migrations

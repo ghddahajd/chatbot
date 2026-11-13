@@ -363,7 +363,7 @@ def check_leads(settings: Any) -> dict[str, Any]:
     )
 
 
-def check_analytics(settings: Any) -> dict[str, Any]:
+def check_analytics(settings: Any, source=None) -> dict[str, Any]:
     path = Path(settings.analytics_file)
     writable = _writable(path)
     size = path.stat().st_size if path.exists() else 0
@@ -371,8 +371,31 @@ def check_analytics(settings: Any) -> dict[str, Any]:
     last_at = _parse_ts(last.get("timestamp")) if last else None
     size_mb = _mb(size)
 
+    sync_enabled = getattr(settings, "analytics_sync_enabled", False)
+    source_current = False
+    if sync_enabled and source is not None:
+        from .analytics import analytics_file_version
+        from .storage.postgres_rollup import rollup_version
+
+        try:
+            historical = source[4]
+            source_current = (
+                analytics_file_version(path) == source[1]
+                and historical is not None
+                and rollup_version(settings.analytics_rollup_file) == historical[0]
+            )
+        except OSError:
+            pass
+
     if not writable:
         status, detail = "error", "файл аналитики недоступен на запись"
+    elif sync_enabled:
+        if source_current and source[3]:
+            status, detail = "ok", "события аналитики синхронизированы с PostgreSQL"
+        elif source_current:
+            status, detail = "degraded", "часть событий без идентификатора клиники, общий отчёт читает JSONL"
+        else:
+            status, detail = "degraded", "SQL-снимок аналитики ещё не готов или отстаёт от JSONL"
     elif size > ANALYTICS_LARGE_MB * 1024 * 1024:
         status = "degraded"
         detail = f"файл аналитики {size_mb} МБ: дашборд читает его целиком, пора думать о БД"
@@ -386,6 +409,7 @@ def check_analytics(settings: Any) -> dict[str, Any]:
         writable=writable,
         size_mb=size_mb,
         last_event_at=_iso(last_at) if last_at else None,
+        postgres_snapshot_current=source_current,
     )
 
 
@@ -865,7 +889,9 @@ def _collect_sync(app: FastAPI, *, delivery_check=None, leads_check=None) -> dic
     checks["clients"] = _safe("clients", lambda: check_clients(app))
     checks["domains"] = _safe("domains", lambda: check_domains(app))
     checks["leads"] = leads_check if leads_check is not None else _safe("leads", lambda: check_leads(settings))
-    checks["analytics"] = _safe("analytics", lambda: check_analytics(settings))
+    checks["analytics"] = _safe("analytics", lambda: check_analytics(
+        settings, getattr(app.state, "analytics_funnel_source", None),
+    ))
     checks["storage"] = _safe("storage", lambda: check_storage(settings))
     checks["resources"] = _safe("resources", lambda: check_resources(settings))
     checks["cors"] = _safe("cors", lambda: check_cors(app))

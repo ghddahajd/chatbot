@@ -113,9 +113,9 @@ async def analytics_summary(
         nonlocal event_summary, version
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
-        if company_id is None or not source or not state.settings.analytics_sql_summary_enabled:
+        if not _analytics_source_covers(source, company_id) or not state.settings.analytics_sql_summary_enabled:
             return
-        engine, version, generation = source
+        engine, version, generation, _ = source
         try:
             async with asyncio.timeout(1):
                 from ..storage.postgres_summary import load_summary_reports
@@ -149,7 +149,7 @@ async def analytics_operators(
     async def prepare():
         nonlocal source, events
         source = getattr(request.app.state, "analytics_funnel_source", None)
-        if company_id is None or not source or not request.app.state.settings.analytics_sql_operators_enabled:
+        if not _analytics_source_covers(source, company_id) or not request.app.state.settings.analytics_sql_operators_enabled:
             return
         try:
             async with asyncio.timeout(1):
@@ -175,10 +175,14 @@ def _analytics_version_matches(path, version):
         return False
 
 
+def _analytics_source_covers(source, company_id):
+    return source is not None and (company_id is not None or source[3])
+
+
 async def _sql_operator_events(service, source, company_id, *, start=None, end=None):
     from ..storage.postgres_operators import load_operator_events
 
-    engine, version, generation = source
+    engine, version, generation, _ = source
     return await load_operator_events(
         engine, company_id=company_id, start=start, end=end,
         path=service.analytics_file, version=version, generation=generation,
@@ -363,9 +367,11 @@ async def analytics_dashboard(
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
         settings = state.settings
-        if not source or company_id is None or not state.knowledge_base_resolver.client_exists(company_id):
+        if not _analytics_source_covers(source, company_id):
             return
-        engine, version, generation = source
+        if company_id is not None and not state.knowledge_base_resolver.client_exists(company_id):
+            return
+        engine, version, generation, _ = source
         source_args = dict(company_id=company_id, path=analytics_service.analytics_file,
                            version=version, generation=generation)
         try:

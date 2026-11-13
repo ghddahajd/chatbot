@@ -16,12 +16,13 @@ def read_snapshot(path, tenants):
     try:
         version = analytics_file_version(path)
     except FileNotFoundError:
-        return None, []
+        return None, [], False
+    skipped_companies = set()
     with path.open("rb") as handle:
-        rows = list(snapshot_rows(handle, tenants))
+        rows = list(snapshot_rows(handle, tenants, skipped_companies=skipped_companies))
     if analytics_file_version(path) != version:
-        return None, []
-    return version, rows
+        return None, [], False
+    return version, rows, not skipped_companies
 
 
 async def sync_once(engine, settings, company_ids, *, prune, previous=None):
@@ -33,7 +34,7 @@ async def sync_once(engine, settings, company_ids, *, prune, previous=None):
         tenants = {company_id: tenant_id for company_id, tenant_id in registry}
         if set(company_ids) - tenants.keys():
             raise ValueError("analytics_company_not_registered")
-        version, rows = await asyncio.to_thread(read_snapshot, settings.analytics_file, tenants)
+        version, rows, complete = await asyncio.to_thread(read_snapshot, settings.analytics_file, tenants)
         generation = None
         if version is not None:
             generation = previous[1] if previous is not None and version == previous[0] else uuid4()
@@ -46,7 +47,7 @@ async def sync_once(engine, settings, company_ids, *, prune, previous=None):
         prune_completed = bool(removed) or analytics_file_version(settings.analytics_file) == version
     else:
         prune_completed = False
-    return prune_completed, (version, generation) if generation is not None else None
+    return prune_completed, (version, generation, complete) if generation is not None else None
 
 
 async def run_analytics_sync_loop(settings, resolver, state):

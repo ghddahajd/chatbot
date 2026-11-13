@@ -8,7 +8,7 @@ import json
 from uuid import UUID
 
 
-def snapshot_rows(handle, tenants):
+def snapshot_rows(handle, tenants, *, skipped_companies: set[str | None] | None = None):
     occurrences = Counter()
     for number, raw in enumerate(handle, 1):
         if not raw.strip():
@@ -17,8 +17,11 @@ def snapshot_rows(handle, tenants):
             row = json.loads(raw)
             if not isinstance(row, dict):
                 raise ValueError
-            tenant_id = tenants.get(row.get("company_id"))
+            company_id = row.get("company_id")
+            tenant_id = tenants.get(company_id)
             if tenant_id is None:
+                if skipped_companies is not None:
+                    skipped_companies.add(company_id)
                 continue
             timestamp = datetime.fromisoformat(row["timestamp"])
             event_type = row["event_type"]

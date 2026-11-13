@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from app.utils.jsonl import read_jsonl
 from app.storage.analytics_import import snapshot_rows
+from app.storage.analytics_sync import read_snapshot
 from app.analytics import analytics_file_version, archive_old_analytics_events
 from app.utils.jsonl import append_jsonl
 
@@ -25,6 +26,19 @@ def test_event_keys_survive_append_and_rewrite():
     assert appended[:3] == first
     assert appended[3] == f"id:{new['event_id']}"
     assert keys(repeated, repeated, new, sort_keys=True) == appended[1:]
+
+
+def test_snapshot_reports_whether_it_covers_all_companies(tmp_path):
+    path = tmp_path / "analytics.jsonl"
+    row = {"company_id": "clinic", "timestamp": "2026-01-01T00:00:00", "event_type": "chat_opened"}
+    tenants = {"clinic": uuid4()}
+    append_jsonl(path, row)
+    version, events, complete = read_snapshot(path, tenants)
+    assert version is not None and len(events) == 1 and complete
+
+    append_jsonl(path, {**row, "company_id": "legacy"})
+    version, events, complete = read_snapshot(path, tenants)
+    assert version is not None and len(events) == 1 and not complete
 
 
 def test_chat_writes_analytics_without_analytics_database(test_client, monkeypatch):

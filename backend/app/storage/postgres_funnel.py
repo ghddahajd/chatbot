@@ -12,9 +12,10 @@ from ..db.models import Tenant
 async def funnel_events(connection, *, tenant_id, start, end, generation=None):
     columns = analytics_events.c
     scope = [
-        columns.tenant_id == tenant_id,
         columns.occurred_at >= start,
     ]
+    if tenant_id is not None:
+        scope.append(columns.tenant_id == tenant_id)
     if end is not None:
         scope.append(columns.occurred_at <= end)
     if generation is not None:
@@ -75,9 +76,11 @@ async def load_funnel_events(engine, *, company_id, start, end, path, version, g
     if analytics_file_version(path) != version:
         return None
     async with engine.connect() as connection:
-        tenant_id = await connection.scalar(sa.select(Tenant.id).where(Tenant.company_id == company_id))
-        if tenant_id is None:
-            return None
+        tenant_id = None
+        if company_id is not None:
+            tenant_id = await connection.scalar(sa.select(Tenant.id).where(Tenant.company_id == company_id))
+            if tenant_id is None:
+                return None
         counts, pages = await funnel_events(
             connection, tenant_id=tenant_id, start=start.replace(tzinfo=timezone.utc),
             end=end.replace(tzinfo=timezone.utc) if end is not None else None,

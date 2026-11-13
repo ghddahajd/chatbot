@@ -16,10 +16,11 @@ async def load_question_reports(engine, *, company_id, start, end, path, version
     c = analytics_events.c
     table = analytics_events.join(Tenant.__table__)
     scope = [
-        Tenant.company_id == company_id,
         c.file_generation == generation,
         c.occurred_at >= start.replace(tzinfo=timezone.utc),
     ]
+    if company_id is not None:
+        scope.append(Tenant.company_id == company_id)
     if end is not None:
         scope.append(c.occurred_at <= end.replace(tzinfo=timezone.utc))
     count = sa.func.count().label("count")

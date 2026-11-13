@@ -294,11 +294,11 @@ async def analytics_dashboard(
 
     timezone_name = _company_timezone(request, company_id)
     activity_start = start if start is not None else datetime.utcnow() - timedelta(days=days)
-    funnel_metrics = activity = None
+    funnel_metrics = activity = questions = None
     report_version = None
 
     async def prepare_sql_reports():
-        nonlocal funnel_metrics, activity, report_version
+        nonlocal funnel_metrics, activity, questions, report_version
         state = request.app.state
         source = getattr(state, "analytics_funnel_source", None)
         settings = state.settings
@@ -321,9 +321,15 @@ async def analytics_dashboard(
                     activity = await load_activity(
                         engine, start=activity_start, end=end, timezone_name=timezone_name, **source_args,
                     )
+                if settings.analytics_sql_questions_enabled:
+                    from ..storage.postgres_questions import load_question_reports
+
+                    questions = await load_question_reports(
+                        engine, start=activity_start, end=end, **source_args,
+                    )
                 report_version = version
         except Exception as error:
-            funnel_metrics = activity = None
+            funnel_metrics = activity = questions = None
             logger.warning("SQL analytics fallback error=%s", type(error).__name__)
 
     # полтора десятка подсчётов по файлу событий (~18 МБ на проде) — в своём потоке и с одним разбором
@@ -332,13 +338,24 @@ async def analytics_dashboard(
         with analytics_service.events_snapshot():
             metrics = funnel_metrics
             activity_counts = activity
-            if metrics is not None or activity_counts is not None:
+            question_reports = questions
+            if metrics is not None or activity_counts is not None or question_reports is not None:
                 try:
                     if analytics_file_version(analytics_service.analytics_file) != report_version:
-                        metrics = activity_counts = None
+                        metrics = activity_counts = question_reports = None
                 except OSError:
-                    metrics = activity_counts = None
+                    metrics = activity_counts = question_reports = None
             hours, weekdays = activity_counts if activity_counts is not None else (None, None)
+            if question_reports is None:
+                question_reports = {
+                    name: calculate(company_id=company_id, start=activity_start, end=end)
+                    for name, calculate in (
+                        ("intent_breakdown", analytics_service.intent_breakdown),
+                        ("objection_breakdown", analytics_service.objection_breakdown),
+                        ("top_unanswered_questions", analytics_service.top_unanswered_questions),
+                        ("top_answered_questions", analytics_service.top_answered_questions),
+                    )
+                }
             top_services = [
                 {
                     "service_id": entry["service_id"],
@@ -368,18 +385,7 @@ async def analytics_dashboard(
                 "unanswered_trend": analytics_service.unanswered_trend(
                     company_id=company_id, days=trend_days, start=trend_start, end=trend_end
                 ),
-                "intent_breakdown": analytics_service.intent_breakdown(
-                    company_id=company_id, days=days, start=start, end=end
-                ),
-                "objection_breakdown": analytics_service.objection_breakdown(
-                    company_id=company_id, days=days, start=start, end=end
-                ),
-                "top_unanswered_questions": analytics_service.top_unanswered_questions(
-                    company_id=company_id, days=days, start=start, end=end
-                ),
-                "top_answered_questions": analytics_service.top_answered_questions(
-                    company_id=company_id, days=days, start=start, end=end
-                ),
+                **question_reports,
                 "activity_by_hour": analytics_service.activity_by_hour(
                     company_id=company_id, days=days, start=activity_start, end=end, timezone_name=timezone_name,
                     event_counts=hours,

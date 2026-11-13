@@ -6,7 +6,6 @@ import sqlalchemy as sa
 
 from ..analytics import analytics_file_version
 from ..db.analytics_models import analytics_events
-from ..db.models import Tenant
 from ..hours import _resolve_timezone
 from .postgres_rollup import load_rollup
 
@@ -25,13 +24,12 @@ async def load_activity(engine, *, company_id, start, end, timezone_name, path, 
         columns.occurred_at >= start.replace(tzinfo=timezone.utc),
     ]
     if company_id is not None:
-        scope.append(Tenant.company_id == company_id)
+        scope.append(columns.company_id == company_id)
     if end is not None:
         scope.append(columns.occurred_at <= end.replace(tzinfo=timezone.utc))
     async with engine.connect() as connection:
         rows = await connection.execute(
             sa.select(hour, weekday, sa.func.count())
-            .select_from(analytics_events.join(Tenant.__table__))
             .where(*scope)
             .group_by(hour, weekday)
         )

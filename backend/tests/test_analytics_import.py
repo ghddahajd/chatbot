@@ -11,14 +11,13 @@ from app.utils.jsonl import append_jsonl
 
 
 def test_event_keys_survive_append_and_rewrite():
-    tenant = uuid4()
     old = {"company_id": "clinic", "timestamp": "2026-01-01T00:00:00", "event_type": "widget_impression"}
     repeated = {**old, "timestamp": "2026-02-01T00:00:00"}
     new = {**repeated, "event_id": str(uuid4())}
 
     def keys(*events, sort_keys=False):
         source = io.StringIO("".join(json.dumps(row, sort_keys=sort_keys) + "\n" for row in events))
-        return [row["event_key"] for row in snapshot_rows(source, {"clinic": tenant})]
+        return [row["event_key"] for row in snapshot_rows(source, company="clinic")]
 
     first = keys(old, repeated, repeated)
     appended = keys(old, repeated, repeated, new)
@@ -31,14 +30,18 @@ def test_event_keys_survive_append_and_rewrite():
 def test_snapshot_reports_whether_it_covers_all_companies(tmp_path):
     path = tmp_path / "analytics.jsonl"
     row = {"company_id": "clinic", "timestamp": "2026-01-01T00:00:00", "event_type": "chat_opened"}
-    tenants = {"clinic": uuid4()}
     append_jsonl(path, row)
-    version, events, complete = read_snapshot(path, tenants)
+    version, events, complete = read_snapshot(path)
     assert version is not None and len(events) == 1 and complete
 
     append_jsonl(path, {**row, "company_id": "legacy"})
-    version, events, complete = read_snapshot(path, tenants)
-    assert version is not None and len(events) == 1 and not complete
+    version, events, complete = read_snapshot(path)
+    assert version is not None and complete
+    assert [event["company_id"] for event in events] == ["clinic", "legacy"]
+
+    append_jsonl(path, {**row, "company_id": None})
+    version, events, complete = read_snapshot(path)
+    assert version is not None and len(events) == 2 and not complete
 
 
 def test_chat_writes_analytics_without_analytics_database(test_client, monkeypatch):

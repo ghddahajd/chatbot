@@ -6,16 +6,15 @@ import sqlalchemy as sa
 
 from ..analytics import analytics_file_version
 from ..db.analytics_models import analytics_events
-from ..db.models import Tenant
 
 
-async def funnel_events(connection, *, tenant_id, start, end, generation=None):
+async def funnel_events(connection, *, company_id, start, end, generation=None):
     columns = analytics_events.c
     scope = [
         columns.occurred_at >= start,
     ]
-    if tenant_id is not None:
-        scope.append(columns.tenant_id == tenant_id)
+    if company_id is not None:
+        scope.append(columns.company_id == company_id)
     if end is not None:
         scope.append(columns.occurred_at <= end)
     if generation is not None:
@@ -76,13 +75,8 @@ async def load_funnel_events(engine, *, company_id, start, end, path, version, g
     if analytics_file_version(path) != version:
         return None
     async with engine.connect() as connection:
-        tenant_id = None
-        if company_id is not None:
-            tenant_id = await connection.scalar(sa.select(Tenant.id).where(Tenant.company_id == company_id))
-            if tenant_id is None:
-                return None
         counts, pages = await funnel_events(
-            connection, tenant_id=tenant_id, start=start.replace(tzinfo=timezone.utc),
+            connection, company_id=company_id, start=start.replace(tzinfo=timezone.utc),
             end=end.replace(tzinfo=timezone.utc) if end is not None else None,
             generation=generation,
         )

@@ -7,20 +7,18 @@ from sqlalchemy.dialects.postgresql import aggregate_order_by
 
 from ..analytics import analytics_file_version
 from ..db.analytics_models import analytics_events
-from ..db.models import Tenant
 
 
 async def load_question_reports(engine, *, company_id, start, end, path, version, generation):
     if analytics_file_version(path) != version:
         return None
     c = analytics_events.c
-    table = analytics_events.join(Tenant.__table__)
     scope = [
         c.file_generation == generation,
         c.occurred_at >= start.replace(tzinfo=timezone.utc),
     ]
     if company_id is not None:
-        scope.append(Tenant.company_id == company_id)
+        scope.append(c.company_id == company_id)
     if end is not None:
         scope.append(c.occurred_at <= end.replace(tzinfo=timezone.utc))
     count = sa.func.count().label("count")
@@ -28,7 +26,7 @@ async def load_question_reports(engine, *, company_id, start, end, path, version
 
     async with engine.connect() as connection:
         categories = await connection.execute(
-            sa.select(c.event_type, c.category, count).select_from(table)
+            sa.select(c.event_type, c.category, count)
             .where(*scope, c.category.is_not(None))
             .group_by(c.event_type, c.category).order_by(count.desc(), first)
         )
@@ -43,7 +41,7 @@ async def load_question_reports(engine, *, company_id, start, end, path, version
         for kind, report in (("message_answered", "top_answered_questions"),
                              ("unknown_question", "top_unanswered_questions")):
             rows = await connection.execute(
-                sa.select(example, count).select_from(table)
+                sa.select(example, count)
                 .where(*scope, c.event_type == kind, c.question_key.is_not(None))
                 .group_by(c.question_key).order_by(count.desc(), first).limit(10)
             )

@@ -8,7 +8,7 @@ import json
 from uuid import UUID
 
 
-def snapshot_rows(handle, tenants, *, skipped_companies: set[str | None] | None = None):
+def snapshot_rows(handle, *, company=None, skipped_companies: set[str | None] | None = None):
     occurrences = Counter()
     for number, raw in enumerate(handle, 1):
         if not raw.strip():
@@ -18,10 +18,11 @@ def snapshot_rows(handle, tenants, *, skipped_companies: set[str | None] | None 
             if not isinstance(row, dict):
                 raise ValueError
             company_id = row.get("company_id")
-            tenant_id = tenants.get(company_id)
-            if tenant_id is None:
+            if company is not None and company_id != company:
+                continue
+            if not isinstance(company_id, str) or not company_id:
                 if skipped_companies is not None:
-                    skipped_companies.add(company_id)
+                    skipped_companies.add(None)
                 continue
             timestamp = datetime.fromisoformat(row["timestamp"])
             event_type = row["event_type"]
@@ -53,7 +54,7 @@ def snapshot_rows(handle, tenants, *, skipped_companies: set[str | None] | None 
                 unanswered = {key: row.get(key) for key in ("timestamp", "company_id", "session_id", "message")}
                 unanswered.update(reason=metadata.get("reason"), service_id=metadata.get("service_id"))
             yield dict(
-                tenant_id=tenant_id, event_key=event_key,
+                company_id=company_id, event_key=event_key,
                 occurred_at=timestamp.replace(tzinfo=timezone.utc), event_type=event_type,
                 session_id=session_id, page=page, visitor_id=str(metadata.get("visitor_id") or "") or None,
                 file_position=number, question=question, question_key=question.lower() if question else None,
@@ -84,7 +85,7 @@ async def insert_events(connection, rows, *, generation=None):
         values = list(batch)
         if generation is not None:
             values = list({
-                (row["tenant_id"], row["event_key"]): {**row, "file_generation": generation}
+                (row["company_id"], row["event_key"]): {**row, "file_generation": generation}
                 for row in reversed(batch)
             }.values())
         inserted += len((await connection.execute(statement, values)).all())

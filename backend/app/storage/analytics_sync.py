@@ -12,14 +12,14 @@ from .analytics_import import insert_events, snapshot_rows
 logger = logging.getLogger(__name__)
 
 
-def read_snapshot(path, tenants):
+def read_snapshot(path):
     try:
         version = analytics_file_version(path)
     except FileNotFoundError:
         return None, [], False
     skipped_companies = set()
     with path.open("rb") as handle:
-        rows = list(snapshot_rows(handle, tenants, skipped_companies=skipped_companies))
+        rows = list(snapshot_rows(handle, skipped_companies=skipped_companies))
     if analytics_file_version(path) != version:
         return None, [], False
     return version, rows, not skipped_companies
@@ -36,7 +36,7 @@ async def sync_once(engine, settings, company_ids, *, prune, previous=None):
         tenants = {company_id: tenant_id for company_id, tenant_id in registry}
         if set(company_ids) - tenants.keys():
             raise ValueError("analytics_company_not_registered")
-        version, rows, complete = await asyncio.to_thread(read_snapshot, settings.analytics_file, tenants)
+        version, rows, complete = await asyncio.to_thread(read_snapshot, settings.analytics_file)
         generation = None
         if version is not None:
             generation = previous[1] if previous is not None and version == previous[0] else uuid4()
@@ -47,7 +47,8 @@ async def sync_once(engine, settings, company_ids, *, prune, previous=None):
     if prune and version is not None:
         removed = await asyncio.to_thread(
             archive_old_analytics_events, settings.analytics_file, settings.analytics_rollup_file,
-            settings.analytics_message_retention_days, synced_version=version, synced_companies=set(tenants),
+            settings.analytics_message_retention_days, synced_version=version,
+            synced_companies={row["company_id"] for row in rows},
         )
         prune_completed = bool(removed) or analytics_file_version(settings.analytics_file) == version
     else:

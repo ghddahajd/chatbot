@@ -34,7 +34,7 @@ async def run(args):
             tenant_id = await connection.scalar(sa.select(Tenant.id).where(Tenant.company_id == args.company))
             if tenant_id is None:
                 raise ValueError("unknown_company")
-            rows = list(snapshot_rows(handle, {args.company: tenant_id}))
+            rows = list(snapshot_rows(handle, company=args.company))
             if not rows:
                 raise ValueError("no_company_events")
             inserted = await insert_events(connection, rows) if args.apply else 0
@@ -42,7 +42,7 @@ async def run(args):
             if args.apply and args.start is not None:
                 sql_start = perf_counter()
                 actual = project_metrics(*await funnel_events(
-                    connection, tenant_id=tenant_id,
+                    connection, company_id=args.company,
                     start=args.start.replace(tzinfo=timezone.utc), end=args.end.replace(tzinfo=timezone.utc),
                 ))
                 report["sql_ms"] = round((perf_counter() - sql_start) * 1000, 2)
